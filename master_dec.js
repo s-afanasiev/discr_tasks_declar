@@ -7,7 +7,6 @@
     const EventEmitter = require('events');
     const SETT	= read_settings(path.normalize("./m_settings.json"));
     const OnSocketReconnectActions = require('./OnSocketReconnectActions.js');
-const { WSAVERNOTSUPPORTED } = require('constants');
 
     //const http = require('http');
     //const io = require('socket.io');
@@ -118,71 +117,43 @@ const { WSAVERNOTSUPPORTED } = require('constants');
                 ),
                 new BrowserIoClients(),
                 new HostSystem(
-                    new AgentsFileUpdate(
-                        new Manifest()
-                    ),
+                    new Manifest(new DirStructure(), new DirsComparing()),
                     new HostCluster(
                         new HostAsPair(
-                            new OnSocketReconnectActions(),
-                            new Launcher(),
-                            new Controller(),
-                            new Jobs(jobs_config)
+                            new Launcher(
+                                throttle(),
+                                choose()
+                            ),
+                            new Controller(
+                                throttle()
+                            ),
+                            new Jobs(jobs_config),
+                            new ChoosingHostEvent(
+                                new ConnectedAgentsThrottle(
+                                    new ReserveRedundantAgents(),
+                                    "ChoosingAgentMode"
+                                ),
+                                new DistributingRegularManifest("ChoosingAgentMode"),
+                                //@ object to be encapsulated in one of two object above
+                                new ChoosingAgentMode(
+                                    new SpecialAgentMode(),
+                                    new NormalAgentMode(
+                                        new AgentUpdateChain([
+                                            new CompareManifest(),
+                                            new KillingPartner(),
+                                            new UpdatingFiles(),
+                                            new StartingPartner()
+                                        ]),
+                                        new IfControllerStartWork()
+                                    )
+                                ),
+                            )
                         ),
                         new AgentRecognizing()
                     )
                 )
             ).run();
         }
-		//@ main Application method
-		this.run2 = async ()=>{
-			//@--------------------------------------
-			this.db = new DataBase();
-			//@--------------------------------------
-			this.ioServer = new IoServerOld(
-				new HttpServer(
-                    new WebRequest(
-                        new Pages()
-                            .with("/", new Page("/"))
-                            .with("/io_address", new Page(
-                                "/io_address", 
-                                new IoConfig().io_address()
-                            ))
-                            .with("/socket.js", new Page("/socket.js"))
-                            .with("/engine.js", new Page("/engine.js"))
-                            .with("/core.js", new Page("/core.js"))
-                            .with("/browser_detect.js", new Page("/browser_detect.js"))
-                    ),
-                    {port:55999}
-                )
-            );
-            this.ioServer.onData((data)=>{
-                //@ data = {event_type: "connection", agent_socket: socket, browser_or_agent: "agent" || "browser", agent_identifiers: {agent_identifiers}
-				console.log("App.run(): ioServer.onData: ev="+JSON.stringify(data.event_type));
-				if(data.event_type == "connection" && data.browser_or_agent == "agent"){
-                    if(this.agentsFileUpdate){
-                        this.agentsFileUpdate.welcomeAgent(data);
-                    }else{
-                        console.log("ioServer already started, but agentsFileUpdate is Not");
-                    }
-				}
-			});
-			//@--------------------------------------
-			this.agentsFileUpdate = new AgentsFileUpdate(
-				new HostCluster(
-					new HostAsPair(
-						new Launcher(),
-						new Controller(),
-						new Jobs(jobs_config)
-					),
-					new AgentRecognizing()
-				),
-				new Manifest()
-			)
-			//@----------Run Sequence-------------
-			await this.db.run();
-			await this.ioServer.run();
-			await this.agentsFileUpdate.run(this);
-		};
 	}
 
     function ZooKeeper(ioServer, browserIoClients, hostSystem){
@@ -190,49 +161,37 @@ const { WSAVERNOTSUPPORTED } = require('constants');
         this.browserIoClients=browserIoClients;
         this.hostSystem=hostSystem;
         this.run=()=>{
-            this.browserIoClients.run().onGuiRequest(cmd=>{
-                this.hostSystem.onGuiRequest(cmd);
-            });
-            this.hostSystem.run().onGuiResponse(ans=>{
-                this.browserIoClients.onGuiResponse(ans);
-            });
-            this.ioServer.run().only('connection',(socket)=>{
-                this.socketConnected({ 
-                    agent_socket: socket,
-                    browser_or_agent: socket.handshake.query.browser_or_agent,
-                    agent_identifiers: new ParsedJSON(socket.handshake.query.agent_identifiers).run()
-                });
-                
-            });
-        }
-        this.socketConnected=(io_srv_msg)=>{
-            if(io_srv_msg.browser_or_agent == "agent"){
-                console.log("HostSystem.socketConnected() Agent connected!");
-                this.hostSystem.welcomeAgent(io_srv_msg);
-            }else if(io_srv_msg.browser_or_agent == "browser"){
-                console.log("HostSystem.socketConnected() Browser connected!");
-                this.browserIoClients.welcomeAgent(io_srv_msg);
-            }else{
-                console.log("HostSystem.socketConnected() error: nor browser or agent!");
-            }
+            this.browserIoClients.run(this.hostSystem);
+            this.hostSystem.run(this.browserIoClients);
+            this.ioServer.run(this.hostSystem, this.browserIoClients);
         }
     }
 
     function IoServer(httpServer){
         this.httpServer = httpServer;
-        this.parentCbMap={
-            'connection': ()=>{console.log("IoServer: need to be callback implemented")}
-        }
-        this.run=()=>{
-            //console.log("IoServer2.run()>>>",this.httpServer.run().http);
+        this.hostSystem=undefined;
+        this.browserIoClients=undefined;
+        this.run=(hostSystem, browserIoClients)=>{
+            this.hostSystem = hostSystem;
+            this.browserIoClients = browserIoClients;
             require('socket.io')(this.httpServer.run().http).on('connection', (socket) => {
                 console.log("IoServer2.run() connection:"+socket.id);
                 console.log("IoServer2.run() query=",socket.handshake.query);
-                this.parentCbMap.connection(socket);
+                const io_srv_msg = { 
+                    agent_socket: socket,
+                    browser_or_agent: socket.handshake.query.browser_or_agent,
+                    agent_identifiers: new ParsedJSON(socket.handshake.query.agent_identifiers).run()
+                }
+                if(io_srv_msg.browser_or_agent == "agent"){
+                    console.log("HostSystem.socketConnected() Agent connected!");
+                    this.hostSystem.welcomeAgent(io_srv_msg);
+                }else if(io_srv_msg.browser_or_agent == "browser"){
+                    console.log("HostSystem.socketConnected() Browser connected!");
+                    this.browserIoClients.welcomeAgent(io_srv_msg);
+                }else{
+                    console.log("HostSystem.socketConnected() error: nor browser or agent!");
+                }
             });
-        }
-        this.only=(event, callback)=>{
-            this.parentCbMap(event) = callback;
         }
     }	
 
@@ -241,63 +200,85 @@ const { WSAVERNOTSUPPORTED } = require('constants');
         this.run=()=>{return (this.stringifiedJson) ? JSON.parse(this.stringifiedJson) : {}}
     }
 
-    function HostSystem(agentsFileUpdate, hostCluster){
-        this.agentsFileUpdate = agentsFileUpdate;
+    function HostSystem(manifest, hostCluster){
+        this.manifest = manifest;
         this.hostCluster = hostCluster;
-        this.run=()=>{
-            this.hostCluster.run();
-            this.agentsFileUpdate.run(this.hostCluster);
+        this.run=(browserIoClients)=>{
+            this.hostCluster.run(browserIoClients);
+            this.manifest.run(this.hostCluster);
         }
-        this.welcomeAgent=()=>{}
-        this.onGuiRequest=(cmd)=>{
-            console.log("HostSystem.onGuiRequest():",cmd);
-            if(cmd.type==="change_mode"){}
+        //@ new socket connection from IoServer
+        this.welcomeAgent=(io_srv_msg)=>{
+            this.hostCluster.welcomeAgent(
+                io_srv_msg, 
+                this.manifest.current()
+            );
         }
-        this.onGuiResponse=()=>{}
+        //@ new manifest, means there was changes in update folder
+        this.propagateManifest=(manifest_regular)=>{
+            this.hostCluster.propagateManifest(manifest_regular);
+        }
     }
 
-	function AgentsFileUpdate(manifest){
-		this.hostCluster = undefined;
-		this.manifest = manifest;		
-		this.run = (hostCluster)=>{
-            this.hostCluster = hostCluster;
-            this.manifest.run().then(man=>{
-                this.manifest.onChange((manifest_regular)=>{
-                    this.hostCluster.propagateManifest(manifest_regular);
-                });
+    //@ ready=1
+	function Manifest(dirStructure, dirsComparing){
+        this.hostCluster=undefined;
+        this.dirStructure=dirStructure;
+        this.dirsComparing=dirsComparing;
+        this.path = '';
+        this.timer = 60000;
+        this.prev_man = {};
+		//@ stumb for new connected agents, give them something not null
+		this.current = ()=>{ return prev_man };
+        this.run = function(hostCluster){
+            return;
+            this.hostCluster=hostCluster;
+			//@ thumb
+			//return this;
+            //@ Первый раз(при инициализации сервера) читаем манифест синхронно
+            const man = this.dirStructure.read_sync(manifest.path);
+            //@ Если прочитать не удалось - сообщаем Контроллеру
+            if(man instanceof Error) console.log("getting manifest error");
+            //@ Если прочитать удалось - сохраняем результат для последующих сравнений
+            this.prev_man = man;
+            setTimeout(()=>{this.nextManifest()}, this.timer);
+            return this;       
+        }        
+        this.nextManifest = function(){
+            const man = this.dirStructure.read_async(manifest.path).then(next_man=>{
+                const dirs_compare_diff = this.dirsComparing.compare(next_man, this.prev_man);
+                if(dirs_compare_diff) {
+                    this.prev_man = next_man;
+                    this.hostCluster.propagateManifest(next_man);
+                }
             }).catch(err=>{
-                console.log("AgentsFileUpdate.run() manifest running Error:",err);
-            });
-		}
-		this.welcomeAgent = (data)=>{
-            //@ data = {event_type: "connection", agent_socket: socket, browser_or_agent: "agent" || "browser", agent_identifiers: {agent_identifiers}
-			const manifest_snapshot = this.manifest.current(); //sync
-			this.hostCluster.welcomeAgent(data, manifest_snapshot);
-		}
-	}
+                console.log("Err: Manifest: nextManifest():"+err);
+            })
+        }
+        return this;
+    }
+    function DirStructure(){}
+    function DirsComparing(){}
 	
 	function HostCluster(hostAsPair, agentRecognizing){
         this.hostAsPair = hostAsPair;
+        this.browserIoClients=undefined;
         const _hosts_list = [];
-        this.acceptable_commands = ["welcomeAgent", "guiControl"];
-		this.run = (parent)=>{return this;}
-		this.welcomeAgent = (data, manifest_snapshot)=>{
-			//@ data = {event_type: "connection", agent_socket: socket, browser_or_agent: "agent" || "browser", agent_identifiers: {agent_identifiers}
-            console.log("HostCluster.welcomeAgent(): agent_identifiers =",data.agent_identifiers);
-			agentRecognizing.instance(data.agent_identifiers).run(data.agent_socket).then(identifiers=>{
-                this.hostByMd5(identifiers).welcomeAgent(data.agent_socket, identifiers, manifest_snapshot);
+        //this.acceptable_commands = ["welcomeAgent", "guiControl"];
+		this.run = (browserIoClients)=>{
+            this.browserIoClients=browserIoClients;
+            return this;
+        }
+		this.welcomeAgent = (conn, manifest_snapshot)=>{
+			//@ conn = {agent_socket: socket, browser_or_agent: "agent" || "browser", agent_identifiers: {agent_identifiers}
+            console.log("HostCluster.welcomeAgent(): agent_identifiers =",conn.agent_identifiers);
+			agentRecognizing.instance(conn.agent_identifiers).run(conn.agent_socket).then(identifiers=>{
+                this.hostByMd5(identifiers).welcomeAgent(conn.agent_socket, identifiers, manifest_snapshot)
             }).catch(err=>{
                 console.log("HostCluster.welcomeAgent() agent recognizing Error:",err);
             })
             return this;
 		}
-        this.msg=(msg)=>{
-            if(this.acceptable_commands.includes(msg.type)){
-                this[msg.type](msg.data);
-            }else{
-                this.next(msg);
-            }
-        }
 		this.propagateManifest = (manifest_regular)=>{
             _hosts_list.forEach(host=>{
                 host.propagateManifest(manifest_regular);
@@ -321,6 +302,13 @@ const { WSAVERNOTSUPPORTED } = require('constants');
 		this.addHost = (agentObj)=>{
             _hosts_list.push(agentObj);
             return agentObj;
+        }
+        this.msg=(msg)=>{
+            if(this.acceptable_commands.includes(msg.type)){
+                this[msg.type](msg.data);
+            }else{
+                this.next(msg);
+            }
         }
 	}
 
@@ -347,47 +335,8 @@ const { WSAVERNOTSUPPORTED } = require('constants');
 			});
 		}
 	}
-	
-    function WelcomeGateway(waitingForCandidates){
-        this.waitingForCandidates = waitingForCandidates;
-        this.launcher = undefined;
-        this.controller = undefined;
-        this.run=(launcher, controller)=>{
-            this.launcher = launcher;
-            this.controller = controller;
-            this.waitingForCandidates.run(launcher, controller);
-            return this;
-        }
-        this.welcomeAgent=(a,b,c)=>{
-            const timeout = this.waitingForCandidates.is_timeout();
-            if(timeout){}
-        }
-    }
-    function WaitingForCandidates(placeCandidates, redundantAgentReservation){
-        this.placeCandidates = placeCandidates;
-        this.redundantAgentReservation = redundantAgentReservation;
-        this.workWithAgents = workWithAgents;
-        this.is_timeout = false;
-        this.launcher = undefined;
-        this.controller = undefined;
-        this.run=(launcher, controller)=>{
-            this.launcher = launcher;
-            this.controller = controller;
-            this.placeCandidates.run(launcher, controller);
-            this.redundantAgentReservation.run(launcher, controller);
-            setTimeout(()=>{this.is_timeout=true},5000)
-            return this;
-        }
-        this.welcomeAgent=(a,b,c)=>{
-            if(this.is_timeout){
-                this.redundantAgentReservation.welcomeAgent();
-            }else{
-                this.placeCandidates.welcomeAgent();
-            }
-        }
-    }
 
-    function RedundantAgentReservation(workWithAgents){
+    function ReserveRedundantAgents(workWithAgents){
         this.workWithAgents = workWithAgents;
         this.is_timeout = false;
         this.launcher = undefined;
@@ -406,123 +355,45 @@ const { WSAVERNOTSUPPORTED } = require('constants');
         }
     }
 
-	function HostAsPair(bigLauncher, bigController, jobs){
-        //@ TODO: Делать ли больших Агентов и создавать новых на каждом сокете?
-        //@ * агент может придти по новому сокету в следующих случаях:
-        //@ ** 1) пришёл первый раз
-        //@ ** 2) пришёл после обновления Партнером
-        //@ ** 3) Сервер был перезапущен, а Агент по сути, тот же
-        //@ ** Тогда пока не будем оборачивать. Это будет в дальнейшем при расширении программы
-        //@ ** А пока каждый лончер просто хранит цепочку последних действий. И ТО НЕ НАДО!
-        //@ ** По крайней мере на эту цепочку не стоит полагаться при построении архитектуры
-        //@ ** Потому что она зыбкая, исчезнет при рестарте сервера. Её можно использовать только для индикации текущей инфы в браузер.
-
-		this.bigLauncher = bigLauncher;
-		this.bigController = bigController;
+	function HostAsPair(launcher, controller, jobs, choosingHostEvent){
+        //@ HostAsPair object instantiates by one of Launcher or Controller, so on creation stage we allready know about one of agents and his states
+        //@ Agent can say us about self state and the partner state, namely such a "i am running by a human or Partner" and "i was sarted or i am not started yet the partner"
+        //@ In this way, for example, if the Launcher came first and said "i was started the Controller", so we believe him and we order him NOT to start the Controller, but to check the updates. While the Launcher preparing an answer about updates, just about this time the controller should arrive. So, if during the time of the Launcher's response, the Controller did not come to us, we tell the program architect that the Launcher is misjudging its partner's condition. Despite this, we order the Launcher to start the Controller. And if suddenly a belated controller arrives while we ordered the Launcher to start it, a special object AgentThrottle on the top will not miss the extra agents.
+		this.launcher = launcher;
+		this.controller = controller;
 		this.jobs = jobs;
+		this.choosingHostEvent = choosingHostEvent;
 		this.is_first_created = true;
-		this.current_socket = undefined;
-		this.current_identifiers = undefined;
         this.manifest_regular = undefined;
         this.manifest_snapshot = undefined;
-        this.welcomeGateway = undefined;
 		this.agent_states = ["neverStarted", "online", "underUpdate", "updatesThePartner"];
         //console.log("HostAsPair: jobs="+JSON.stringify(jobs));
-		this.run=()=>{
-            this.welcomeGateway = new WelcomeGateway(
-                new WaitingForCandidates(
-                    new PlaceCandidates(),
-                    new RedundantAgentReservation(
-                        new LookEnoughAgents(
-                            new UpdatingManifest(),
-                            new DoingRegularWork()
-                        )
-                    )
-                )
-            ).run(this.launcher, this.controller);
+		this.instance = function(creator_ids){
+            console.log("HostAsPair.instance(): creator_identifiers=",creator_ids);
+            const agtype = creator_ids.agent_type;
+			return new HostAsPair(
+				this.launcher.instance(agtype==="launcher"?creator_ids:undefined),
+				this.controller.instance(agtype==="controller"?creator_ids:undefined),
+				this.jobs,
+                this.choosingHostEvent
+			);
+		}
+        this.run=()=>{
+            this.choosingHostEvent.run(this.launcher);
             return this;
         }
-		this.instance = function(creator_identifiers){
-            console.log("HostAsPair.instance(): creator_identifiers=",creator_identifiers);
-			return new HostAsPair(
-				this.bigLauncher.instance(),
-				this.bigController.instance(),
-				this.jobs
-			);
-			//return new HostAsPair(this.launcher, this.controller, this.jobs);
-		}
         this.propagateManifest = (manifest_regular)=>{
             this.manifest_regular = manifest_regular;
             //@ Imagine: 1) both agents is online and 2)both kinds of updates is exist. 
             //@ So, we decide that launcher will first restart controller, and then vice versa
-        }
-        this.modernUpdateConcept=()=>{
-            socket.on('welcome',()=>{
-                new ComparingManifest(
-                    new PKilling(
-                        new PUpdating(
-                            new PStarting()
-                        )
-                    )
-                ).run()
-            })
-            socket.on('updating',(socket_answer)=>{
-                new ComparingManifest(
-                    new PKilling(
-                        new PUpdating(
-                            new PStarting()
-                        )
-                    )
-                ).run(socket_answer)
-            })
-            
-            function ComparingManifest(pKilling){
-                this.pKilling = pKilling;
-                this.run=(socket_answer)=>{
-                    if(socket_answer.stage == "comparing"){
-                        socket.emit('updating', {stage:"comparing", data: manifest});
-                        this.pKilling.run(socket);
-                    }else{
-                        this.pKilling.pass(socket_answer);
-                    }
-                }
-            }
-            function PKilling(pUpdating){
-                this.pUpdating =pUpdating;
-                this.run=(socket)=>{
-                    socket.emit('kill',()=>{});
-                    socket.on('kill',()=>{});
-                }
-                this.pass=(socket)=>{
-                    
-                }
-            }
-            
-            socket.on('updated',()=>{})
-            socket.on('started',()=>{})
+            this.choosingHostEvent.propagateManifest(manifest_regular);
         }
 		this.welcomeAgent = (agent_socket, agent_identifiers, manifest_snapshot)=>{
             this.current_socket = agent_socket;
             this.current_identifiers = agent_identifiers;
             this.manifest_snapshot = manifest_snapshot;
-            this.welcomeGateway.welcomeAgent(agent_socket, agent_identifiers, manifest_snapshot);
-            //if(ag_type == 'launcher'){}
-            //if(agent_type == 'controller'){}
+            this.choosingHostEvent.welcomeAgent(agent_socket, agent_identifiers, manifest_snapshot);
             const agent_type = agent_identifiers.agent_type;
-            new AgTypeValid(
-                new AgStateAnalysis(
-                    new ComparingManifest(
-                        new PKilling(
-                            new PUpdating(
-                                new PStarting()
-                            )
-                        )
-                    ),
-                    new MakingJobs(
-                        new CommonJobs()
-                    )
-                )
-            ).run(socket_answer)
 			if(["launcher", "controller"].includes(agent_type)){
                 const state = this[agent_type].state;
                 if(state == "neverStarted"){
@@ -553,39 +424,34 @@ const { WSAVERNOTSUPPORTED } = require('constants');
 		this.onData = function(cb){this.cbData = cb}
 	}
 
-    function AgTypeValid(agStateAnalysis){
-        this.agStateAnalysis = agStateAnalysis;
-        this.run=(primary_data)=>{
-            if(primary_data.agent_identifiers.apid){}
+    function ChoosingHostEvent(connectedAgentsThrottle, distributingRegularManifest, choosingAgentMode){
+        this.connectedAgentsThrottle=connectedAgentsThrottle;
+        this.distributingRegularManifest=distributingRegularManifest;
+        this.choosingAgentMode=choosingAgentMode;
+        this.run=(launcher, controller, jobs)=>{
+            this.connectedAgentsThrottle.run(launcher, controller, jobs, choosingAgentMode);
+            this.distributingRegularManifest.run(launcher, controller, jobs, choosingAgentMode);
         }
-    }
-
-    function AgStateAnalysis(comparingManifest, makingJobs){
-        this.comparingManifest = comparingManifest;
-        this.makingJobs = makingJobs;
-        this.run=(primary_data, deciding_data)=>{
-            //@ primary_data = {agent_socket, agent_identifiers, manifest}
-            //@ deciding_data = {agent_type = true || false, comparingManifest: true}
-
-        }
+        this.welcomeAgent=()=>{}
+        this.propagateManifest=()=>{}
     }
 	
-	function Launcher(){
-        this.state = "neverStarted";
+	function Launcher(agent_identifiers){
+        this.agent_identifiers = agent_identifiers;
+        this.state = (agent_identifiers)?"neverStarted":"online";
         this.hasNowUpdatesThePartner = false;
         this.agent_socket = undefined;
         this.manifest_snapshot = undefined;
         this.manifest_regular = undefined;
         this.manifest_actual = undefined;
-        this.agent_identifiers = undefined;
         this.microtaskStack = [];
-		this.instance = ()=>{ return new Launcher(); }
+		this.instance=function(agent_identifiers){ return new Launcher(agent_identifiers); }
 		this.run =(agent_socket)=>{
             this.agent_socket = agent_socket;
             return this;
         }
         this.welcomeAgent = (agent_identifiers, manifest_snapshot)=>{
-            this.state = "connected";
+            this.state = "online";
             this.agent_identifiers = agent_identifiers;
             this.manifest_snapshot = manifest_snapshot;
 			listenForDisconnect();
@@ -690,12 +556,12 @@ const { WSAVERNOTSUPPORTED } = require('constants');
         }
     }
 	
-	function Controller(){
-        this.state = "neverStarted";
+	function Controller(agent_identifiers){
+        this.agent_identifiers = agent_identifiers;
+        this.state = (agent_identifiers)?"neverStarted":"online";
         this.agent_socket = undefined;
         this.launcher_state = undefined;
-        this.agent_identifiers = undefined;
-		this.instance = ()=>{ return new Controller(); }
+		this.instance=function(agent_identifiers){ return new Controller(agent_identifiers); }
 		this.run =(agent_socket)=>{
             this.agent_socket = agent_socket;
             return this;
@@ -833,54 +699,7 @@ const { WSAVERNOTSUPPORTED } = require('constants');
 		}
 	}
     
-	//@ ready=1
-	function Manifest(){
-        this.dirStructure =undefined;
-        this.dirsComparing =undefined;
-        this.path = '';
-        this.timer = 60000;
-        this.prev_man = {};
-		//@ stumb for new connected agents, give them something not null
-		this.current = ()=>{ return {} };
-        
-        this.run = async function(){
-			//@ thumb
-			return true;
-			
-			this.dirStructure = new DirStructure();
-			this.dirsComparing = new DirsComparing();
-            //@ Первый раз(при инициализации сервера) читаем манифест синхронно
-            const man = this.dirStructure.read_sync(manifest.path);
-            //@ Если прочитать не удалось - сообщаем Контроллеру
-            if(man instanceof Error) return console.log("getting manifest error");
-            //@ Если прочитать удалось - сохраняем результат для последующих сравнений
-            this.prev_man = man;
-            return this;       
-        }
-		
-		this.onChange = (cb)=>{
-			//@ thumb
-			if(false) cb({});
-		}
-        
-        this.nextManifest = function(){
-            const man = this.dirStructure.read_async(manifest.path)
-            .then(res=>{
-                //@ ожидаем, что сюда однозначно придёт хороший результат
-                if(!this.prev_man){
-					//setTimeout(()=>{ manifest.nextManifest() }, this.timer);
-					return console.log("Err: No previous manifest!")
-				}
-                const dirs_comparing = this.dirsComparing.compare(res, this.prev_man);
-                if(comparing.length > 0) {}
-				this.prev_man = this.man;
-            }).catch(err=>{
-                console.log("Err: Manifest: nextManifest():"+err);
-            })
-        }
-        return this;
-    }
-	
+
 	
     
 	function Logger(){
