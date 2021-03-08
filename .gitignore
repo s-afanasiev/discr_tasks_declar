@@ -1,0 +1,9 @@
+/node_modules/
+/agents/node_modules/
+/sql mm test/
+/update/
+*.pptx
+*.mm
+*.drn
+*.txt
+*.sql

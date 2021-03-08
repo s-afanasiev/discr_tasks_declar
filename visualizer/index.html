@@ -1,0 +1,273 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" 
+							"http://www.w3.org/TR/html4/loose.dtd">
+		  
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+		<meta http-equiv="content-type" content="text/html;charset=UTF-8" />
+		<meta name="viewport" content="width=320, user-scalable=0, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0" />
+		<title>Relay_Control</title>
+		
+		<script type="text/javascript" src="socket.js"></script>
+		<script type="text/javascript" src="engine.js"></script>
+		<script type="text/javascript" src="core.js"></script>
+		<script type="text/javascript" src="browser_detect.js"></script>
+		
+	</head>
+	
+	<body style = 'margin:0px;' >
+		
+		<div class="nav_main" id = "nav_wrapper" style = "position:relative; overflow:hidden; ">
+			<div class="nav_jumper" id = "nav_transition" style = "position:absolute; overflow:hidden;">
+				nav menu
+			</div>
+			<div id = "nav_board" style = "position:absolute; overflow:hidden;">
+			</div>
+		</div>
+		<div id = "main_div" style = "position:relative;overflow:hidden; text-align: center; display: table-cell; vertical-align: middle; "></div>
+		
+		<script>
+			document.body.onselectstart = function(){return false;}
+			document.body.ondragstart = function(){return false;}			
+			
+			var endvr_server_address = "http://192.168.15.240:55999";
+			var global_agent_table;
+			
+			var server_;
+			//FRESH:0, SENT:1, GOT:2, DONE:3, EXTRA:4, ERR:5, BLOCKED:6, T_OUT:7,
+			var TSTATES = ["FRESH", "SENT", "GOT", "DONE", "EXTRA", "ERR", "BLOCKED", "T_OUT", "T_OUT2", "DROPPED"];
+			
+			onload = function()
+			{
+				console.log("onload");
+				//- syncronous function that connect to the web server by HTTP where it is running, for example localhost:55999
+				//-  and ask him about his socket.io address throw ajax and then assign it to endvr_server_address
+				get_socket_io_address()
+
+				//- define user browser
+				BrowserDetect.init();
+
+				//- function in core.js file, which bind mouse events 'mousedown', 'mouseup' for document
+				page_constructor();
+				
+				//- connect to server by socket.io and listen 'agent_table' event to receive info about agents and their tasks
+				connect_to_server();
+				
+				//- place 2 DIV blocks:
+				//-		'nav_wrapper' - navigation panel occupying the 5% part from the top
+				//-		'main_div' - to display Agents table
+				var ww = $(window).width();
+				var wh = $(window).height();
+				
+				$("#"+"nav_wrapper").width(ww).height(wh*.1).css("left", 0+"px").css("top", 0+"px");
+				//.css("border","1px solid orange")
+				ui_fill_nav_menu({id:"nav_wrapper", hang_listeners_on_inputs: true});
+
+				$("#"+"main_div").width(parseInt(ww)).height(parseInt(wh*.9)).css("left", parseInt(0)+"px").css("top", parseInt(0)+"px");
+				
+				$("#"+"main_div").bind({
+						click: function() {},
+						mouseenter: function() 
+						{
+							$("#"+"main_div").css("backgroundColor", "#fafafa");
+						},
+						mouseleave: function() 
+						{
+							$("#"+"main_div").css("backgroundColor", "#ffffff");
+						}
+					});
+			}
+			
+			window.onresize = function()
+			{
+				var ww = $(window).width();
+				var wh = $(window).height();
+				$("#"+"nav_wrapper").width(ww).height(wh*.1).css("left", 0+"px").css("top", 0+"px");
+				$("#"+"main_div").width(parseInt(ww)).height(parseInt(wh*.9)).css("left", parseInt(0)+"px").css("top", parseInt(0)+"px");
+			};
+			
+			
+			function get_socket_io_address(){
+				// 1. Create new XMLHttpRequest object
+				var xhr = new XMLHttpRequest();
+				// 2. config request: type = GET content = 'io_address'
+				xhr.open('GET', 'io_address', false);
+				// 3. send request
+				xhr.send();
+				if (xhr.status != 200) {
+					//@ handle error
+					alert( xhr.status + ': ' + xhr.statusText );
+				} else {
+					console.log("master address:" + xhr.responseText );
+					endvr_server_address = xhr.responseText;
+				}
+			}
+			function get_socket_io_address_async()
+			{
+				return new Promise((resolve, reject)=>{
+					// 1. Создаём новый объект XMLHttpRequest
+					var xhr = new XMLHttpRequest();
+					// 2. Конфигурируем его: GET-запрос на URL 'phones.json'
+					xhr.open('GET', 'io_address', true);
+					// 3. Отсылаем запрос
+					xhr.send();
+
+					xhr.onreadystatechange = function() { // (3)
+						if (xhr.readyState != 4) return;
+
+						if (xhr.status != 200) {
+							console.log(xhr.status + ': ' + xhr.statusText);
+							reject()
+						} else {
+							console.log("CONNECTED:", xhr.responseText);
+							endvr_server_address = xhr.responseText;
+							resolve();
+						}
+					}
+				});
+			}
+			
+			var my_socket_id = "";
+			function connect_to_server()
+			{
+				server_ = io.connect(endvr_server_address, {query:{browser_or_agent:"browser"}});
+				server_.on('connect', function()
+				{
+					console.log("connected");
+					server_.emit('get_socket_id',"");
+				});
+				
+				server_.on('id_assigned', function(msg)
+				{
+					// this is going to be an array buffer 
+					//alert("got_socket_id: " + msg);
+					my_socket_id = msg;
+				});
+
+				server_.on('agent_table', function(agent_table)
+				{
+					//console.log(agent_table);
+					global_agent_table = agent_table;
+					
+					var max_width = 4;
+					var cur_row_index = 0;
+					var cur_col_index = 0;
+					
+					var a = "";
+					
+					a += "<table style = 'width:100%; height:100%'>";
+					a += "<tr>";
+					
+					for(var i = 0; i<agent_table.length; i++)
+					{
+						let agent_type = agent_table[i][0];
+						let agent_sid = agent_table[i][1];
+						let agent_md5 = agent_table[i][2];
+						//let agent_uniq = agent_md5 + "_" + agent_type;
+						//console.log(i+". md5:" + agent_md5);
+						cur_col_index = cur_col_index + 1;
+						if(cur_col_index == max_width)
+						{
+							cur_col_index = 0;
+							cur_row_index = cur_row_index + 1;
+							a += "</tr><tr>";
+						}
+						
+						a += "<td valign = 'top'>";
+							a +="<table style = 'border:1px solid red; width:100%;'>";
+								a +="<tr><td colspan = '3'>";
+									a += "agent : "+ i;
+								a +="</td></tr>";
+								
+								a +="<tr><td colspan = '3' style = 'border-bottom:1px solid black;'>";
+									a += agent_table[i][0];
+								a +="</td></tr>";
+								a +="<tr><td colspan = '3' style='align: center'>";
+									a += RENDER.center_button("'disk_space'", agent_md5, agent_type);
+									//a += RENDER.agent_input("agent_input", agent_sid, i);
+								a +="</td></tr>";
+								a +="<tr><td colspan = '3' style = 'border-bottom:1px solid black;'>";
+								
+									let agent_tasklist = agent_table[i][7];
+								for(var j = 0; j< agent_tasklist.length; j++)
+								{
+									a +="<tr>";
+									a +="<td>";
+										let task_repeated = agent_tasklist[j][14];
+										let t_name = agent_tasklist[j][1];
+										if (task_repeated > 1) 
+										{
+											let task_id = agent_tasklist[j][0];
+											let task_stage = agent_tasklist[j][2];
+											if ((task_stage == 0)||(task_stage == '0'))
+											{
+												a += RENDER.stop_button('stop', agent_md5, agent_type, task_id, t_name);
+											}
+										}
+									a +="</td>"
+									a +="<td>";
+										let task_name = agent_tasklist[j][1];
+										a += task_name + ": ";
+									a +="</td>"
+									a +="<td>";
+										let state = TSTATES[agent_tasklist[j][2]];
+										a += state;
+									a +="</td>"
+									a +="</tr>";
+								}
+
+							a +="</table>";
+						a += "</td>";
+						
+					}
+					
+					a += "</tr>";
+					a += "</table>";
+					
+					$("#"+"main_div").empty().append(a);
+					
+/*				
+0: Array(8)
+0: "launcher"
+1: "GzhN8f_G4-XEwb_PAAAB"
+2: "45d2ea0b554b0a25e2fb701ded040626"
+3: "::ffff:127.0.0.1"
+4: 9544
+5: 9656
+6: false
+7: Array(3)
+	0: Array(10)
+		0: 1
+		1: "manifest"
+		2: 3
+		3: "[["\\New Text Document.txt",4,"2020-04-14T21:46:02.321Z"]]"
+		4: null
+		5: 2
+		6: "default"
+		7: 1586902231468
+		8: 1586902232158
+		9: 1586902235161
+		length: 10
+		__proto__: Array(0)
+	1: Array(10)
+		0: 2
+		1: "same_md5_agents"
+		2: 3
+		3: "[["launcher","GzhN8f_G4-XEwb_PAAAB","45d2ea0b554b0a25e2fb701ded040626","::ffff:127.0.0.1",9544,9656]]"
+		4: null
+		5: null
+		6: "same_md5_agents"
+		7: 1586902231468
+		8: 1586902238163
+		9: 1586902241168
+		length: 10
+					
+					    TYPE:0, SID:1, MD5:2, IP:3, PID:4, PPID:5, STATE:6, TASKS:7,
+    TID:0, TNAME:1, STAGE:2, RAW:3, ANSWER:4, NEXT_TID:5, TMPL:6, TIMEPUSH:7, TIMESENT:8, TIMEEND:9,
+    FRESH:0, SENT:1, GOT:2, DONE:3, EXTREME:4, ERR:5, BLOCKED:6,
+*/
+				});
+			}
+
+		</script>
+	</body>
+</html>
