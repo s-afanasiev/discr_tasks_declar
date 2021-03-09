@@ -121,33 +121,24 @@
                     new HostCluster(
                         new HostAsPair(
                             new Launcher(
-                                throttle(),
-                                choose()
+                                new Throttle(),
+                                "update"
                             ),
                             new Controller(
-                                throttle()
-                            ),
-                            new Jobs(jobs_config),
-                            new ChoosingHostEvent(
-                                new ConnectedAgentsThrottle(
-                                    new ReserveRedundantAgents(),
-                                    "ChoosingAgentMode"
-                                ),
-                                new DistributingRegularManifest("ChoosingAgentMode"),
-                                //@ object to be encapsulated in one of two object above
+                                new Throttle(),
                                 new ChoosingAgentMode(
                                     new SpecialAgentMode(),
-                                    new NormalAgentMode(
-                                        new AgentUpdateChain([
-                                            new CompareManifest(),
-                                            new KillingPartner(),
-                                            new UpdatingFiles(),
-                                            new StartingPartner()
-                                        ]),
-                                        new IfControllerStartWork()
-                                    )
+                                    new NormalAgentMode()
                                 ),
-                            )
+                                "update",
+                                new Jobs(jobs_config)
+                            ),
+                            new AgentUpdateChain([
+                                new CompareManifest(),
+                                new KillingPartner(),
+                                new UpdatingFiles(),
+                                new StartingPartner()
+                            ])
                         ),
                         new AgentRecognizing()
                     )
