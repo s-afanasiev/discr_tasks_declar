@@ -120,25 +120,27 @@
                     new Manifest(new DirStructure(), new DirsComparing()),
                     new HostCluster(
                         new HostAsPair(
-                            new Launcher(
-                                new Throttle(),
-                                "update"
-                            ),
+                            new Launcher(),
                             new Controller(
-                                new Throttle(),
                                 new ChoosingAgentMode(
                                     new SpecialAgentMode(),
-                                    new NormalAgentMode()
-                                ),
-                                "update",
-                                new Jobs(jobs_config)
+                                    new NormalAgentMode(
+                                        new RegularControllerWork(
+                                            new Jobs(jobs_config)
+                                        )
+                                    )
+                                )
                             ),
-                            new AgentUpdateChain([
+                            new ConnectedAgentsThrottle(
+                                new ReserveRedundantAgents()
+                            ),
+                            //@ host pass this object to Agents through run-method and they will also use new instances of that object on every reconnect
+                            new AgentUpdateChain(
                                 new CompareManifest(),
                                 new KillingPartner(),
                                 new UpdatingFiles(),
                                 new StartingPartner()
-                            ])
+                            )
                         ),
                         new AgentRecognizing()
                     )
@@ -346,14 +348,14 @@
         }
     }
 
-	function HostAsPair(launcher, controller, jobs, choosingHostEvent){
+	function HostAsPair(launcher, controller, connectedAgentsThrottle, agentUpdateChain){
         //@ HostAsPair object instantiates by one of Launcher or Controller, so on creation stage we allready know about one of agents and his states
         //@ Agent can say us about self state and the partner state, namely such a "i am running by a human or Partner" and "i was sarted or i am not started yet the partner"
         //@ In this way, for example, if the Launcher came first and said "i was started the Controller", so we believe him and we order him NOT to start the Controller, but to check the updates. While the Launcher preparing an answer about updates, just about this time the controller should arrive. So, if during the time of the Launcher's response, the Controller did not come to us, we tell the program architect that the Launcher is misjudging its partner's condition. Despite this, we order the Launcher to start the Controller. And if suddenly a belated controller arrives while we ordered the Launcher to start it, a special object AgentThrottle on the top will not miss the extra agents.
 		this.launcher = launcher;
 		this.controller = controller;
-		this.jobs = jobs;
-		this.choosingHostEvent = choosingHostEvent;
+        this.connectedAgentsThrottle = connectedAgentsThrottle;
+        this.agentUpdateChain = agentUpdateChain;
 		this.is_first_created = true;
         this.manifest_regular = undefined;
         this.manifest_snapshot = undefined;
@@ -365,47 +367,38 @@
 			return new HostAsPair(
 				this.launcher.instance(agtype==="launcher"?creator_ids:undefined),
 				this.controller.instance(agtype==="controller"?creator_ids:undefined),
-				this.jobs,
-                this.choosingHostEvent
+				this.connectedAgentsThrottle.instance(),
+                this.agentUpdateChain.instance()
 			);
 		}
         this.run=()=>{
-            this.choosingHostEvent.run(this.launcher);
+            this.connectedAgentsThrottle.run(this.launcher, this.controller);
+            this.launcher.run(
+                this.controller, 
+                this.connectedAgentsThrottle.instance(), 
+                this.agentUpdateChain.instance()
+            );
+            this.controller.run(
+                this.launcher, 
+                this.connectedAgentsThrottle.instance(), 
+                this.agentUpdateChain.instance()
+            );
             return this;
         }
         this.propagateManifest = (manifest_regular)=>{
             this.manifest_regular = manifest_regular;
             //@ Imagine: 1) both agents is online and 2)both kinds of updates is exist. 
             //@ So, we decide that launcher will first restart controller, and then vice versa
-            this.choosingHostEvent.propagateManifest(manifest_regular);
+            this.launcher.propagateManifest(manifest_regular);
+            this.controller.propagateManifest(manifest_regular);
         }
 		this.welcomeAgent = (agent_socket, agent_identifiers, manifest_snapshot)=>{
             this.current_socket = agent_socket;
             this.current_identifiers = agent_identifiers;
             this.manifest_snapshot = manifest_snapshot;
-            this.choosingHostEvent.welcomeAgent(agent_socket, agent_identifiers, manifest_snapshot);
             const agent_type = agent_identifiers.agent_type;
 			if(["launcher", "controller"].includes(agent_type)){
-                const state = this[agent_type].state;
-                if(state == "neverStarted"){
-                    //@ TODO: 0) check last_manifest !
-                    //@ TODO: 1) check identifiers.apid !
-                    //@ TODO: 1.1) if(apid) -> launcher is standby, controller is make jobs
-                    //@ TODO: 1.2) if(!apid) -> launch your partner
-                    console.log("HostAsPair.welcomeAgent(): "+agent_type+" connected...");
-                    this[agent_type].run(agent_socket).welcomeAgent(
-                        agent_identifiers,
-                        manifest_snapshot,
-                        this.jobs,
-                        (agent_type=="controller")?this.launcher.state:""
-                    );
-                }else if(["underUpdate","online","updatesThePartner"].includes(state)){
-                    console.log(">>>WARNING: unplanned intrusion of "+agent_type+" while the same is in '"+state+"' state. it looks like it's a duplicate agent on the host");
-                    agent_socket.disconnect(0);
-                }else{
-                    console.log(">>>WARNING: unknown Agent state:"+state);
-                    agent_socket.disconnect(0);
-                }
+                this[agent_type].welcomeAgent(agent_socket, agent_identifiers, manifest_snapshot);
             }
             else{
                 console.log("HostAsPair.welcomeAgent(): UNKNOWN Agent Type:",this.agent_identifiers);
