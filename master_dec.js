@@ -288,7 +288,7 @@
 			}
 			if(host_index > -1) return _hosts_list[host_index];
 			else {
-                return this.addHost(this.hostAsPair.instance(identifiers));
+                return this.addHost(this.hostAsPair.instance(identifiers).run());
             }
 		}
 		this.addHost = (agentObj)=>{
@@ -351,15 +351,14 @@
 
 	function HostAsPair(launcher, controller, connectedAgentsThrottle, agentUpdateChain){
         //@ HostAsPair object instantiates by one of Launcher or Controller, so on creation stage we allready know about one of agents and his states
-        //@ Agent can say us about self state and the partner state, namely such a "i am running by a human or Partner" and "i was sarted or i am not started yet the partner"
-        //@ In this way, for example, if the Launcher came first and said "i was started the Controller", so we believe him and we order him NOT to start the Controller, but to check the updates. While the Launcher preparing an answer about updates, just about this time the controller should arrive. So, if during the time of the Launcher's response, the Controller did not come to us, we tell the program architect that the Launcher is misjudging its partner's condition. Despite this, we order the Launcher to start the Controller. And if suddenly a belated controller arrives while we ordered the Launcher to start it, a special object AgentThrottle on the top will not miss the extra agents.
 		this.launcher = launcher;
 		this.controller = controller;
         this.connectedAgentsThrottle = connectedAgentsThrottle;
         this.agentUpdateChain = agentUpdateChain;
-		this.is_host_first_time_created = true;
+		this.is_host_first_time_created_flag = true;
         this.manifest_regular = undefined;
         this.manifest_snapshot = undefined;
+        this.is_init_timeout_flag = false;
 		this.agent_states = ["neverStarted", "online", "underUpdate", "updatesThePartner"];
 		this.instance = function(creator_ids){
             console.log("HostAsPair.instance(): creator_identifiers=",creator_ids);
@@ -371,36 +370,98 @@
                 this.agentUpdateChain.instance()
 			);
 		}
-        this.init=()=>{
-            this.connectedAgentsThrottle.init(this.launcher, this.controller);
+        this.run=()=>{
+            this.start_init_timeout(3000);
+            this.connectedAgentsThrottle.init(this.launcher, this.controller, this.is_init_timeout);
+            return this;
+        }
+        this.is_init_timeout=()=>{ return this.is_init_timeout_flag; }
+        this.start_init_timeout=(time_)=>{
+            setTimeout(()=>{
+                this.is_init_timeout_flag = true;
+                this.run_agents_after_first_host_init_timeout();
+            }, time_||3000);
+        }
+        this.run_agents_after_first_host_init_timeout=()=>{
+            //@-----------------------------------------------------------
             this.launcher.init(this.controller, this.agentUpdateChain.instance());
             this.controller.init(this.launcher, this.agentUpdateChain.instance());
+            //@like a first start on the remote machine, when a human starts the launcher
+            if(this.launcher.isOnline() && !this.controller.isOnline()){
+                this.launcher.compareCurManifest(this.last_manifest_snapshot).then(res=>{
+                    //@res = {compare:false, kill:false, update:false, start:true}
+                }).catch(err=>{
+                    console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.launcher.compareCurManifest() Error 1: ",err);
+                })
+            //@ this situation can occur, when both agents was continued to work, but server was restarted.
+            }else if(this.launcher.isOnline() && this.controller.isOnline()){
+                this.launcher.compareCurManifest(this.last_manifest_snapshot).then(res=>{
+                    //@res = {compare:false, kill:false, update:false, start:true}
+                    if(res.kill == false){
+                        this.controller.compareCurManifest(this.last_manifest_snapshot).then(res=>{
+                            this.controller.doNormalWork();
+                        }).catch(err=>{
+                            console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.controller.compareCurManifest() Error: ",err);
+                        })
+                    }
+                }).catch(err=>{
+                    console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.launcher.compareCurManifest() Error 2: ",err);
+                })
+            //@-----------------------------------------------------------
+            }else{
+                console.log("HostAsPair: run_agents_after_first_host_init_timeout(): Unhandled situation!");
+            }
         }
         //@ when first time calling this method
 		this.welcomeAgent = (agent_socket, agent_identifiers, manifest_snapshot)=>{
-            if(this.is_host_first_time_created){
-                this.is_host_first_time_created = false;
-                this.init();
-            }
-            this.manifest_snapshot = manifest_snapshot;
+            this.last_manifest_snapshot = manifest_snapshot;
             if(this.connectedAgentsThrottle.adaptConnectedAgent(agent_identifiers).isAllowed()){
                 const agent_type = agent_identifiers.agent_type;
-                if(["launcher", "controller"].includes(agent_type)){
-                    this[agent_type].welcomeAgent(agent_socket, agent_identifiers, manifest_snapshot);
+                this[agent_type].welcomeAgent(agent_socket, agent_identifiers, manifest_snapshot);
+                //@ first host init and agents update was finished.Now its a new agents connections and new singles comparings.
+                if(this.is_init_timeout()){
+                    this[agent_type].compareCurManifest(manifest_snapshot);
                 }
-                else{
-                    console.log("HostAsPair.welcomeAgent(): UNKNOWN Agent Type:",this.agent_identifiers);
-                    agent_socket.disconnect(0);
-                }
-            }	
+            }
 		}
         this.propagateManifest = (manifest_regular)=>{
             this.manifest_regular = manifest_regular;
-            //@ Imagine: 1) both agents is online and 2)both kinds of updates is exist. 
-            //@ So, we decide that launcher will first restart controller, and then vice versa
-            this.launcher.propagateManifest(manifest_regular).then(res=>{
-                this.controller.propagateManifest(manifest_regular);
-            }).catch(err=>{const is_it_normal="???"})
+            //@ 1) Look For WHom updates intended: manifest looks for 3 dirs: [controller, launcher, other]
+            //@ 2.1)  Either for both agents updates
+            //@ 2.2)  Or a somebody one
+            const upd_controller = manifest_regular.is_controller_upd();
+            const upd_launcher = manifest_regular.is_launcher_upd();
+            const upd_other = manifest_regular.is_other_upd();
+            if(upd_controller && upd_launcher){
+                this.launcher.propagateManifest([manifest_regular.forController(),manifest_regular.forOther()]).then(res=>{
+                    //@res = {compare:false, kill:false, update:false, start:true}
+                    if(res.kill == false){
+                        this.controller.propagateManifest(manifest_regular.forLauncher()).then(res=>{
+                            this.controller.doNormalWork();
+                        }).catch(err=>{
+                            console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.controller.propagateManifest() Error 1: ",err);
+                        })
+                    }
+                }).catch(err=>{
+                    console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.launcher.propagateManifest() Error 1: ",err);
+                })
+            }else if(upd_controller || upd_other){
+                //@ 2.2)  launcher must update controller
+                this.launcher.propagateManifest([manifest_regular.forController(),manifest_regular.forOther()]).then(res=>{
+                    console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.launcher.propagateManifest() OK: ",res);
+                }).catch(err=>{
+                    console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.launcher.propagateManifest() Error 2: ",err);
+                });
+            }else if(upd_launcher){
+                //@ 2.3)  controller must update launcher
+                this.controller.propagateManifest(manifest_regular.forLauncher()).then(res=>{
+                    console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.controller.propagateManifest() OK: ",res);
+                }).catch(err=>{
+                    console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.controller.propagateManifest() Error 2: ",err);
+                });
+            }else{
+                console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.propagateManifest() Unknown Error!");
+            }
             
         }
 	}
@@ -409,27 +470,38 @@
         this.launcher=undefined;
         this.controller=undefined;
         this.current_ids = undefined;
+        this.is_init_timeout_fu = undefined;
+        //@--------------------
         this.is_current_agent_allowed = true;
+        this.isAllowed=()=>{return this.is_current_agent_allowed;}
+        this.switchCurrentAgentAllowed=(is_allowed)=>{this.is_current_agent_allowed=is_allowed}
+        //@--------------------
         this.instance=()=>{return new ConnectedAgentsThrottle()}
-        this.init=(launcher, controller)=>{
+        this.init=(launcher, controller, is_init_timeout_fu)=>{
             this.launcher=launcher;
             this.controller=controller;
+            this.is_init_timeout_fu=is_init_timeout_fu;
         }
-        this.adaptConnectedAgent=(agent_identifiers)=>{
-            this.current_ids = agent_identifiers;
-            if(agent_identifiers.agent_type===this.launcher.agent_identifiers.agent_type){
-                //@Если пришёл Лончер, а он уже онлайн, тогда не разрешаем - явный дубликат.
-                if(this.launcher.isOnline()){
-                    this.is_current_agent_allowed = false;
-                }
-            }else if(agent_identifiers.agent_type===this.controller.agent_identifiers.agent_type){
-                if(this.controller.isOnline()){
-                    this.is_current_agent_allowed = false;
-                }
+        this.adaptConnectedAgent=(agent_ids)=>{
+            this.current_ids = agent_ids;
+            const ag_type = agent_ids.agent_type;
+            if(["launcher", "controller"].includes(ag_type)){
+                this.switchCurrentAgentAllowed(true);
+            }else{
+                this.switchCurrentAgentAllowed(false);
+                console.log("ConnectedAgentsThrottle: Unknow Agent type: ",agent_ids);
+                return this;
+            }
+            //@ so if one Agent already exist and there is coming one more the same Agent, In fact, we prohibit duplicates.
+            if(this[ag_type].isOnline()){
+                this.switchCurrentAgentAllowed(false);
+                console.log("ConnectedAgentsThrottle: Agent dublicated: ",agent_ids);
+            }else{
+                this.switchCurrentAgentAllowed(true);
             }
             return this;
         }
-        this.isAllowed=()=>{return this.is_current_agent_allowed;}
+        
     }
 
     //@----------------AgentUpdateChain------------------------
@@ -559,7 +631,7 @@
         }
         this.kill_partner=(socket, ids)=>{
             return new Promise((resolve,reject)=>{
-                const resolve_handler = function(res){resolve(res);}
+                const resolve_handler = function(res){resolve(res||{kill:true});}
                 socket.emit("kill_partner", ids).once("kill_partner", resolve_handler);
                 setTimeout(()=>{
                     socket.removeListener("kill_partner",resolve_handler);
@@ -612,22 +684,38 @@
             this.agent_socket = agent_socket;
             this.agent_identifiers = agent_identifiers;
             this.manifest_snapshot = manifest_snapshot;
-            this.switchUpdateMode(true);
-            new AgentUpdateChain(manifest_snapshot).run().then(res=>{
-                this.switchUpdateMode(false);
-            }).catch(err=>{
-                this.switchUpdateMode(false);
-            })
 		}
-        this.propagateManifest=(man)=>{
-            this.switchUpdateMode(true);
-            new AgentUpdateChain(man).run().then(res=>{
-                this.switchUpdateMode(false);
-            }).catch(err=>{
-                this.switchUpdateMode(false);
-            })
+        this.compareCurManifest=(man)=>{
+            return new Promise((resolve,reject)=>{
+                this.switchUpdateMode(true);
+                new AgentUpdateChain(man).run().then(res=>{
+                    this.switchUpdateMode(false);
+                    resolve(res);
+                }).catch(err=>{
+                    this.switchUpdateMode(false);
+                    reject(err);
+                })
+            });
         }
-
+        //@ launher must check controller's work Mode (normal or special ?)
+        this.propagateManifest=(man)=>{
+            if(this.controller.work_mode=="normal"){
+                this.switchUpdateMode(true);
+                new AgentUpdateChain(man).run().then(res=>{
+                    this.switchUpdateMode(false);
+                }).catch(err=>{
+                    this.switchUpdateMode(false);
+                })
+            }else{
+                console.log("Launcher.propagateManifest(): controller work mode is:"+this.controller.work_mode);
+            }
+        }
+        this.listenForDisconnect=()=>{
+            this.agent_socket.once('disconnect', ()=>{
+                this.switchOnline(false);
+                this.agent_socket = undefined;
+            });
+        }
         this.incoming_regular_manifest=(manifest_regular)=>{
             //@ 100% need to change because regular updater detects difference. 
             //@ Don't forget to control on Parent object level(Host) which of 3 Manifest are changes?
@@ -650,57 +738,6 @@
                 )
             }
         }
-        const update_the_partner=()=>{
-            new Chainer([kill_the_partner, update_the_files, start_the_partner]).run();
-            const chain = ["kill","update","start"];
-            kill_the_partner().then(res=>{
-                update_the_files().then(res=>{
-                    start_the_partner().then(res=>{
-
-                    })
-                })
-            })
-        }
-
-        function Chainer(chain){
-            this.chain = chain;
-            this.chain_length = (Array.isArray(chain))?chain.length:0;
-            this.counter=0;
-            this.run=()=>{
-                one_link();
-            }
-        }
-
-        this.listenForDisconnect=()=>{
-            this.agent_socket.once('disconnect', ()=>{
-                this.switchOnline(false);
-                this.agent_socket = undefined;
-            });
-        }
-        const compareManifest=()=>{
-            return new Promise((resolve,reject)=>{
-                const microtask = new Microtask("compareManifest");
-                this.microtaskStack.push(microtask);
-                this.agent_socket.emit('compareManifest', [this.manifest_actual.controller, this.manifest_actual.other]);
-                this.agent_socket.once('compareManifest',(res)=>{
-                    resolve(microtask.end(res));
-                });
-                setTimeout(()=>{
-                    reject(microtask.detail("Launcher.compareManifest() Timeout Error"));
-                }, 5000);
-            });
-        }
-        const define_latest_manifest=()=>{
-            if(this.manifest_regular){
-                this.manifest_actual = this.manifest_regular;
-                this.manifest_regular = undefined;
-                this.manifest_snapshot = undefined;
-            }else if(this.manifest_snapshot){
-                this.manifest_actual = this.manifest_snapshot;
-                this.manifest_snapshot = undefined;
-            }
-            return this.manifest_actual;
-        }
 	}	
 	function Controller(specialControllerMode, normalControllerMode, agent_identifiers){
         this.specialControllerMode = specialControllerMode;
@@ -710,6 +747,7 @@
         this.launcher = undefined;//run
         this.agent_socket = undefined;
         this.launcher_state = undefined;
+        this.work_mode ="normal";
         //@----------------------------
         this.is_online_flag=(agent_identifiers)?true:false;
 		this.isOnline=function(){return this.is_online_flag}
@@ -732,26 +770,48 @@
             this.switchOnline(true);
             this.listenForDisconnect();
 			this.agent_socket = agent_socket;
-			this.agent_identifiers = agent_identifiers;//{agent_type, md5, ip, pid, ppid, apid}
-            if(this.launcher_state=="updatesThePartner"){
-                console.log("Controller.welcomeAgent(): launcher now updates me ?!");
-            }
-			//console.log("Controller.welcomeAgent(): jobs="+JSON.stringify(jobs));
-            //@ send all jobs to controller
-			jobs.config.forEach(obj=>{
-				console.log("one job ="+JSON.stringify(obj))
-				agent_socket.emit(obj.job, obj);
-				agent_socket.once(obj.job, res=>{
-					console.log("controller says:"+JSON.stringify(res));
-				});
-			}); 
-            this.listenForDisconnect=()=>{
-                this.agent_socket.once('disconnect', ()=>{
-                    this.switchOnline(false);
-                    this.agent_socket = undefined;
-                });
-            }
+			this.agent_identifiers = agent_identifiers;//{agent_type, md5, ip, pid, ppid, apid} 
 		}
+        this.listenForDisconnect=()=>{
+            this.agent_socket.once('disconnect', ()=>{
+                this.switchOnline(false);
+                this.agent_socket = undefined;
+            });
+        }
+        this.compareCurManifest=(man)=>{
+            return new Promise((resolve,reject)=>{
+                this.switchUpdateMode(true);
+                new AgentUpdateChain(man).run().then(res=>{
+                    this.switchUpdateMode(false);
+                    resolve(res);
+                }).catch(err=>{
+                    this.switchUpdateMode(false);
+                    reject(err);
+                })
+            });
+        }
+        this.doNormalWork=()=>{
+            if(this.work_mode == "normal"){
+                this.normalControllerMode.do();
+                // jobs.config.forEach(obj=>{
+                //     console.log("one job ="+JSON.stringify(obj))
+                //     agent_socket.emit(obj.job, obj);
+                //     agent_socket.once(obj.job, res=>{
+                //         console.log("controller says:"+JSON.stringify(res));
+                //     });
+                // });
+            }else if(this.work_mode == "special"){
+                this.specialControllerMode.do();
+            }
+        }
+        this.propagateManifest=(man)=>{
+            this.switchUpdateMode(true);
+            new AgentUpdateChain(man).run().then(res=>{
+                this.switchUpdateMode(false);
+            }).catch(err=>{
+                this.switchUpdateMode(false);
+            })
+        }
 		
     }
     function Microtask(name){
