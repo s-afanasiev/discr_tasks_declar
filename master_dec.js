@@ -128,14 +128,17 @@
                                 )
                             ),
                             new ConnectedAgentsThrottle(
-                                new ReserveRedundantAgents()
+                                new RedundantAgentsReservation()
                             ),
                             //@ host pass this object to Agents through run-method and they will also use new instances of that object on every reconnect
-                            new AgentUpdateChain(
-                                new CompareManifest(),
-                                new KillingPartner(),
-                                new UpdatingFiles(),
-                                new StartingPartner()
+                            new AgentUpdateChain(                               
+                                new StartingPartner(
+                                    new UpdatingFiles(
+                                        new KillingPartner(
+                                            new CompareManifest()
+                                        )
+                                    )
+                                )
                             )
                         ),
                         new AgentRecognizing()
@@ -312,20 +315,22 @@
                     resolve(this.agent_identifiers);
                 }else{
                     //console.log("AgentRecognizing.identifiers(): emit 'identifiers' event");
-                    socket.emit('identifiers');
-                    socket.once('identifiers',(identifiers)=>{
+                    const socket_handler=function(identifiers){
                         //@ identifiers = {agent_type, sid, md5, ip, pid, ppid, apid}
-                        //@ in this case identifiers was passed in object form (as is) from the agent side, then automatically stringified while transfer through socket.io and here we received them already parsed in object form again. As opposed to another transmission method
                         console.log("AgentRecognizing.identifiers() as is",identifiers);
                         resolve(identifiers?identifiers:{});
-                    });
-                    setTimeout(()=>{reject(new Error("AgentRecognizing.run() timeout Error"))}, 10000);
+                    }
+                    socket.emit('identifiers').once('identifiers',socket_handler);
+                    setTimeout(()=>{
+                        socket.removeListener('identifiers', socket_handler);
+                        reject(new Error("AgentRecognizing.run() timeout Error"));
+                    }, 10000);
                 }
 			});
 		}
 	}
 
-    function ReserveRedundantAgents(workWithAgents){
+    function RedundantAgentsReservation(workWithAgents){
         this.workWithAgents = workWithAgents;
         this.is_timeout = false;
         this.launcher = undefined;
@@ -352,11 +357,10 @@
 		this.controller = controller;
         this.connectedAgentsThrottle = connectedAgentsThrottle;
         this.agentUpdateChain = agentUpdateChain;
-		this.is_first_created = true;
+		this.is_host_first_time_created = true;
         this.manifest_regular = undefined;
         this.manifest_snapshot = undefined;
 		this.agent_states = ["neverStarted", "online", "underUpdate", "updatesThePartner"];
-        //console.log("HostAsPair: jobs="+JSON.stringify(jobs));
 		this.instance = function(creator_ids){
             console.log("HostAsPair.instance(): creator_identifiers=",creator_ids);
             const agtype = creator_ids.agent_type;
@@ -367,15 +371,19 @@
                 this.agentUpdateChain.instance()
 			);
 		}
-        this.run=()=>{
-            this.connectedAgentsThrottle.run(this.launcher, this.controller);
-            this.launcher.run(this.controller, this.agentUpdateChain.instance());
-            this.controller.run(this.launcher, this.agentUpdateChain.instance());
-            return this;
+        this.init=()=>{
+            this.connectedAgentsThrottle.init(this.launcher, this.controller);
+            this.launcher.init(this.controller, this.agentUpdateChain.instance());
+            this.controller.init(this.launcher, this.agentUpdateChain.instance());
         }
+        //@ when first time calling this method
 		this.welcomeAgent = (agent_socket, agent_identifiers, manifest_snapshot)=>{
+            if(this.is_host_first_time_created){
+                this.is_host_first_time_created = false;
+                this.init();
+            }
             this.manifest_snapshot = manifest_snapshot;
-            if(this.connectedAgentsThrottle.isAllowConnectedAgent(agent_identifiers)){
+            if(this.connectedAgentsThrottle.adaptConnectedAgent(agent_identifiers).isAllowed()){
                 const agent_type = agent_identifiers.agent_type;
                 if(["launcher", "controller"].includes(agent_type)){
                     this[agent_type].welcomeAgent(agent_socket, agent_identifiers, manifest_snapshot);
@@ -396,10 +404,186 @@
             
         }
 	}
+    function ConnectedAgentsThrottle(){
+        this.redundantAgentsArray=[];
+        this.launcher=undefined;
+        this.controller=undefined;
+        this.current_ids = undefined;
+        this.is_current_agent_allowed = true;
+        this.instance=()=>{return new ConnectedAgentsThrottle()}
+        this.init=(launcher, controller)=>{
+            this.launcher=launcher;
+            this.controller=controller;
+        }
+        this.adaptConnectedAgent=(agent_identifiers)=>{
+            this.current_ids = agent_identifiers;
+            if(agent_identifiers.agent_type===this.launcher.agent_identifiers.agent_type){
+                //@Если пришёл Лончер, а он уже онлайн, тогда не разрешаем - явный дубликат.
+                if(this.launcher.isOnline()){
+                    this.is_current_agent_allowed = false;
+                }
+            }else if(agent_identifiers.agent_type===this.controller.agent_identifiers.agent_type){
+                if(this.controller.isOnline()){
+                    this.is_current_agent_allowed = false;
+                }
+            }
+            return this;
+        }
+        this.isAllowed=()=>{return this.is_current_agent_allowed;}
+    }
 
+    //@----------------AgentUpdateChain------------------------
+    function AgentUpdateChain(manifest){
+        this.instance=(...args)=>{return new AgentUpdateChain(args)}
+        this.manifest=manifest;
+        this.run=(man, socket)=>{
+            return new Promise((resolve,reject)=>{
+                new StartingPartner(
+                    new UpdatingFiles(
+                        new KillingPartner(
+                            new CompareManifest(this.manifest)
+                        )
+                    )
+                ).run(man, socket).then(res=>{
+                    resolve(res);
+                }).catch(err=>{
+                    reject(err);
+                })
+            });
+        }
+    }
+    function StartingPartner(updatingFiles){
+        this.updatingFiles=updatingFiles;
+        this.run=(man, socket, adminAgent, exposedAgent)=>{
+            return new Promise((resolve,reject)=>{
+                this.updatingFiles.run(man, socket).then(res=>{
+                    if(exposedAgent.is_online){
+                        resolve();
+                    }else{
+                        this.start_partner().then(res=>{
+                            resolve();
+                        }).catch(err=>{
+                            reject("StartingPartner: cant start partner. "+err);
+                        });
+                    }
+                }).catch(err=>{
+                    reject("StartingPartner: this.updatingFiles err: "+err);
+                })
+            });
+        }
+        this.start_partner=(man, socket, adminAgent, exposedAgent)=>{
+            return new Promise((resolve,reject)=>{
+                const resolve_handler = function(res){resolve(res);}
+                socket.emit("start_partner", ids).once("start_partner", resolve_handler);
+                setTimeout(()=>{
+                    socket.removeListener("start_partner",resolve_handler);
+                    reject("update_files timeout. ");
+                }, 5000);
+            })
+        }
+    }
+    function UpdatingFiles(killingPartner){
+        this.killingPartner=killingPartner;
+        this.run=(man, socket)=>{
+            return new Promise((resolve,reject)=>{
+                this.killingPartner.run(man, socket).then(compare_info=>{
+                    if(compare_info.is_changes){
+                        this.update_files().then(res={
+                            resolve(compare_info);
+                        }).catch(err=>{
+                            reject("UpdatingFiles: "+err);
+                        });
+                    } else{
+                        resolve(compare_info);
+                    }
+                }).catch(err=>{
+                    reject("UpdatingFiles rejected: "+err);
+                })
+            });
+        }
+        this.update_files=()=>{
+            return new Promise((resolve,reject)=>{
+                const resolve_handler = function(res){resolve(res);}
+                socket.emit("update_files", ids).once("update_files", resolve_handler);
+                setTimeout(()=>{
+                    socket.removeListener("update_files",resolve_handler);
+                    reject("update_files timeout. ");
+                }, 5000);
+            })
+        }
+    }
+    function OperationWithAttempts(operation, attempts){
+        this.operation=operation;
+        this.attempts=attempts;
+        this.instance=(operation, attempts)=>{
+            return new OperationWithAttempts(operation, attempts);
+        }
+        this.run=(args)=>{
+            return new Promise((resolve,reject)=>{
+                this.attempt(args, (err,res)=>{
+                    if(err)reject(err);
+                    else resolve(res)
+                });
+            });
+        }
+        this.attempt=(man, socket, cb)=>{
+            killingPartner.run(man, socket).then(res=>{
+                cb(undefined, res);
+            }).catch(err=>{
+                if(--this.attempts>0){
+                    this.attempt(man, socket, cb);
+                }
+            })
+        }
+    }
+    function KillingPartner(compareManifest){
+        //@ must deside 3 things: 1) is partner exist 2) is need to update him 3) if partner is controller and is it in special mode
+        this.compareManifest=compareManifest;
+        this.run=(man, socket)=>{
+            return new Promise((resolve,reject)=>{
+                this.compareManifest.run(man, socket).then(compare_info=>{
+                    const c1 = compare_info.is_changes;
+                    const c2 = this.partner.online;
+                    const c3 = this.agent_type=="launcher" && this.partner.mode != "special";
+                    if(c1&c2&c3){
+                        this.kill_partner(socket, ids).then(res=>{
+                            resolve(compare_info)
+                        }).catch(err=>{
+                            reject(err);
+                        });
+                    }else{resolve(compare_info)}
+                }).catch(err=>{
+                    reject("KillingPartner: previous step 'compare' failed. "+err);
+                })
+            });
+        }
+        this.kill_partner=(socket, ids)=>{
+            return new Promise((resolve,reject)=>{
+                const resolve_handler = function(res){resolve(res);}
+                socket.emit("kill_partner", ids).once("kill_partner", resolve_handler);
+                setTimeout(()=>{
+                    socket.removeListener("kill_partner",resolve_handler);
+                    reject("KillingPartner: kill_partner timeout. ");
+                }, 3000);
+            })
+        }
+    }
+    function CompareManifest(manifest){
+        this.manifest=manifest;
+        this.run=(socket)=>{
+            return new Promise((resolve,reject)=>{
+                const resolve_handler = function(changes){resolve(changes);}
+                socket.emit('compareManifest', this.manifest).once('compareManifest', resolve_handler);
+                setTimeout(()=>{
+                    socket.removeListener("compareManifest",resolve_handler);
+                    reject("CompareManifest timeout. ");
+                }, 5000);
+            })
+        }
+    }    
+    //@---------------------------------------------------
 	function Launcher(agent_identifiers){
         this.agent_identifiers = agent_identifiers;
-        this.state = (agent_identifiers)?"neverStarted":"online";
         this.controller = undefined;
         this.agentUpdateChain = undefined;
         this.hasNowUpdatesThePartner = false;
@@ -408,24 +592,41 @@
         this.manifest_regular = undefined;
         this.manifest_actual = undefined;
         this.microtaskStack = [];
+        //@----------------------------
+        this.is_online_flag=(agent_identifiers)?true:false;
+		this.isOnline=function(){return this.is_online_flag;}
+		this.switchOnline=function(is_online){this.is_online_flag=is_online;}
+        this.is_update_mode_flag=false;
+        this.isUpdateMode=(is_update_mode)=>{return this.is_update_mode_flag;}
+        this.switchUpdateMode=(is_update_mode)=>{this.is_update_mode_flag = is_update_mode;}
+        //@----------------------------
 		this.instance=function(agent_identifiers){ return new Launcher(agent_identifiers); }
-		this.run =(controller, agentUpdateChain)=>{
+		this.init=(controller, agentUpdateChain)=>{
             this.controller = controller;
             this.agentUpdateChain = agentUpdateChain;
             return this;
         }
-        this.welcomeAgent = (agent_identifiers, manifest_snapshot)=>{
-            this.state = "online";
+        this.welcomeAgent=(agent_socket, agent_identifiers, manifest_snapshot)=>{
+            this.switchOnline(true);
+			this.listenForDisconnect();
+            this.agent_socket = agent_socket;
             this.agent_identifiers = agent_identifiers;
             this.manifest_snapshot = manifest_snapshot;
-			listenForDisconnect();
-            compareManifest(define_latest_manifest()).then(changes=>{
-                if(changes){
-
-                }else if(!changes){}
-            }).catch(err=>{console.log(err)});
+            this.switchUpdateMode(true);
+            new AgentUpdateChain(manifest_snapshot).run().then(res=>{
+                this.switchUpdateMode(false);
+            }).catch(err=>{
+                this.switchUpdateMode(false);
+            })
 		}
-        
+        this.propagateManifest=(man)=>{
+            this.switchUpdateMode(true);
+            new AgentUpdateChain(man).run().then(res=>{
+                this.switchUpdateMode(false);
+            }).catch(err=>{
+                this.switchUpdateMode(false);
+            })
+        }
 
         this.incoming_regular_manifest=(manifest_regular)=>{
             //@ 100% need to change because regular updater detects difference. 
@@ -470,9 +671,9 @@
             }
         }
 
-        const listenForDisconnect=()=>{
+        this.listenForDisconnect=()=>{
             this.agent_socket.once('disconnect', ()=>{
-                this.state = "disconnected";
+                this.switchOnline(false);
                 this.agent_socket = undefined;
             });
         }
@@ -500,8 +701,59 @@
             }
             return this.manifest_actual;
         }
-	}
-
+	}	
+	function Controller(specialControllerMode, normalControllerMode, agent_identifiers){
+        this.specialControllerMode = specialControllerMode;
+        this.normalControllerMode = normalControllerMode;
+        this.agent_identifiers = agent_identifiers;
+        this.agentUpdateChain = undefined;//run
+        this.launcher = undefined;//run
+        this.agent_socket = undefined;
+        this.launcher_state = undefined;
+        //@----------------------------
+        this.is_online_flag=(agent_identifiers)?true:false;
+		this.isOnline=function(){return this.is_online_flag}
+		this.switchOnline=function(is_online){this.is_online_flag=is_online;}
+        //@----------------------------
+		this.instance=function(agent_identifiers){
+            return new Controller(
+                this.specialControllerMode,
+                this.normalControllerMode, 
+                agent_identifiers
+            );
+        }
+		this.init =(launcher, agentUpdateChain)=>{
+            this.launcher = launcher;
+            this.agentUpdateChain = agentUpdateChain;
+            return this;
+        }
+		this.welcomeAgent = (agent_socket, agent_identifiers, manifest_snapshot)=>{
+            this.launcher_state = launcher_state;
+            this.switchOnline(true);
+            this.listenForDisconnect();
+			this.agent_socket = agent_socket;
+			this.agent_identifiers = agent_identifiers;//{agent_type, md5, ip, pid, ppid, apid}
+            if(this.launcher_state=="updatesThePartner"){
+                console.log("Controller.welcomeAgent(): launcher now updates me ?!");
+            }
+			//console.log("Controller.welcomeAgent(): jobs="+JSON.stringify(jobs));
+            //@ send all jobs to controller
+			jobs.config.forEach(obj=>{
+				console.log("one job ="+JSON.stringify(obj))
+				agent_socket.emit(obj.job, obj);
+				agent_socket.once(obj.job, res=>{
+					console.log("controller says:"+JSON.stringify(res));
+				});
+			}); 
+            this.listenForDisconnect=()=>{
+                this.agent_socket.once('disconnect', ()=>{
+                    this.switchOnline(false);
+                    this.agent_socket = undefined;
+                });
+            }
+		}
+		
+    }
     function Microtask(name){
         this.name = name;
         this.done=false;
@@ -518,51 +770,6 @@
         this.isDone=()=>{
             return this.done;
         }
-    }
-	
-	function Controller(specialControllerMode, normalControllerMode, agent_identifiers){
-        this.specialControllerMode = specialControllerMode;
-        this.normalControllerMode = normalControllerMode;
-        this.agent_identifiers = agent_identifiers;
-        this.state = (agent_identifiers)?"neverStarted":"online";
-        this.agentUpdateChain = undefined;//run
-        this.launcher = undefined;//run
-        this.agent_socket = undefined;
-        this.launcher_state = undefined;
-		this.instance=function(agent_identifiers){
-            return new Controller(
-                this.specialControllerMode,
-                this.normalControllerMode, 
-                agent_identifiers
-            );
-        }
-		this.run =(launcher, agentUpdateChain)=>{
-            this.launcher = launcher;
-            this.agentUpdateChain = agentUpdateChain;
-            return this;
-        }
-		this.welcomeAgent = (agent_identifiers, manifest_snapshot, jobs, launcher_state)=>{
-            this.launcher_state = launcher_state;
-            this.state = "online";
-			this.agent_identifiers = agent_identifiers;//{agent_type, md5, ip, pid, ppid, apid}
-			agent_socket.once('disconnect', ()=>{
-                this.state = "disconnected";
-                this.agent_socket = undefined;
-            });
-            if(this.launcher_state=="updatesThePartner"){
-                console.log("Controller.welcomeAgent(): launcher now updates me ?!");
-            }
-			//console.log("Controller.welcomeAgent(): jobs="+JSON.stringify(jobs));
-            //@ send all jobs to controller
-			jobs.config.forEach(obj=>{
-				console.log("one job ="+JSON.stringify(obj))
-				agent_socket.emit(obj.job, obj);
-				agent_socket.once(obj.job, res=>{
-					console.log("controller says:"+JSON.stringify(res));
-				});
-			}); 
-		}
-		
     }
     
     function IoBrowser(){}
