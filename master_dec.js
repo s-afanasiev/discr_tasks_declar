@@ -116,19 +116,15 @@
                     )
                 ),
                 new BrowserIoClients(),
-                new HostSystem(
+                new UpdatableHostCluster(
                     new Manifest(new DirStructure(), new DirsComparing()),
                     new HostCluster(
                         new HostAsPair(
                             new Launcher(),
                             new Controller(
-                                new ChoosingAgentMode(
-                                    new SpecialAgentMode(),
-                                    new NormalAgentMode(
-                                        new RegularControllerWork(
-                                            new Jobs(jobs_config)
-                                        )
-                                    )
+                                new SpecialControllerMode(),
+                                new NormalControllerMode(
+                                    new Jobs(jobs_config)
                                 )
                             ),
                             new ConnectedAgentsThrottle(
@@ -149,23 +145,23 @@
         }
 	}
 
-    function ZooKeeper(ioServer, browserIoClients, hostSystem){
+    function ZooKeeper(ioServer, browserIoClients, updatableHostCluster){
         this.ioServer=ioServer;
         this.browserIoClients=browserIoClients;
-        this.hostSystem=hostSystem;
+        this.updatableHostCluster=updatableHostCluster;
         this.run=()=>{
-            this.browserIoClients.run(this.hostSystem);
-            this.hostSystem.run(this.browserIoClients);
-            this.ioServer.run(this.hostSystem, this.browserIoClients);
+            this.browserIoClients.run(this.updatableHostCluster);
+            this.updatableHostCluster.run(this.browserIoClients);
+            this.ioServer.run(this.updatableHostCluster, this.browserIoClients);
         }
     }
 
     function IoServer(httpServer){
         this.httpServer = httpServer;
-        this.hostSystem=undefined;
+        this.updatableHostCluster=undefined;
         this.browserIoClients=undefined;
-        this.run=(hostSystem, browserIoClients)=>{
-            this.hostSystem = hostSystem;
+        this.run=(updatableHostCluster, browserIoClients)=>{
+            this.updatableHostCluster = updatableHostCluster;
             this.browserIoClients = browserIoClients;
             require('socket.io')(this.httpServer.run().http).on('connection', (socket) => {
                 console.log("IoServer2.run() connection:"+socket.id);
@@ -176,13 +172,13 @@
                     agent_identifiers: new ParsedJSON(socket.handshake.query.agent_identifiers).run()
                 }
                 if(io_srv_msg.browser_or_agent == "agent"){
-                    console.log("HostSystem.socketConnected() Agent connected!");
-                    this.hostSystem.welcomeAgent(io_srv_msg);
+                    console.log("UpdatableHostCluster.socketConnected() Agent connected!");
+                    this.updatableHostCluster.welcomeAgent(io_srv_msg);
                 }else if(io_srv_msg.browser_or_agent == "browser"){
-                    console.log("HostSystem.socketConnected() Browser connected!");
+                    console.log("UpdatableHostCluster.socketConnected() Browser connected!");
                     this.browserIoClients.welcomeAgent(io_srv_msg);
                 }else{
-                    console.log("HostSystem.socketConnected() error: nor browser or agent!");
+                    console.log("UpdatableHostCluster.socketConnected() error: nor browser or agent!");
                 }
             });
         }
@@ -193,7 +189,7 @@
         this.run=()=>{return (this.stringifiedJson) ? JSON.parse(this.stringifiedJson) : {}}
     }
 
-    function HostSystem(manifest, hostCluster){
+    function UpdatableHostCluster(manifest, hostCluster){
         this.manifest = manifest;
         this.hostCluster = hostCluster;
         this.run=(browserIoClients)=>{
@@ -373,56 +369,39 @@
 		}
         this.run=()=>{
             this.connectedAgentsThrottle.run(this.launcher, this.controller);
-            this.launcher.run(
-                this.controller, 
-                this.connectedAgentsThrottle.instance(), 
-                this.agentUpdateChain.instance()
-            );
-            this.controller.run(
-                this.launcher, 
-                this.connectedAgentsThrottle.instance(), 
-                this.agentUpdateChain.instance()
-            );
+            this.launcher.run(this.controller, this.agentUpdateChain.instance());
+            this.controller.run(this.launcher, this.agentUpdateChain.instance());
             return this;
         }
+		this.welcomeAgent = (agent_socket, agent_identifiers, manifest_snapshot)=>{
+            this.manifest_snapshot = manifest_snapshot;
+            if(this.connectedAgentsThrottle.isAllowConnectedAgent(agent_identifiers)){
+                const agent_type = agent_identifiers.agent_type;
+                if(["launcher", "controller"].includes(agent_type)){
+                    this[agent_type].welcomeAgent(agent_socket, agent_identifiers, manifest_snapshot);
+                }
+                else{
+                    console.log("HostAsPair.welcomeAgent(): UNKNOWN Agent Type:",this.agent_identifiers);
+                    agent_socket.disconnect(0);
+                }
+            }	
+		}
         this.propagateManifest = (manifest_regular)=>{
             this.manifest_regular = manifest_regular;
             //@ Imagine: 1) both agents is online and 2)both kinds of updates is exist. 
             //@ So, we decide that launcher will first restart controller, and then vice versa
-            this.launcher.propagateManifest(manifest_regular);
-            this.controller.propagateManifest(manifest_regular);
+            this.launcher.propagateManifest(manifest_regular).then(res=>{
+                this.controller.propagateManifest(manifest_regular);
+            }).catch(err=>{const is_it_normal="???"})
+            
         }
-		this.welcomeAgent = (agent_socket, agent_identifiers, manifest_snapshot)=>{
-            this.current_socket = agent_socket;
-            this.current_identifiers = agent_identifiers;
-            this.manifest_snapshot = manifest_snapshot;
-            const agent_type = agent_identifiers.agent_type;
-			if(["launcher", "controller"].includes(agent_type)){
-                this[agent_type].welcomeAgent(agent_socket, agent_identifiers, manifest_snapshot);
-            }
-            else{
-                console.log("HostAsPair.welcomeAgent(): UNKNOWN Agent Type:",this.agent_identifiers);
-                agent_socket.disconnect(0);
-            }	
-		}
-		this.onData = function(cb){this.cbData = cb}
 	}
 
-    function ChoosingHostEvent(connectedAgentsThrottle, distributingRegularManifest, choosingAgentMode){
-        this.connectedAgentsThrottle=connectedAgentsThrottle;
-        this.distributingRegularManifest=distributingRegularManifest;
-        this.choosingAgentMode=choosingAgentMode;
-        this.run=(launcher, controller, jobs)=>{
-            this.connectedAgentsThrottle.run(launcher, controller, jobs, choosingAgentMode);
-            this.distributingRegularManifest.run(launcher, controller, jobs, choosingAgentMode);
-        }
-        this.welcomeAgent=()=>{}
-        this.propagateManifest=()=>{}
-    }
-	
 	function Launcher(agent_identifiers){
         this.agent_identifiers = agent_identifiers;
         this.state = (agent_identifiers)?"neverStarted":"online";
+        this.controller = undefined;
+        this.agentUpdateChain = undefined;
         this.hasNowUpdatesThePartner = false;
         this.agent_socket = undefined;
         this.manifest_snapshot = undefined;
@@ -430,8 +409,9 @@
         this.manifest_actual = undefined;
         this.microtaskStack = [];
 		this.instance=function(agent_identifiers){ return new Launcher(agent_identifiers); }
-		this.run =(agent_socket)=>{
-            this.agent_socket = agent_socket;
+		this.run =(controller, agentUpdateChain)=>{
+            this.controller = controller;
+            this.agentUpdateChain = agentUpdateChain;
             return this;
         }
         this.welcomeAgent = (agent_identifiers, manifest_snapshot)=>{
@@ -540,14 +520,25 @@
         }
     }
 	
-	function Controller(agent_identifiers){
+	function Controller(specialControllerMode, normalControllerMode, agent_identifiers){
+        this.specialControllerMode = specialControllerMode;
+        this.normalControllerMode = normalControllerMode;
         this.agent_identifiers = agent_identifiers;
         this.state = (agent_identifiers)?"neverStarted":"online";
+        this.agentUpdateChain = undefined;//run
+        this.launcher = undefined;//run
         this.agent_socket = undefined;
         this.launcher_state = undefined;
-		this.instance=function(agent_identifiers){ return new Controller(agent_identifiers); }
-		this.run =(agent_socket)=>{
-            this.agent_socket = agent_socket;
+		this.instance=function(agent_identifiers){
+            return new Controller(
+                this.specialControllerMode,
+                this.normalControllerMode, 
+                agent_identifiers
+            );
+        }
+		this.run =(launcher, agentUpdateChain)=>{
+            this.launcher = launcher;
+            this.agentUpdateChain = agentUpdateChain;
             return this;
         }
 		this.welcomeAgent = (agent_identifiers, manifest_snapshot, jobs, launcher_state)=>{
