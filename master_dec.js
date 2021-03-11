@@ -214,6 +214,7 @@
 
     //@ ready=1
 	function Manifest(dirStructure, dirsComparing){
+        this.glob_update_path = (UPDATE_FOLD) ? UPDATE_FOLD : "\\update"
         this.hostCluster=undefined;
         this.dirStructure=dirStructure;
         this.dirsComparing=dirsComparing;
@@ -223,21 +224,13 @@
 		//@ stumb for new connected agents, give them something not null
 		this.current = ()=>{ return prev_man };
         this.run = function(hostCluster){
-            return;
             this.hostCluster=hostCluster;
-			//@ thumb
-			//return this;
-            //@ Первый раз(при инициализации сервера) читаем манифест синхронно
-            const man = this.dirStructure.read_sync(manifest.path);
-            //@ Если прочитать не удалось - сообщаем Контроллеру
-            if(man instanceof Error) console.log("getting manifest error");
-            //@ Если прочитать удалось - сохраняем результат для последующих сравнений
-            this.prev_man = man;
+            this.prev_man = this.dirStructure.manOfDirSync(this.glob_update_path); //sync
             setTimeout(()=>{this.nextManifest()}, this.timer);
             return this;       
         }        
         this.nextManifest = function(){
-            const man = this.dirStructure.read_async(manifest.path).then(next_man=>{
+            this.dirStructure.manOfDirAsync(this.glob_update_path).then(next_man=>{
                 const dirs_compare_diff = this.dirsComparing.compare(next_man, this.prev_man);
                 if(dirs_compare_diff) {
                     this.prev_man = next_man;
@@ -249,8 +242,78 @@
         }
         return this;
     }
-    function DirStructure(){}
-    function DirsComparing(){}
+    function DirStructure(){
+        this.manOfDirAsync=(look_dir)=>{
+            return new Promise((resolve, reject)=>{
+                this.walk(look_dir, look_dir, function(err, results) {
+                    (err) ? reject(err): resolve(results);
+                });
+            });
+        }
+        this.walk=(cur_path, root_path, cbDone)=>{
+            var results = [];
+            fs.readdir(cur_path, function(err, list) {
+                if (err) return cbDone(err);
+                let cur_path_without_root = (cur_path.length > root_path.length) ? cur_path.slice(root_path.length) : "";
+                var pending = list.length;
+                if (!pending) return cbDone(null, results);
+                list.forEach(function(file) {
+                    let file_path_without_root = cur_path_without_root + "\\" + file;
+                    file = cur_path + "\\" + file;
+                    fs.stat(file, function(err, stat) {
+                        if (stat && stat.isDirectory()) {
+                            walk(file, root_path, function(err, res) {
+                                if(err) return cbDone(err);
+                                else results = results.concat(res);
+                                if (!--pending) cbDone(null, results);
+                            });
+                        }else{
+                            let inner_res = [];
+                            inner_res.push(file_path_without_root);
+                            inner_res.push(stat.size);
+                            inner_res.push(stat.mtime);
+                            results.push(inner_res);
+                            if (!--pending) cbDone(null, results);
+                        }
+                    });
+                });
+            });
+        }
+        this.manOfDirSync=(look_path)=>{
+            var walk = function(dir, root_path) {
+                var results = [];
+                var list = [];
+                try {
+                    list = fs.readdirSync(dir);
+                }catch(er){ return results; }
+                let rel_path = (dir.length > root_path.length) ? dir.slice(root_path.length) : "";
+                list.forEach(function(file) {
+                    let rel_file_path = rel_path + "\\" + file;
+                    //@same effect: file = dir + "\\" + file;
+                    file = path.resolve(dir, file);
+                    let stat;
+                    try {
+                        stat = fs.statSync(file);
+                    }catch(er){return; }
+                    if(stat){
+                        if (stat.isDirectory()) {
+                            let list2 = walk(file, root_path)
+                            results = results.concat(list2);
+                        }else{
+                            results.push([rel_file_path, stat.size, stat.mtime]);
+                        }
+                    }
+                });
+                return results;
+            };
+            return walk(look_path, look_path);
+        }
+    }
+    function DirsComparing(){
+        this.compare=(next_man, prev_man)=>{
+
+        }
+    }
 	
 	function HostCluster(hostAsPair, agentRecognizing){
         this.hostAsPair = hostAsPair;
@@ -3384,12 +3447,10 @@ function initialize_main_glob_struct(){
         compare: function(old, fresh){
             if ((old)&&(old.length > 0)&&(fresh)&&(fresh.length > 0)){
                 let changes = compare_manifests_2rp(old, fresh);
-                //delete_this_later:("CHANGES====", changes);
                 if ((changes.copy_names.length > 0) || (changes.empty_dirs.length > 0)) {
                     console.log("there are update files!");
                     return true;
                 } else {
-                    //delete_this_later:("no updates ...");
                     return false;
                 }
             }
@@ -3770,92 +3831,6 @@ function read_settings(json_path)
 	}
 }
 
-function get_dir_manifest_async(look_path) {
-    return new Promise((resolve, reject) => {
-        var walk = function(dir, root_path, done) {
-            var results = [];
-            fs.readdir(dir, function(err, list) {
-                if (err) return done(err);
-                //* dir  - is inner directory of root dir, so we trim the root part and get relative path
-                let rel_path = (dir.length > root_path.length) ? dir.slice(root_path.length) : "";
-                var pending = list.length;
-                if (!pending) return done(null, results);
-                //*list = array of files names in directory
-                list.forEach(function(file) {
-                    let rel_file_path = rel_path + "\\" + file;
-                    //same: file = dir + "\\" + file;
-                    file = path.resolve(dir, file);
-                    fs.stat(file, function(err, stat) {
-                        if (stat && stat.isDirectory()) {
-                            walk(file, root_path, function(err, res) {
-                                if (res.length == 0) { 
-                                    results.push([rel_file_path, stat.size, stat.mtime, "empty_dir"]);
-                                }
-                                //delete_this_later:("RESULTS:", res);
-                                results = results.concat(res);
-                                if (!--pending) done(null, results);
-                            });
-                        }
-                        else {
-                            results.push([rel_file_path, stat.size, stat.mtime]);
-                            if (!--pending) done(null, results);
-                        }
-                    });
-                });
-            });
-        };
-        walk(look_path, look_path, function(err, results) {
-            //if (err) throw err;
-            if (err) reject(err);
-            else resolve(results);
-        });
-        setTimeout(()=>{reject("ERR: timeout viewing the update directory");}, 5000);
-    });
-}
-
-function get_dir_manifest_sync(look_path) {
-    var walk = function(dir, root_path) {
-        var results = [];
-        var list = [];
-        try {
-            list = fs.readdirSync(dir);
-        } catch(er) {
-            return results;
-        }
-        //* dir  - is inner directory of root dir, so we trim the root part and get relative path
-        let rel_path = (dir.length > root_path.length) ? dir.slice(root_path.length) : "";
-        //*list = array of files names in directory
-        list.forEach(function(file) {
-            let rel_file_path = rel_path + "\\" + file;
-            //same: file = dir + "\\" + file;
-            file = path.resolve(dir, file);
-            let stat;
-            try {
-                stat = fs.statSync(file);
-            } catch(er) {
-                return;
-            }
-            if (stat) {
-                if (stat.isDirectory()) {
-                    //-? walk() returns array of statistic arrays
-                    let list2 = walk(file, root_path)
-                    //-? means that folder was empty
-                    if (list2.length == 0) { 
-                        results.push([rel_file_path, stat.size, stat.mtime, "empty_dir"]);
-                    }
-                    //-? concat array of statistics or []
-                    results = results.concat(list2);
-                }
-                else {
-                    results.push([rel_file_path, stat.size, stat.mtime]);
-                }
-            }
-        });
-        return results;
-    };
-    return walk(look_path, look_path);
-}
-
 //* sync
 function compare_manifests_2rp(old, fresh)
 {
@@ -3864,7 +3839,6 @@ function compare_manifests_2rp(old, fresh)
     let old_empty_dirs = get_empty_dirs(old);
     let fresh_empty_dirs = get_empty_dirs(fresh);
     empty_dirs = DiffArrays(fresh_empty_dirs, old_empty_dirs);
-
     old = trim_empty_dirs(old);
     fresh = trim_empty_dirs(fresh);
     //delete_this_later:("old=",old);
@@ -3874,7 +3848,6 @@ function compare_manifests_2rp(old, fresh)
     //1.3. Find new Names in fresh version
     let diff_frol = DiffArrays(names.fresh, names.old);
     copy_names = copy_names.concat(diff_frol);
-
     //2. FIND DIFFER BY SIZE AND BY DATE (EXEC TIME = 0.5 ms)
     //2.1. Find Intersec by Name
     let intersec = IntersecArrays(names.old, names.fresh);
@@ -3890,7 +3863,6 @@ function compare_manifests_2rp(old, fresh)
     //2.4. go to compare sizes or later by Date
     let names_diff_by_size = compare_intersec_by_size_or_date(old, fresh);
     copy_names = copy_names.concat(names_diff_by_size)
-
     //4. COPY CHANGES
     return {copy_names:copy_names, empty_dirs:empty_dirs};
 

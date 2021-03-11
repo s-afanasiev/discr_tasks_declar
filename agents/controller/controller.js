@@ -574,7 +574,8 @@ function App(){
             new IoSettings("../c_settings.json"),
             new StringifiedJson(agent_identifers)
         );
-        local_manifest = new Manifest().current();
+        //@ TOdo: later remake this variable to be not global
+        local_manifest = new Manifest().init();
 		this.socketIoHandlers = new SocketIoHandlers();
 		await this.ioWrap.run(this);
 		console.log("App: ioWrap.run() ok");
@@ -585,6 +586,7 @@ function App(){
 function Controller(){
 
 }
+
 function IoSettings(settingsPath){
 	this.settingsPath = settingsPath;
 	this.read = ()=>{
@@ -1008,31 +1010,71 @@ function execute_command(command_)
 }
 
 // "./", "controller"
+function Manifest(){
+    this.curMan = [];
+    this.init=()=>{
+        this.manOfDir().then(res=>{this.curMan=res}).catch(err=>{
+            console.log("Manifest.init()->manOfDIr() Error: ",err);
+        });
+    }
+    this.current=()=>{return this.curMan}
+    this.manOfDir=(look_dir)=>{
+        return new Promise((resolve, reject)=>{
+            this.walk(look_dir, look_dir, function(err, results) {
+                (err) ? reject(err): resolve(results);
+            });
+        });
+    }
+    this.walk=(cur_path, root_path, cbDone)=>{
+        var results = [];
+        fs.readdir(cur_path, function(err, list) {
+            if (err) return cbDone(err);
+            let cur_path_without_root = (cur_path.length > root_path.length) ? cur_path.slice(root_path.length) : "";
+            var pending = list.length;
+            if (!pending) return cbDone(null, results);
+            list.forEach(function(file) {
+                let file_path_without_root = cur_path_without_root + "\\" + file;
+                file = cur_path + "\\" + file;
+                fs.stat(file, function(err, stat) {
+                    if (stat && stat.isDirectory()) {
+                        walk(file, root_path, function(err, res) {
+                            if(err) return cbDone(err);
+                            else results = results.concat(res);
+                            if (!--pending) cbDone(null, results);
+                        });
+                    }else{
+                        let inner_res = [];
+                        inner_res.push(file_path_without_root);
+                        inner_res.push(stat.size);
+                        inner_res.push(stat.mtime);
+                        results.push(inner_res);
+                        if (!--pending) cbDone(null, results);
+                    }
+                });
+            });
+        });
+    }
+}
 function get_dir_manifest_ctol(look_path, except)
 {
     //look_path = path.normalize(look_path);
     //if(look_path.startsWith('.')) look_path = path.resolve(look_path);
-    return new Promise((resolve, reject) => 
-    {
+    return new Promise((resolve, reject)=>{
         //let except_2 = "node_modules";
         var walk = function(dir, root_path, except, done) {
             var results = [];
             fs.readdir(dir, function(err, list) {
-                //console.log("LIST=", list);
                 if (err) return done(err);
-                let rel_path = (dir.length > root_path.length) ? dir.slice(root_path.length) : "";
-                //rel_path = (except) ? ("\\" + except + rel_path) : rel_path;
+                let dir_path_without_root = (dir.length > root_path.length) ? dir.slice(root_path.length) : "";
                 var pending = list.length;
                 if (!pending) return done(null, results);
                 
                 list.forEach(function(file) {
-                    let rel_file_path = rel_path + "\\" + file;
+                    let file_path_without_root = dir_path_without_root + "\\" + file;
                     file = dir + "\\" + file;
-                    
                     //file = path.resolve(dir, file);
                     fs.stat(file, function(err, stat) {
                         if (stat && stat.isDirectory()) {
-                            //console.log("FILE=", file);
                             let is_except = false;
                             for (let i=0; i<except.length; i++) {
                                 if (file.endsWith(except[i])) {
@@ -1048,11 +1090,10 @@ function get_dir_manifest_ctol(look_path, except)
                                 walk(file, root_path, except, function(err, res) {
                                     if (res.length == 0) { 
                                         let dir_res = [];
-                                        dir_res.push(rel_file_path);
+                                        dir_res.push(file_path_without_root);
                                         dir_res.push(stat.size);
                                         dir_res.push(stat.mtime);
                                         dir_res.push('empty_dir');
-                                        //console.log("EMPTY_DIR:", dir_res);
                                         results.push(dir_res);
                                     }
                                     else { results = results.concat(res); }
@@ -1062,7 +1103,7 @@ function get_dir_manifest_ctol(look_path, except)
                         }
                         else {
                             let inner_res = [];
-                            inner_res.push(rel_file_path);
+                            inner_res.push(file_path_without_root);
                             inner_res.push(stat.size);
                             inner_res.push(stat.mtime);
                             results.push(inner_res);
@@ -1073,9 +1114,7 @@ function get_dir_manifest_ctol(look_path, except)
             });
         };
         walk(look_path, look_path, except, function(err, results) {
-            //if (err) throw err;
-            if (err) reject(err);
-            else resolve(results);
+            (err) ? reject(err): resolve(results);
         });
     });
 }
