@@ -555,6 +555,7 @@ function read_settings(json_path){
 }
 	
 //@----------------------------------
+var local_manifest; //global var
 function main(){
 	new App().run();
 }
@@ -573,12 +574,16 @@ function App(){
             new IoSettings("../c_settings.json"),
             new StringifiedJson(agent_identifers)
         );
+        local_manifest = new Manifest().current();
 		this.socketIoHandlers = new SocketIoHandlers();
 		await this.ioWrap.run(this);
 		console.log("App: ioWrap.run() ok");
 		await this.socketIoHandlers.run(this.ioWrap.socket);
 		console.log("App: socketIoHandlers.run() ok");
 	}
+}
+function Controller(){
+
 }
 function IoSettings(settingsPath){
 	this.settingsPath = settingsPath;
@@ -631,8 +636,9 @@ function SocketIoHandlers(){
 			socket.on(ev, this.events[ev])
 		});
 	};
-	this.all_events = ['connect', 'disconnect', 'identifiers', 'disk_space', 'manifest', 'partner_leaved', 'partner_appeared', 'same_md5_agents', 'sync_dirs', 'start_agent', 'kill_agent', 'update_folder', 'gpu_info', 'housekeeping', 'disk_space', 'proc_count', 'void_controller', 'exec_cmd', 'nvidia_smi', 'wetransfer'];
-	this.events = {
+	this.technical_events_list = ['connect', 'disconnect', 'identifiers', 'manifest', 'partner_leaved', 'partner_appeared', 'same_md5_agents', 'sync_dirs', 'start_agent', 'kill_agent', 'update_folder'];
+	this.user_events_list = ['disk_space', 'gpu_info', 'housekeeping', 'disk_space', 'proc_count', 'void_controller', 'exec_cmd', 'nvidia_smi', 'wetransfer'];
+	this.technical_events_handlers = {
 		connect: function(){ console.log("'connect' event"); },
 		disconnect: function(){ console.log("'disconnect' event"); },
 		identifiers: function(){
@@ -654,18 +660,21 @@ function SocketIoHandlers(){
                 _socket.emit('disk_space', {done:false, details:ex});
             }); 
 		},
-		manifest: function(){},
+		compareManifest: function(remote_manifest){
+            const comparing = local_manifest.compareWithRemote(remote_manifest);
+        },
 		partner_leaved: function(data){},
 		partner_appeared: function(){},
 		same_md5_agents: function(){},
 		sync_dirs: function(){},
 		start_agent: function(){},
 		kill_agent: function(){},
-		update_folder: function(){},
+		update_folder: function(){}
+    }
+    this.user_events_handlers = {
 		gpu_info: function(){},
 		housekeeping: function(){},
 		proc_count: function(){},
-		void_controller: function(){},
 		exec_cmd: function(){},
 		nvidia_smi: function(){},
 		wetransfer: function(){}
@@ -678,9 +687,7 @@ function SocketIoHandlers(){
 //==================================================
 //==================================================
 
-//------------------------------------------
-//----------PARSE FUNCTIONS--------------
-//------------------------------------------
+//----------PARSE NVIDIA GPU FUNCTIONS--------------
 function parse_nvsmi_result(str) {
 	let linesTmp = str.split(os.EOL);
 	let counter = 0;
@@ -818,23 +825,22 @@ function parse_nvsmi_result(str) {
 	}
 }
 
-//------------------------------------------
 //----------EXTERNAL FUNCTIONS--------------
-//------------------------------------------
-//* same code as in launcher.js
-function sync_dirs(changes, mcb)
-{
+function sync_dirs_test(){
+    const loc_root = "../launcher/";
+    const rem_root = "\\ita52\\TMP";
+    const changes = []
+}
+//@ wrapping of copy_files() function with input array of full names param 
+function sync_dirs(changes, mcb, loc_root, rem_root){
     //* changes = {copy_names:[[],[]], empty_dirs:[]}
-    let loc_root = "..";
-    let rem_root = GS.master.update_folder || SETT.update_folder;
-    //console.log("________________changes =", changes);
+    let loc_root = loc_root || "../launcher/";
+    let rem_root = rem_root || GS.master.update_folder || SETT.update_folder;
     let err_names = [];
     let str_res;
     console.log("============= changes =", changes);
-    if (changes instanceof Object) 
-    {
-        copy_files(loc_root, rem_root, changes.copy_names)
-        .then(res=>{ 
+    if (changes instanceof Object){
+        copy_files(loc_root, rem_root, changes.copy_names).then(res=>{ 
             //console.log("FILES COPIED: ERR FILES =", res);
             err_names = err_names.concat(res);
             //** even if emtpy folder copy will ended with error
@@ -853,55 +859,33 @@ function sync_dirs(changes, mcb)
             console.log("ERR: sync_dirs(): copy_files():", ex);
             mcb(copy_names, "useless");
         });  
-    }  
-    else {
+    }else{
         console.log("ERR sync_dirs(): changes param is not an Object:", changes);
         mcb([], "useless");
     }
 }
-//* same code as in launcher.js
-function copy_files(loc_root, rem_root, copy_names)
-{
+//@ copy files from remote to local dir including creating missing dirs if not exist
+function copy_files(loc_root, rem_root, copy_names){
     return new Promise((resolve, reject) => {
-        
-        if (!Array.isArray(copy_names)) 
-        {
-            copy_names = []
-        }
+        if (!Array.isArray(copy_names)){ copy_names = []; }
         let pending = copy_names.length;
-        // else
-        // {
-        //     let err_msg = "ERR: copy_files(): copy_names is not Array:" + copy_names;
-        //     console.log(err_msg);
-        //     reject(err_msg);
-        //     return;
-        // }
-            
         let err_names = [];
-        if (pending > 0) 
-        {
+        if (pending > 0){
             copy_names.forEach((item, ind) => {
                 console.log("copying from:", rem_root+item, " to:", loc_root+item);
                 let loc_file = loc_root+item;
-                //check_or_create_dir(loc_file, err => {
-                //fs.mkdir(loc_root, { recursive: true }, (err) => {
                 create_dir_if_need(loc_file, (err, path_dir) => {
                     if (err) {
                         err_names.push(path_dir);
                         if (!--pending) { resolve(err_names); }
-                            //if (is_empty_dirs) mcb(err_names, "ok"); }
-                    }
-                    else {
+                    }else{
                         fs.copyFile(rem_root+item, loc_root+item, (err)=>{
-                            if (err) {
+                            if(err){
                                 console.log("copy err=", err);
                                 err_names.push(item);
                                 if (!--pending) { resolve(err_names); }
-                                    //if (is_empty_dirs) mcb(err_names, "ok");
-                            }   
-                            else {
+                            }else{
                                 if (!--pending) { resolve(err_names); }
-                                    //if (is_empty_dirs) mcb(err_names, "ok");
                             }
                         });
                     }

@@ -388,6 +388,7 @@
             this.controller.init(this.launcher, this.agentUpdateChain.instance());
             //@like a first start on the remote machine, when a human starts the launcher
             if(this.launcher.isOnline() && !this.controller.isOnline()){
+                console.log("HostAsPair: run_agents_after_first_host_init_timeout(): launcher is online...");
                 this.launcher.compareCurManifest(this.last_manifest_snapshot).then(res=>{
                     //@res = {compare:false, kill:false, update:false, start:true}
                 }).catch(err=>{
@@ -395,7 +396,9 @@
                 })
             //@ this situation can occur, when both agents was continued to work, but server was restarted.
             }else if(this.launcher.isOnline() && this.controller.isOnline()){
+                console.log("HostAsPair: run_agents_after_first_host_init_timeout(): Launcher and Controller are online...");
                 this.launcher.compareCurManifest(this.last_manifest_snapshot).then(res=>{
+                    console.log("HostAsPair: after Launcher's comparing result=",res);
                     //@res = {compare:false, kill:false, update:false, start:true}
                     if(res.kill == false){
                         this.controller.compareCurManifest(this.last_manifest_snapshot).then(res=>{
@@ -424,19 +427,16 @@
                 }
             }
 		}
-        this.propagateManifest = (manifest_regular)=>{
-            this.manifest_regular = manifest_regular;
+        this.propagateManifest = (man_regular)=>{
+            this.manifest_regular = man_regular;
             //@ 1) Look For WHom updates intended: manifest looks for 3 dirs: [controller, launcher, other]
             //@ 2.1)  Either for both agents updates
             //@ 2.2)  Or a somebody one
-            const upd_controller = manifest_regular.is_controller_upd();
-            const upd_launcher = manifest_regular.is_launcher_upd();
-            const upd_other = manifest_regular.is_other_upd();
-            if(upd_controller && upd_launcher){
-                this.launcher.propagateManifest([manifest_regular.forController(),manifest_regular.forOther()]).then(res=>{
+            if(man_regular.controller && man_regular.launcher){
+                this.launcher.propagateManifest([man_regular.controller,man_regular.other]).then(res=>{
                     //@res = {compare:false, kill:false, update:false, start:true}
                     if(res.kill == false){
-                        this.controller.propagateManifest(manifest_regular.forLauncher()).then(res=>{
+                        this.controller.propagateManifest(man_regular.launcher).then(res=>{
                             this.controller.doNormalWork();
                         }).catch(err=>{
                             console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.controller.propagateManifest() Error 1: ",err);
@@ -445,16 +445,16 @@
                 }).catch(err=>{
                     console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.launcher.propagateManifest() Error 1: ",err);
                 })
-            }else if(upd_controller || upd_other){
+            }else if(man_regular.controller || man_regular.other){
                 //@ 2.2)  launcher must update controller
-                this.launcher.propagateManifest([manifest_regular.forController(),manifest_regular.forOther()]).then(res=>{
+                this.launcher.propagateManifest([man_regular.controller,man_regular.other]).then(res=>{
                     console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.launcher.propagateManifest() OK: ",res);
                 }).catch(err=>{
                     console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.launcher.propagateManifest() Error 2: ",err);
                 });
-            }else if(upd_launcher){
+            }else if(man_regular.launcher){
                 //@ 2.3)  controller must update launcher
-                this.controller.propagateManifest(manifest_regular.forLauncher()).then(res=>{
+                this.controller.propagateManifest(man_regular.launcher).then(res=>{
                     console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.controller.propagateManifest() OK: ",res);
                 }).catch(err=>{
                     console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.controller.propagateManifest() Error 2: ",err);
@@ -514,7 +514,26 @@
                     new UpdatingFiles(
                         new KillingPartner(
                             new CompareManifest(this.manifest)
-                        )
+                        ),
+                        this.manifest
+                    )
+                ).run(man, socket).then(res=>{
+                    resolve(res);
+                }).catch(err=>{
+                    reject(err);
+                })
+            });
+        }
+    }
+    function AgentUpdateWithoutCompare(manifest){
+        this.instance=(...args)=>{return new AgentUpdateChain(args)}
+        this.manifest=manifest;
+        this.run=(man, socket)=>{
+            return new Promise((resolve,reject)=>{
+                new StartingPartner(
+                    new UpdatingFiles(
+                        new KillingPartner(),
+                        this.manifest
                     )
                 ).run(man, socket).then(res=>{
                     resolve(res);
@@ -554,7 +573,7 @@
             })
         }
     }
-    function UpdatingFiles(killingPartner){
+    function UpdatingFiles(killingPartner, manifest){
         this.killingPartner=killingPartner;
         this.run=(man, socket)=>{
             return new Promise((resolve,reject)=>{
