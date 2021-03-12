@@ -6,7 +6,6 @@
     const fs = require('fs');
     const EventEmitter = require('events');
     const SETT	= read_settings(path.normalize("./m_settings.json"));
-    const OnSocketReconnectActions = require('./OnSocketReconnectActions.js');
 
     //const http = require('http');
     //const io = require('socket.io');
@@ -36,8 +35,23 @@
 		});
 	}
 	function main(){
-		new App().run();
+		//new App().run();
+        dirsComparingTest();
 	}
+
+    function dirsComparingTest(){
+        const glob_update_path = (UPDATE_FOLD) ? UPDATE_FOLD : "./update";
+        const launcher_update_path = glob_update_path + "\\launcher";
+        const controller_update_path = glob_update_path + "\\controller";
+        const other_update_path = glob_update_path + "\\other";
+        const dirStructure = new DirStructure();
+        const res= dirStructure.allMansSync([
+            {name:"controller", path:controller_update_path},
+            {name:"launcher", path:launcher_update_path},
+            {name:"other", path:other_update_path}
+        ]);
+        setTimeout(()=>{console.log("res=",res);}, 1000)
+    }
 
 	function Jobs(config = jobs_config){
         this.config = config;
@@ -214,7 +228,10 @@
 
     //@ ready=1
 	function Manifest(dirStructure, dirsComparing){
-        this.glob_update_path = (UPDATE_FOLD) ? UPDATE_FOLD : "\\update"
+        this.glob_update_path = (UPDATE_FOLD) ? UPDATE_FOLD : "\\update";
+        const launcher_update_path = this.glob_update_path + "\\launcher";
+        const controller_update_path = this.glob_update_path + "\\controller";
+        const other_update_path = this.glob_update_path + "\\other";
         this.hostCluster=undefined;
         this.dirStructure=dirStructure;
         this.dirsComparing=dirsComparing;
@@ -225,7 +242,12 @@
 		this.current = ()=>{ return prev_man };
         this.run = function(hostCluster){
             this.hostCluster=hostCluster;
-            this.prev_man = this.dirStructure.manOfDirSync(this.glob_update_path); //sync
+            this.prev_man = this.dirStructure.allMansSync(
+                [{name:"launcher", path:launcher_update_path},
+                {name:"controller", path:controller_update_path},
+                {name:"other", path:other_update_path}]
+            ); //sync
+            //this.dirsComparing.init(this.prev_man);
             setTimeout(()=>{this.nextManifest()}, this.timer);
             return this;       
         }        
@@ -238,6 +260,9 @@
                 }
             }).catch(err=>{
                 console.log("Err: Manifest: nextManifest():"+err);
+            }).finally(()=>{
+                console.log("Manifest finally new manifest will in "+this.timer+ " seconds...");
+                setTimeout(()=>{this.nextManifest()}, this.timer);
             })
         }
         return this;
@@ -245,73 +270,167 @@
     function DirStructure(){
         this.manOfDirAsync=(look_dir)=>{
             return new Promise((resolve, reject)=>{
-                this.walk(look_dir, look_dir, function(err, results) {
+                look_dir = look_dir || "\\update";
+                walk(look_dir, look_dir, function(err, results) {
                     (err) ? reject(err): resolve(results);
                 });
-            });
-        }
-        this.walk=(cur_path, root_path, cbDone)=>{
-            var results = [];
-            fs.readdir(cur_path, function(err, list) {
-                if (err) return cbDone(err);
-                let cur_path_without_root = (cur_path.length > root_path.length) ? cur_path.slice(root_path.length) : "";
-                var pending = list.length;
-                if (!pending) return cbDone(null, results);
-                list.forEach(function(file) {
-                    let file_path_without_root = cur_path_without_root + "\\" + file;
-                    file = cur_path + "\\" + file;
-                    fs.stat(file, function(err, stat) {
-                        if (stat && stat.isDirectory()) {
-                            walk(file, root_path, function(err, res) {
-                                if(err) return cbDone(err);
-                                else results = results.concat(res);
-                                if (!--pending) cbDone(null, results);
+                function walk(cur_path, root_path, cbDone){
+                    var results = [];
+                    fs.readdir(cur_path, function(err, list) {
+                        if (err) return cbDone(err);
+                        let cur_path_without_root = (cur_path.length > root_path.length) ? cur_path.slice(root_path.length) : "";
+                        var pending = list.length;
+                        if (!pending) return cbDone(null, results);
+                        list.forEach(function(file) {
+                            let file_path_without_root = cur_path_without_root + "\\" + file;
+                            file = cur_path + "\\" + file;
+                            fs.stat(file, function(err, stat) {
+                                if (stat && stat.isDirectory()) {
+                                    this.walk(file, root_path, function(err, list2) {
+                                        if(err) return cbDone(err);
+                                        //@ means empty directory
+                                        if(list2.length==0){
+                                            results.push(file+"\\");
+                                        }
+                                        else results = results.concat(list2);
+                                        if (!--pending) cbDone(null, results);
+                                    });
+                                }else{
+                                    let inner_res = [];
+                                    inner_res.push(file_path_without_root);
+                                    inner_res.push(stat.size);
+                                    inner_res.push(stat.mtime);
+                                    results.push(inner_res);
+                                    if (!--pending) cbDone(null, results);
+                                }
                             });
-                        }else{
-                            let inner_res = [];
-                            inner_res.push(file_path_without_root);
-                            inner_res.push(stat.size);
-                            inner_res.push(stat.mtime);
-                            results.push(inner_res);
-                            if (!--pending) cbDone(null, results);
-                        }
+                        });
                     });
-                });
+                }
             });
         }
-        this.manOfDirSync=(look_path)=>{
-            var walk = function(dir, root_path) {
-                var results = [];
-                var list = [];
-                try {
-                    list = fs.readdirSync(dir);
-                }catch(er){ return results; }
-                let rel_path = (dir.length > root_path.length) ? dir.slice(root_path.length) : "";
-                list.forEach(function(file) {
-                    let rel_file_path = rel_path + "\\" + file;
-                    //@same effect: file = dir + "\\" + file;
-                    file = path.resolve(dir, file);
-                    let stat;
-                    try {
-                        stat = fs.statSync(file);
-                    }catch(er){return; }
-                    if(stat){
-                        if (stat.isDirectory()) {
-                            let list2 = walk(file, root_path)
-                            results = results.concat(list2);
-                        }else{
-                            results.push([rel_file_path, stat.size, stat.mtime]);
-                        }
-                    }
+        this.manOfDirSync=(look_dir)=>{
+            return new Promise((resolve, reject)=>{
+                look_dir = look_dir || "\\update"
+                walk(look_dir, look_dir, function(err, results) {
+                    (err) ? reject(err): resolve(results);
                 });
-                return results;
-            };
-            return walk(look_path, look_path);
+                function walk(cur_path, root_path, cbDone){
+                    var results = [];
+                    fs.readdir(cur_path, function(err, list) {
+                        if (err) return cbDone(err);
+                        let cur_path_without_root = (cur_path.length > root_path.length) ? cur_path.slice(root_path.length) : "";
+                        var pending = list.length;
+                        if (!pending) return cbDone(null, results);
+                        list.forEach(function(file) {
+                            let file_path_without_root = cur_path_without_root + "\\" + file;
+                            file = cur_path + "\\" + file;
+                            fs.stat(file, function(err, stat) {
+                                if (stat && stat.isDirectory()) {
+                                    walk(file, root_path, function(err, list2) {
+                                        if(err) return cbDone(err);
+                                        if(list2.length==0){
+                                            results.push([file_path_without_root+"\\"]);
+                                        }
+                                        else results = results.concat(list2);
+                                        if (!--pending) cbDone(null, results);
+                                    });
+                                }else{
+                                    let inner_res = [];
+                                    inner_res.push(file_path_without_root);
+                                    inner_res.push(stat.size);
+                                    inner_res.push(stat.mtime);
+                                    results.push(inner_res);
+                                    if (!--pending) cbDone(null, results);
+                                }
+                            });
+                        });
+                    });
+                }
+            });
+        }
+        this.allMansSync=(paths_data)=>{
+            const result = {};
+            paths_data.forEach(path_data=>{
+                this.manOfDirSync(path_data.path).then(res=>{
+                    result[path_data.name] = res;
+                }).catch(err=>{
+                    console.log("ERROR: ", err);
+                })
+            });
+            return result;
         }
     }
-    function DirsComparing(){
-        this.compare=(next_man, prev_man)=>{
 
+    function DirsComparing(){
+        // this.latest_man = undefined;
+        // this.init=(first_man)=>{
+        //     this.latest_man = first_man;
+        // }
+        this.compareResult=undefined;
+        this.compare=(next_man, prev_man)=>{
+            const new_files = find_new_files(next_man, prev_man);
+            const files_to_change = find_files_to_change(next_man, prev_man);
+            const old_files = find_old_files(next_man, prev_man);
+            return {new_files, files_to_change, old_files};
+            //@ arrays intersection
+            //@ let intersection = arrA.filter(x => arrB.includes(x));
+            //@ arrays difference: Unique values of first array
+            //@ let difference = arrA.filter(x => !arrB.includes(x));
+            function find_new_files(next_man, prev_man){
+                const FNAME=0, FSIZE=1, FDATE=2;
+                return next_man.filter(n_a =>{
+                    let is_new_name=true;
+                    prev_man.forEach(p_a=>{
+                        if(n_a[FNAME]==p_a[FNAME]){
+                            is_new_name = false;
+                        }
+                    });
+                    return is_new_name;
+                });
+            }
+            function find_files_to_change(next_man, prev_man){
+                const FNAME=0, FSIZE=1, FDATE=2;
+                return next_man.filter(n_a =>{
+                    let is_new_name=true;
+                    let is_diff_size=false;
+                    let is_diff_date=false;
+                    prev_man.forEach(p_a=>{
+                        if(n_a[FNAME]==p_a[FNAME]){
+                            is_new_name = false;
+                            if(n_a.length > 1){
+                                if(n_a[FSIZE]!=p_a[FSIZE]) is_diff_size = true;
+                                const ndate = convert_to_comparable_date(n_a[FDATE]);
+                                const pdate = convert_to_comparable_date(p_a[FDATE]);
+                                if(ndate>pdate) is_diff_date = true;
+                            }
+                        }
+                    });
+                    if(is_diff_size||is_diff_date){return true;}
+                    else{return false;}
+                });
+            }
+            function find_old_files(next_man, prev_man){
+                const FNAME=0, FSIZE=1, FDATE=2;
+                return prev_man.filter(p_a =>{
+                    let is_old_name=true;
+                    next_man.forEach(n_a=>{
+                        if(n_a[FNAME]==p_a[FNAME]){
+                            is_old_name = false;
+                        }
+                    });
+                    if(p_a.length==1){is_old_name = false}
+                    return is_old_name;
+                });
+            }
+            function convert_to_comparable_date(date){
+                if (typeof date == "object") return date.getTime();
+                else if(typeof date == "string") return Date.parse(date);
+                else{
+                    console.log("Converting Date to Ms ERROR: Unknown type of input date: ", date);
+                    return 0;
+                }
+            }
         }
     }
 	
@@ -642,7 +761,7 @@
             return new Promise((resolve,reject)=>{
                 this.killingPartner.run(man, socket).then(compare_info=>{
                     if(compare_info.is_changes){
-                        this.update_files().then(res={
+                        this.update_files().then(res=>{
                             resolve(compare_info);
                         }).catch(err=>{
                             reject("UpdatingFiles: "+err);
@@ -3913,6 +4032,7 @@ function compare_manifests_2rp(old, fresh)
         if (a[0] < b[0]) return -1;
     }
     //* sync
+    
     function compare_intersec_by_size_or_date(old, fresh){
         //* Here we have two same-length arrays sorted by Names, so indexes are always match
         const NAME = 0, SIZE = 1, DATE = 2;

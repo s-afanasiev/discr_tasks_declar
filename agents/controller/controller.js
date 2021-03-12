@@ -557,7 +557,12 @@ function read_settings(json_path){
 //@----------------------------------
 var local_manifest; //global var
 function main(){
-	new App().run();
+	//new App().run();
+
+    const man = new Manifest().init("..\\other");
+    setTimeout(()=>{
+        console.log("man=",man.current());
+    },100)
 }
 //@ ---------------------------------
 
@@ -629,13 +634,16 @@ function StringifiedJson(json){
 }
 //@ Варианты ответов
 function SocketIoHandlers(){
-	let _socket = undefined;
+	this.socket = undefined;
 	this.run = async(socket)=>{
-		_socket = socket;
+		this.socket = socket;
 		Object.keys(this.events).forEach(ev=>{
 			console.log("hanging up '"+ev+"' event.");
 			//@ hangs up all listeners
-			socket.on(ev, this.events[ev])
+            if(this.technical_events_list.includes(ev)){
+                socket.on(ev, this.technical_events_handlers[ev]);   
+            }else if(this.user_events_list.includes(ev)){
+                socket.on(ev, this.user_events_handlers[ev]);           }
 		});
 	};
 	this.technical_events_list = ['connect', 'disconnect', 'identifiers', 'manifest', 'partner_leaved', 'partner_appeared', 'same_md5_agents', 'sync_dirs', 'start_agent', 'kill_agent', 'update_folder'];
@@ -664,6 +672,9 @@ function SocketIoHandlers(){
 		},
 		compareManifest: function(remote_manifest){
             const comparing = local_manifest.compareWithRemote(remote_manifest);
+            if(comparing){
+                this.socket.emit("compareManifest");
+            }
         },
 		partner_leaved: function(data){},
 		partner_appeared: function(){},
@@ -836,8 +847,8 @@ function sync_dirs_test(){
 //@ wrapping of copy_files() function with input array of full names param 
 function sync_dirs(changes, mcb, loc_root, rem_root){
     //* changes = {copy_names:[[],[]], empty_dirs:[]}
-    let loc_root = loc_root || "../launcher/";
-    let rem_root = rem_root || GS.master.update_folder || SETT.update_folder;
+    loc_root = loc_root || "../launcher/";
+    rem_root = rem_root || GS.master.update_folder || SETT.update_folder;
     let err_names = [];
     let str_res;
     console.log("============= changes =", changes);
@@ -1012,46 +1023,52 @@ function execute_command(command_)
 // "./", "controller"
 function Manifest(){
     this.curMan = [];
-    this.init=()=>{
-        this.manOfDir().then(res=>{this.curMan=res}).catch(err=>{
+    this.init=(look_dir)=>{
+        this.manOfDir(look_dir).then(res=>{this.curMan=res}).catch(err=>{
             console.log("Manifest.init()->manOfDIr() Error: ",err);
         });
+        return this;
     }
     this.current=()=>{return this.curMan}
     this.manOfDir=(look_dir)=>{
         return new Promise((resolve, reject)=>{
-            this.walk(look_dir, look_dir, function(err, results) {
+            look_dir = look_dir || "..\\launcher"
+            walk(look_dir, look_dir, function(err, results) {
                 (err) ? reject(err): resolve(results);
             });
-        });
-    }
-    this.walk=(cur_path, root_path, cbDone)=>{
-        var results = [];
-        fs.readdir(cur_path, function(err, list) {
-            if (err) return cbDone(err);
-            let cur_path_without_root = (cur_path.length > root_path.length) ? cur_path.slice(root_path.length) : "";
-            var pending = list.length;
-            if (!pending) return cbDone(null, results);
-            list.forEach(function(file) {
-                let file_path_without_root = cur_path_without_root + "\\" + file;
-                file = cur_path + "\\" + file;
-                fs.stat(file, function(err, stat) {
-                    if (stat && stat.isDirectory()) {
-                        walk(file, root_path, function(err, res) {
-                            if(err) return cbDone(err);
-                            else results = results.concat(res);
-                            if (!--pending) cbDone(null, results);
+            function walk(cur_path, root_path, cbDone){
+                var results = [];
+                fs.readdir(cur_path, function(err, list) {
+                    if (err) return cbDone(err);
+                    let cur_path_without_root = (cur_path.length > root_path.length) ? cur_path.slice(root_path.length) : "";
+                    var pending = list.length;
+                    if (!pending) return cbDone(null, results);
+                    list.forEach(function(file) {
+                        let file_path_without_root = cur_path_without_root + "\\" + file;
+                        file = cur_path + "\\" + file;
+                        fs.stat(file, function(err, stat) {
+                            if (stat && stat.isDirectory()) {
+                                walk(file, root_path, function(err, list2) {
+                                    if(err) return cbDone(err);
+                                    //@ means empty directory
+                                    if(list2.length==0){
+                                        results.push([file_path_without_root+"\\"]);
+                                    }
+                                    else results = results.concat(list2);
+                                    if (!--pending) cbDone(null, results);
+                                });
+                            }else{
+                                let inner_res = [];
+                                inner_res.push(file_path_without_root);
+                                inner_res.push(stat.size);
+                                inner_res.push(stat.mtime);
+                                results.push(inner_res);
+                                if (!--pending) cbDone(null, results);
+                            }
                         });
-                    }else{
-                        let inner_res = [];
-                        inner_res.push(file_path_without_root);
-                        inner_res.push(stat.size);
-                        inner_res.push(stat.mtime);
-                        results.push(inner_res);
-                        if (!--pending) cbDone(null, results);
-                    }
+                    });
                 });
-            });
+            }
         });
     }
 }
