@@ -16,7 +16,7 @@
     const VISUALIZER_PATH = __dirname + "/visualizer/index.html"
 
 	const techinal_events = ['connect', 'disconnect', 'identifiers', 'manifest', 'partner_leaved', 'partner_appeared', 'same_md5_agents', 'sync_dirs', 'start_agent', 'kill_agent', 'update_folder'];
-    const job_events = ['gpu_info', 'housekeeping', 'disk_space', 'proc_count', 'void_controller', 'exec_cmd', 'nvidia_smi', 'wetransfer'];
+    const user_events = ['gpu_info', 'housekeeping', 'disk_space', 'proc_count', 'exec_cmd', 'nvidia_smi', 'wetransfer'];
     
 	const jobs_config = 
     [
@@ -36,9 +36,15 @@
 	}
 	function main(){
 		//new App().run();
-        dirsComparingTest();
+        //dirsComparingTest();
+        dirStructureSyncTest();
 	}
 
+    function dirStructureSyncTest(){
+        const dirStructure = new DirStructure();
+        const res = dirStructure.manOfDirSync("./update");
+        console.log(res);
+    }
     function dirsComparingTest(){
         const glob_update_path = (UPDATE_FOLD) ? UPDATE_FOLD : "./update";
         const launcher_update_path = glob_update_path + "\\launcher";
@@ -232,31 +238,31 @@
         const launcher_update_path = this.glob_update_path + "\\launcher";
         const controller_update_path = this.glob_update_path + "\\controller";
         const other_update_path = this.glob_update_path + "\\other";
+        const update_paths = [
+            {name:"launcher", path:launcher_update_path},
+            {name:"controller", path:controller_update_path},
+            {name:"other", path:other_update_path}];
         this.hostCluster=undefined;
         this.dirStructure=dirStructure;
         this.dirsComparing=dirsComparing;
         this.path = '';
         this.timer = 60000;
-        this.prev_man = {};
+        this.prev_mans = {};
 		//@ stumb for new connected agents, give them something not null
 		this.current = ()=>{ return prev_man };
         this.run = function(hostCluster){
             this.hostCluster=hostCluster;
-            this.prev_man = this.dirStructure.allMansSync(
-                [{name:"launcher", path:launcher_update_path},
-                {name:"controller", path:controller_update_path},
-                {name:"other", path:other_update_path}]
-            ); //sync
-            //this.dirsComparing.init(this.prev_man);
+            this.prev_mans = this.dirStructure.allMansSync(update_paths); //sync
+            //this.dirsComparing.init(this.prev_mans);
             setTimeout(()=>{this.nextManifest()}, this.timer);
             return this;       
         }        
         this.nextManifest = function(){
-            this.dirStructure.manOfDirAsync(this.glob_update_path).then(next_man=>{
-                const dirs_compare_diff = this.dirsComparing.compare(next_man, this.prev_man);
+            this.dirStructure.allMansAsync(update_paths).then(next_mans=>{
+                const dirs_compare_diff = this.dirsComparing.compare(next_mans, this.prev_mans);
                 if(dirs_compare_diff) {
-                    this.prev_man = next_man;
-                    this.hostCluster.propagateManifest(next_man);
+                    this.prev_mans = next_mans;
+                    this.hostCluster.propagateManifest(next_mans);
                 }
             }).catch(err=>{
                 console.log("Err: Manifest: nextManifest():"+err);
@@ -268,48 +274,34 @@
         return this;
     }
     function DirStructure(){
-        this.manOfDirAsync=(look_dir)=>{
-            return new Promise((resolve, reject)=>{
-                look_dir = look_dir || "\\update";
-                walk(look_dir, look_dir, function(err, results) {
-                    (err) ? reject(err): resolve(results);
-                });
-                function walk(cur_path, root_path, cbDone){
-                    var results = [];
-                    fs.readdir(cur_path, function(err, list) {
-                        if (err) return cbDone(err);
-                        let cur_path_without_root = (cur_path.length > root_path.length) ? cur_path.slice(root_path.length) : "";
-                        var pending = list.length;
-                        if (!pending) return cbDone(null, results);
-                        list.forEach(function(file) {
-                            let file_path_without_root = cur_path_without_root + "\\" + file;
-                            file = cur_path + "\\" + file;
-                            fs.stat(file, function(err, stat) {
-                                if (stat && stat.isDirectory()) {
-                                    this.walk(file, root_path, function(err, list2) {
-                                        if(err) return cbDone(err);
-                                        //@ means empty directory
-                                        if(list2.length==0){
-                                            results.push(file+"\\");
-                                        }
-                                        else results = results.concat(list2);
-                                        if (!--pending) cbDone(null, results);
-                                    });
-                                }else{
-                                    let inner_res = [];
-                                    inner_res.push(file_path_without_root);
-                                    inner_res.push(stat.size);
-                                    inner_res.push(stat.mtime);
-                                    results.push(inner_res);
-                                    if (!--pending) cbDone(null, results);
-                                }
-                            });
-                        });
-                    });
-                }
-            });
-        }
+        //@ returns manifest of one directory. Type Array ['f1', 'f2']
         this.manOfDirSync=(look_dir)=>{
+            look_dir = look_dir || "\\update";
+            return walk(look_dir, look_dir);
+            function walk(cur_path, root_path){
+                var results = [];
+                const cur_path_without_root = (cur_path.length > root_path.length) ? cur_path.slice(root_path.length) : "";
+                var list;
+                try{list = fs.readdirSync(cur_path);}
+                catch(err){console.log("ERROR: ",err);}
+                list.forEach(function(file){
+                    const file_path_without_root = cur_path_without_root + "\\" + file;
+                    const file_path = cur_path + "\\" + file;
+                    const stat = fs.statSync(file_path);
+                    if (stat && stat.isDirectory()){
+                        const sub_res = walk(file_path, root_path);
+                        if(sub_res.length==0){ 
+                            results.push([file_path_without_root+"\\"]); 
+                        }else results = results.concat(sub_res);
+                    }else{
+                        results.push([file_path_without_root,stat.size,stat.mtime]);
+                    }
+                });
+                return results;
+            }
+        }
+        //@ returns manifest of one directory. Type Array ['f1', 'f2']
+        this.manOfDirAsync=(look_dir)=>{
             return new Promise((resolve, reject)=>{
                 look_dir = look_dir || "\\update"
                 walk(look_dir, look_dir, function(err, results) {
@@ -336,11 +328,7 @@
                                         if (!--pending) cbDone(null, results);
                                     });
                                 }else{
-                                    let inner_res = [];
-                                    inner_res.push(file_path_without_root);
-                                    inner_res.push(stat.size);
-                                    inner_res.push(stat.mtime);
-                                    results.push(inner_res);
+                                    results.push([file_path_without_root,stat.size,stat.mtime]);
                                     if (!--pending) cbDone(null, results);
                                 }
                             });
@@ -349,19 +337,36 @@
                 }
             });
         }
+        //@ returns manifests of a several dirs. Type object {'launcher':[], 'controller':[]}
         this.allMansSync=(paths_data)=>{
             const result = {};
             paths_data.forEach(path_data=>{
-                this.manOfDirSync(path_data.path).then(res=>{
-                    result[path_data.name] = res;
-                }).catch(err=>{
-                    console.log("ERROR: ", err);
-                })
+                try{
+                    result[path_data.name] = this.manOfDirSync(path_data.path);
+                }catch(err){
+                    console.log("DirStructure.allMansSync(): ERROR: ", err);
+                }
             });
             return result;
         }
+        //@ returns manifests of a several dirs. Type object {'launcher':[], 'controller':[]}
+        this.allMansAsync=(paths_data)=>{
+            return new Promise((resolve,reject)=>{
+                const result = {};
+                let pending = paths_data.length;
+                paths_data.forEach(path_data=>{
+                    this.manOfDirSync(path_data.path).then(res=>{
+                        result[path_data.name] = res;
+                        if(!--pending){resolve(result)}
+                    }).catch(err=>{
+                        console.log("ERROR: ", err);
+                        if(!--pending){resolve(result)}
+                    })
+                });
+                setTimeout(()=>{reject("DirStructure.allMansAsync(): timeout Error!")},5000);
+            });
+        }
     }
-
     function DirsComparing(){
         // this.latest_man = undefined;
         // this.init=(first_man)=>{
