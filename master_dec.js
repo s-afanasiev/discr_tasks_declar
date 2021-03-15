@@ -35,9 +35,9 @@
 		});
 	}
 	function main(){
-		//new App().run();
+		new App().run();
         //dirsComparingTest();
-        dirStructureSyncTest();
+        //dirStructureSyncTest();
 	}
 
     function dirStructureSyncTest(){
@@ -179,6 +179,17 @@
         }
     }
 
+    function BrowserIoClients(){
+        this.updatableHostCluster=undefined;
+        this.run=(updatableHostCluster)=>{
+            this.updatableHostCluster=updatableHostCluster;
+        }
+        this.welcomeAgent=(io_srv_msg)=>{
+            //@ io_srv_msg = {agent_socket, browser_or_agent}
+            console.log("BrowserIoClients.welcomeAgent(): socket id =", io_srv_msg.agent_socket.id);
+        }
+    }
+
     function IoServer(httpServer){
         this.httpServer = httpServer;
         this.updatableHostCluster=undefined;
@@ -253,21 +264,24 @@
         this.run = function(hostCluster){
             this.hostCluster=hostCluster;
             this.prev_mans = this.dirStructure.allMansSync(update_paths); //sync
+            console.log("Manifest.run(): this.prev_mans=",this.prev_mans);
             //this.dirsComparing.init(this.prev_mans);
             setTimeout(()=>{this.nextManifest()}, this.timer);
             return this;       
         }        
         this.nextManifest = function(){
             this.dirStructure.allMansAsync(update_paths).then(next_mans=>{
+                console.log("Manifest.nextManifest(): next_mans=",next_mans);
                 const dirs_compare_diff = this.dirsComparing.compare(next_mans, this.prev_mans);
                 if(dirs_compare_diff) {
+                    console.log("Manifest.nextManifest():CHANGES EXIST!");
                     this.prev_mans = next_mans;
                     this.hostCluster.propagateManifest(next_mans);
                 }
             }).catch(err=>{
-                console.log("Err: Manifest: nextManifest():"+err);
+                console.log("Manifest: nextManifest() Error:"+err);
             }).finally(()=>{
-                console.log("Manifest finally new manifest will in "+this.timer+ " seconds...");
+                console.log("Manifes.tnextManifest(): finally: new manifest will in "+this.timer+ " seconds...");
                 setTimeout(()=>{this.nextManifest()}, this.timer);
             })
         }
@@ -355,7 +369,8 @@
                 const result = {};
                 let pending = paths_data.length;
                 paths_data.forEach(path_data=>{
-                    this.manOfDirSync(path_data.path).then(res=>{
+                    this.manOfDirAsync(path_data.path).then(res=>{
+                        //console.log()
                         result[path_data.name] = res;
                         if(!--pending){resolve(result)}
                     }).catch(err=>{
@@ -368,12 +383,24 @@
         }
     }
     function DirsComparing(){
-        // this.latest_man = undefined;
-        // this.init=(first_man)=>{
-        //     this.latest_man = first_man;
-        // }
         this.compareResult=undefined;
-        this.compare=(next_man, prev_man)=>{
+        this.compare=(next_mans, prev_mans)=>{
+            const result = {};
+            for(let man in next_mans){
+                const comparedDirs = this.compare2Dirs(next_mans[man], prev_mans[man]);
+                //@ -----Warning: Procedural code: result can be kinda: { new_files: [], files_to_change: [], old_files: [] }
+                let is_really_some_changes = false;
+                for(const part in comparedDirs){
+                    if(comparedDirs[part].length>0){ is_really_some_changes = true; }
+                }
+                if(is_really_some_changes) result[man] = comparedDirs;
+                //@ ---------------------------------------
+            }
+            return Object.keys(result).length>0 ? result : undefined;
+        }
+        this.compare2Dirs=(next_man, prev_man)=>{
+            //@ next_man = {controller:[], launcher:[], other:[]}
+            //console.log("DirsComparing.comparing(): next_man=",next_man);
             const new_files = find_new_files(next_man, prev_man);
             const files_to_change = find_files_to_change(next_man, prev_man);
             const old_files = find_old_files(next_man, prev_man);
@@ -895,11 +922,11 @@
             return new Promise((resolve,reject)=>{
                 this.switchUpdateMode(true);
                 new AgentUpdateChain(man).run().then(res=>{
-                    this.switchUpdateMode(false);
                     resolve(res);
                 }).catch(err=>{
-                    this.switchUpdateMode(false);
                     reject(err);
+                }).finally(()=>{
+                    this.switchUpdateMode(false);
                 })
             });
         }
@@ -908,8 +935,10 @@
             if(this.controller.work_mode=="normal"){
                 this.switchUpdateMode(true);
                 new AgentUpdateChain(man).run().then(res=>{
-                    this.switchUpdateMode(false);
+
                 }).catch(err=>{
+
+                }).finally(()=>{
                     this.switchUpdateMode(false);
                 })
             }else{
@@ -958,6 +987,12 @@
         this.is_online_flag=(agent_identifiers)?true:false;
 		this.isOnline=function(){return this.is_online_flag}
 		this.switchOnline=function(is_online){this.is_online_flag=is_online;}
+        this.is_update_mode_flag=false;
+        this.isUpdateMode=()=>{return this.is_update_mode_flag;}
+        this.switchUpdateMode=(is_update_mode)=>{this.is_update_mode_flag = is_update_mode;}
+        this.is_special_mode_flag=false;
+        this.isSpecialMode=()=>{return this.is_special_mode_flag;}
+        this.switchUpdateMode=(is_special_mode)=>{this.is_special_mode_flag = is_special_mode;}
         //@----------------------------
 		this.instance=function(agent_identifiers){
             return new Controller(
@@ -1020,6 +1055,11 @@
         }
 		
     }
+    function SpecialControllerMode(){}
+    function NormalControllerMode(jobs){
+        this.jobs=jobs;
+    }
+
     function Microtask(name){
         this.name = name;
         this.done=false;
@@ -2608,63 +2648,24 @@ function init_jobs_functions(){
 	function manage_subscribers(socket_id, action) {
 		var found = 0;
 		var found_loc = [];
-		for(var i = 0; i<list_of_subscribers.length; i++)
-		{
-			
-			if(list_of_subscribers[i] == socket_id)
-			{
+		for(var i = 0; i<list_of_subscribers.length; i++){
+			if(list_of_subscribers[i] == socket_id){
 				found = found + 1;
 				found_loc.push(i);
 			}
 		}
-		
-		if(found == 0 && action == 'add')
-		{
-			list_of_subscribers.push(socket_id)
-		}
-		else if(found > 0 && action == 'remove')
-		{
-			for(var i = 0; i < found_loc.length; i++)
-			{
+		if(found == 0 && action == 'add'){
+            list_of_subscribers.push(socket_id)
+        }else if(found > 0 && action == 'remove'){
+			for(var i = 0; i < found_loc.length; i++){
 				list_of_subscribers.splice(found_loc[i], 1);
 			}
 		}
-		
-		//delete_this_later:(list_of_subscribers);
 	}
-	function transmit_info_to_browsers(data) {
-		for(var i = 0; i<list_of_subscribers.length; i++)
-		{
+	function transmit_info_to_browsers(data){
+		for(var i = 0; i<list_of_subscribers.length; i++){
 			io.to(list_of_subscribers[i]).emit('agent_table', data);
 		}
-    }
-
-    function IoListeners(client, admin){
-        const agents = admin.services.Tables.unit.Agents();
-        const listeners = {};
-
-        listeners.disconnect = function(){
-            const deleted = agents.del(client.id);
-
-            //TODO: manage_subscribers(client.id, 'remove');
-        }
-        listeners.identifiers = function(){}
-        listeners.manifest = function(){}
-        listeners.partner_leaved = function(){}
-        listeners.partner_appeared = function(){}
-        listeners.same_md5_agents = function(){}
-        listeners.sync_dirs = function(){}
-        listeners.start_agent = function(){}
-        listeners.kill_agent = function(){}
-        listeners.update_folder = function(){}
-        listeners.gpu_info = function(){}
-        listeners.housekeeping = function(){}
-        listeners.proc_count = function(){}
-        listeners.void_controller = function(){}
-        listeners.exec_cmd = function(){}
-        listeners.nvidia_smi = function(){}
-        listeners.wetransfer = function(){}
-        return listeners;
     }
 
 
@@ -3955,137 +3956,3 @@ function read_settings(json_path)
 	}
 }
 
-//* sync
-function compare_manifests_2rp(old, fresh)
-{
-    let copy_names = [];
-    let empty_dirs = [];
-    let old_empty_dirs = get_empty_dirs(old);
-    let fresh_empty_dirs = get_empty_dirs(fresh);
-    empty_dirs = DiffArrays(fresh_empty_dirs, old_empty_dirs);
-    old = trim_empty_dirs(old);
-    fresh = trim_empty_dirs(fresh);
-    //delete_this_later:("old=",old);
-    //delete_this_later:("fresh=",fresh);
-    //1.2. Extract flat Arrays with 'Names' from Arr2d
-    const names = extract_flat_names(old, fresh);
-    //1.3. Find new Names in fresh version
-    let diff_frol = DiffArrays(names.fresh, names.old);
-    copy_names = copy_names.concat(diff_frol);
-    //2. FIND DIFFER BY SIZE AND BY DATE (EXEC TIME = 0.5 ms)
-    //2.1. Find Intersec by Name
-    let intersec = IntersecArrays(names.old, names.fresh);
-    //delete_this_later:("intersec =", intersec);
-    //2.2. Choose Only Intersected from 2d arrays
-    old = get_intersecs_from_2d(old, intersec);
-    fresh = get_intersecs_from_2d(fresh, intersec);
-    //delete_this_later:("old =", old);
-    //delete_this_later:("fresh =", fresh);
-    //2.3. Sort both Arrays by Names
-    old = old.sort(sort_by_name);
-    fresh = fresh.sort(sort_by_name);
-    //2.4. go to compare sizes or later by Date
-    let names_diff_by_size = compare_intersec_by_size_or_date(old, fresh);
-    copy_names = copy_names.concat(names_diff_by_size)
-    //4. COPY CHANGES
-    return {copy_names:copy_names, empty_dirs:empty_dirs};
-
-
-    function get_empty_dirs(arr2d)
-    {
-        const NAME = 0;
-        const EMPTY_DIR = 3;
-        let res = [];
-        for (let i in arr2d) {
-            if (arr2d[i][EMPTY_DIR] == 'empty_dir') {
-                res.push(arr2d[i][NAME]); 
-            }
-        }
-        return res;
-    }
-    function trim_empty_dirs(arr2d)
-    {
-        let res = [];
-        const EMPTY_DIR = 3;
-        for (let i in arr2d) {
-            if (arr2d[i][EMPTY_DIR] != 'empty_dir') {
-                res.push(arr2d[i]);
-            }
-        }
-        return res;
-    }
-    //* sync
-    function extract_flat_names(old, fresh){
-        let old_names = [], fresh_names = [];
-        for (let i in old) {old_names.push(old[i][0]); }
-        for (let i in fresh) {fresh_names.push(fresh[i][0]); }
-        return {old: old_names, fresh: fresh_names }
-    }
-    //* sync
-    function get_intersecs_from_2d(arr2d, intersec){
-        let result = [];
-        for (let row in arr2d) {
-            for (let i in intersec) {
-                if (arr2d[row][0] == intersec[i]) result.push(arr2d[row]);
-            }
-        }
-        return result;
-    }
-    function sort_by_name(a,b) {
-        if (a[0] > b[0]) return 1;
-        if (a[0] == b[0]) return 0;
-        if (a[0] < b[0]) return -1;
-    }
-    //* sync
-    
-    function compare_intersec_by_size_or_date(old, fresh){
-        //* Here we have two same-length arrays sorted by Names, so indexes are always match
-        const NAME = 0, SIZE = 1, DATE = 2;
-        let names_diff_by_size_or_date = [];
-        if (old.length == fresh.length) {
-            for (let i in fresh) {
-                if (old[i][SIZE] != fresh[i][SIZE]) {
-                    names_diff_by_size_or_date.push(fresh[i][NAME]);
-                } else {
-                    let old_date = (typeof(typeof old[i][DATE]) == "object") ? (old[i][DATE].getTime()) : (Date.parse(fresh[i][DATE]));
-                    let fresh_date = (typeof(typeof old[i][DATE]) == "object") ? (old[i][DATE].getTime()) : (Date.parse(fresh[i][DATE]));
-                    //delete_this_later:(" old date=", old_date);
-                    //delete_this_later:(" fresh date=", fresh_date);
-                    if (fresh_date > old_date) {
-                        names_diff_by_size_or_date.push(fresh[i][NAME]);
-                    }
-                }
-            }
-        }
-        else { console.log("ERROR1: function 'compare_intersec()': lengths are different") }
-        return names_diff_by_size_or_date;
-    }
-}
-
-//--------------------
-// UTIL FUNCTIONS
-//--------------------
-
-function DiffArrays(A,B)
-{
-    var M = A.length, N = B.length, c = 0, C = [];
-    for (var i = 0; i < M; i++)
-     { var j = 0, k = 0;
-       while (B[j] !== A[ i ] && j < N) j++;
-       while (C[k] !== A[ i ] && k < c) k++;
-       if (j == N && k == c) C[c++] = A[ i ];
-     }
-   return C;
-}
-
-function IntersecArrays(A,B)
-{
-    var m = A.length, n = B.length, c = 0, C = [];
-    for (var i = 0; i < m; i++)
-     { var j = 0, k = 0;
-       while (B[j] !== A[ i ] && j < n) j++;
-       while (C[k] !== A[ i ] && k < c) k++;
-       if (j != n && k == c) C[c++] = A[ i ];
-     }
-   return C;
-}

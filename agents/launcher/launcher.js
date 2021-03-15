@@ -7,27 +7,129 @@ const os = require('os');
 const {spawn, exec} = require('child_process');
 const EventEmitter = require('events');
 
-const sett_path = __dirname+"/../c_settings.json";
-console.log("sett_path = ", path.normalize(sett_path));
-const SETT	= read_settings(path.normalize(sett_path));
+const SETT_PATH = __dirname+"/../c_settings.json";
+console.log("SETT_PATH = ", path.normalize(SETT_PATH));
+const SETT	= read_settings(path.normalize(SETT_PATH));
 //const socket = require('socket.io-client')(SETT.client_socket);
 const io = require('socket.io-client');
 var socket;
 
 
-//main();
+//============IMPLEMENTATION========================
+(function main(){ new App.run(); })();
+//==================================================
+//==================================================
 
-function main(){
-    const controller_channel = require('../controller/controller.js');
-    
-    if(controller_channel.emit){
-        //console.log("controller_channel emit = "+controller_channel.emit);
-        controller_channel.on('online',(p1)=>{
-            console.log("ControllerChannel say: "+p1);
+function App(){
+	this.ioWrap = undefined;
+	this.socketIoHandlers = undefined;
+	this.run=()=>{
+        new Launcher(
+            new Identifiers(),
+            new SocketIoHandlers(
+                new IoWrap(
+                    new IoSettings(SETT_PATH),
+                    new StringifiedJson()
+                ),
+                new Manifest()
+            ),
+        ).run();
+	}
+}
+
+function Launcher(identifiers, socketIoHandlers){
+    this.identifiers=identifiers;
+    this.socketIoHandlers=socketIoHandlers;
+    this.run=()=>{
+        this.identifiers.first_init().then(agent_ids=>{
+            this.socketIoHandlers.run(agent_ids);
+        }).catch(err=>{
+            console.log("Launcher.run(): this.identifiers.first_init() Error: ", err);
         })
-        controller_channel.emit('is_online')
     }
-    else{console.log("ControllerChannel = "+controller_channel);}
+}
+
+function Identifiers(){
+    this.first_init=()=>{
+        return new Promise((resolve,reject)=>{
+            GS.prepare_identifiers().then(res=>resolve(res)).catch(err=>reject(err));
+        });
+    }
+}
+
+function SocketIoHandlers(ioWrap, manifest){
+    this.ioWrap= ioWrap;
+    this.manifest= manifest;
+    this.run=(agent_ids)=>{
+        this.ioWrap.run(agent_ids);
+    }
+}
+
+function IoWrap(ioSettings, stringifiedJson){
+    this.ioSettings= ioSettings;
+    this.stringifiedJson= stringifiedJson;
+    this.run=(agent_ids)=>{
+        const io = require('socket.io-client');
+		const settings = this.ioSettings.read(); //sync
+		//@ At this moment connection happens
+		this.socket = io(settings.client_socket, {query:{
+            "browser_or_agent": "agent",
+            "agent_identifiers": this.stringifiedJson.run()
+        }});
+		return this;
+    }
+}
+
+function Manifest(){
+    this.curMan = [];
+    this.init=(look_dir)=>{
+        this.manOfDir(look_dir).then(res=>{this.curMan=res}).catch(err=>{
+            console.log("Manifest.init()->manOfDIr() Error: ",err);
+        });
+        return this;
+    }
+    this.current=()=>{return this.curMan}
+    this.manOfDir=(look_dir)=>{
+        return new Promise((resolve, reject)=>{
+            look_dir = look_dir || "..\\launcher"
+            walk(look_dir, look_dir, function(err, results) {
+                (err) ? reject(err): resolve(results);
+            });
+            function walk(cur_path, root_path, cbDone){
+                var results = [];
+                fs.readdir(cur_path, function(err, list) {
+                    if (err) return cbDone(err);
+                    let cur_path_without_root = (cur_path.length > root_path.length) ? cur_path.slice(root_path.length) : "";
+                    var pending = list.length;
+                    if (!pending) return cbDone(null, results);
+                    list.forEach(function(file) {
+                        let file_path_without_root = cur_path_without_root + "\\" + file;
+                        file = cur_path + "\\" + file;
+                        fs.stat(file, function(err, stat) {
+                            if (stat && stat.isDirectory()) {
+                                walk(file, root_path, function(err, list2) {
+                                    if(err) return cbDone(err);
+                                    //@ means empty directory
+                                    if(list2.length==0){
+                                        results.push([file_path_without_root+"\\"]);
+                                    }
+                                    else results = results.concat(list2);
+                                    if (!--pending) cbDone(null, results);
+                                });
+                            }else{
+                                let inner_res = [];
+                                inner_res.push(file_path_without_root);
+                                inner_res.push(stat.size);
+                                inner_res.push(stat.mtime);
+                                results.push(inner_res);
+                                if (!--pending) cbDone(null, results);
+                            }
+                        });
+                    });
+                });
+            }
+        });
+    }
 }
 
 // Launcher global Structure
@@ -509,11 +611,6 @@ const GS = {
     },
 }
 
-//==================================================
-//==================================================
-GS.main();
-//==================================================
-//==================================================
 
 
 
