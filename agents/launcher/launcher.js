@@ -21,8 +21,6 @@ var socket;
 //==================================================
 
 function App(){
-	this.ioWrap = undefined;
-	this.socketIoHandlers = undefined;
 	this.run=()=>{
         new Launcher(
             new Identifiers(),
@@ -30,9 +28,13 @@ function App(){
                 new IoWrap(
                     new IoSettings(SETT_PATH),
                     new StringifiedJson()
-                ),
-                new Manifest()
-            ),
+                )
+            )
+                .with('compareManifest', new Manifest(
+                    new DirStructure(), new DirsComparing())
+                )
+                .with('diskSpace', new DiskSpace())
+            ,
         ).run();
 	}
 }
@@ -41,51 +43,119 @@ function Launcher(identifiers, socketIoHandlers){
     this.identifiers=identifiers;
     this.socketIoHandlers=socketIoHandlers;
     this.run=()=>{
-        this.identifiers.first_init().then(agent_ids=>{
+        this.identifiers.prepare().then(agent_ids=>{
             this.socketIoHandlers.run(agent_ids);
         }).catch(err=>{
-            console.log("Launcher.run(): this.identifiers.first_init() Error: ", err);
+            console.log("Launcher.run(): this.identifiers.prepare() Error: ", err);
         })
     }
 }
 
 function Identifiers(){
-    this.first_init=()=>{
+    this.prepare=()=>{
         return new Promise((resolve,reject)=>{
             GS.prepare_identifiers().then(res=>resolve(res)).catch(err=>reject(err));
         });
     }
 }
 
-function SocketIoHandlers(ioWrap, manifest){
+function SocketIoHandlers(ioWrap){
     this.ioWrap= ioWrap;
-    this.manifest= manifest;
+    this.socket = undefined;
+    this.with_events = [];
     this.run=(agent_ids)=>{
-        this.ioWrap.run(agent_ids);
+        this.socket = this.ioWrap.run(agent_ids).socketio();
+		Object.keys(this.tech_events).forEach(ev=>{
+			console.log("hanging up '"+ev+"' event.");
+			//@ hangs up all listeners
+            if(this.tech_events.includes(ev)&& !this.with_events.includes(ev)){
+                this.socket.on(ev, this.tech_evt_handlers[ev].bind(this));   
+            }
+        });
+	};
+    this.with=(ev_name, evHandler)=>{
+        this.with_events.push(ev_name);
+        evHandler.run(ev_name, this.socket);
+        return this;
+    }
+	this.tech_events = ['connect', 'disconnect', 'identifiers', 'compareManifest', 'partner_leaved', 'partner_appeared', 'same_md5_agents', 'sync_dirs', 'start_agent', 'kill_agent', 'update_folder'];
+    this.tech_evt_handlers = {
+		connect: function(){ console.log("'connect' event"); },
+		disconnect: function(){ console.log("'disconnect' event"); },
+		identifiers: function(){
+			console.log("'identifiers' event");
+			GS.prepare_identifiers().then(res=>{
+				this.socket.emit('identifiers', res)
+			}).catch(err=>{
+				console.log("ERR: GS.prepare_identifiers() returns: "+err);
+			});
+		},
+		compareManifest: function(remote_manifest){
+            const comparing = local_manifest.compareWithRemote(remote_manifest);
+            if(comparing){
+                this.socket.emit("compareManifest");
+            }
+        },
+		partner_leaved: function(data){},
+		partner_appeared: function(){},
+		same_md5_agents: function(){},
+		sync_dirs: function(){},
+		start_agent: function(){},
+		kill_agent: function(){},
+		update_folder: function(){}
     }
 }
 
 function IoWrap(ioSettings, stringifiedJson){
+    this.socket = undefined;
     this.ioSettings= ioSettings;
     this.stringifiedJson= stringifiedJson;
+    this.socketio=()=>{return this.socket}
     this.run=(agent_ids)=>{
         const io = require('socket.io-client');
 		const settings = this.ioSettings.read(); //sync
 		//@ At this moment connection happens
 		this.socket = io(settings.client_socket, {query:{
             "browser_or_agent": "agent",
-            "agent_identifiers": this.stringifiedJson.run()
+            "agent_identifiers": this.stringifiedJson.run(agent_ids)
         }});
 		return this;
     }
 }
+function IoSettings(settingsPath){
+	this.settingsPath = settingsPath;
+	this.read = ()=>{
+		const settings = read_settings(this.settingsPath);
+		return settings;
+	}
+	function read_settings(json_path){
+		try{
+			json_path = path.normalize(json_path);
+			const json = fs.readFileSync(json_path, "utf8");
+			const settings = JSON.parse(json);
+			if (settings) return settings;
+			else { return {error: "wrong settings data"}; }
+		}
+		catch(e){ return {error: e}; }
+	}
+}
+function StringifiedJson(){
+    this.json = undefined;
+    this.run=(json)=>{
+        this.json = json;
+        return (this.json) ? JSON.stringify(this.json) : JSON.stringify({})
+    };
+}
 
-function Manifest(){
+function Manifest(dirStructure, dirsComparing){
     this.curMan = [];
-    this.init=(look_dir)=>{
-        this.manOfDir(look_dir).then(res=>{this.curMan=res}).catch(err=>{
-            console.log("Manifest.init()->manOfDIr() Error: ",err);
-        });
+    this.run=(ev_name, socket)=>{
+        //@ ev_name = 'compareManifest'
+        socket.on(ev_name, (remote_manif)=>{
+            this.manOfDir().then(local_manif=>{
+                this.compareMans(local_manif, remote_manif).then()
+            })
+        })
         return this;
     }
     this.current=()=>{return this.curMan}
@@ -129,6 +199,184 @@ function Manifest(){
                 });
             }
         });
+    }
+}
+function DirStructure(){
+    //@ returns manifest of one directory. Type Array ['f1', 'f2']
+    this.manOfDirSync=(look_dir)=>{
+        look_dir = look_dir || "\\update";
+        return walk(look_dir, look_dir);
+        function walk(cur_path, root_path){
+            var results = [];
+            const cur_path_without_root = (cur_path.length > root_path.length) ? cur_path.slice(root_path.length) : "";
+            var list;
+            try{list = fs.readdirSync(cur_path);}
+            catch(err){console.log("ERROR: ",err);}
+            list.forEach(function(file){
+                const file_path_without_root = cur_path_without_root + "\\" + file;
+                const file_path = cur_path + "\\" + file;
+                const stat = fs.statSync(file_path);
+                if (stat && stat.isDirectory()){
+                    const sub_res = walk(file_path, root_path);
+                    if(sub_res.length==0){ 
+                        results.push([file_path_without_root+"\\"]); 
+                    }else results = results.concat(sub_res);
+                }else{
+                    results.push([file_path_without_root,stat.size,stat.mtime]);
+                }
+            });
+            return results;
+        }
+    }
+    //@ returns manifest of one directory. Type Array ['f1', 'f2']
+    this.manOfDirAsync=(look_dir)=>{
+        return new Promise((resolve, reject)=>{
+            look_dir = look_dir || "\\update"
+            walk(look_dir, look_dir, function(err, results) {
+                (err) ? reject(err): resolve(results);
+            });
+            function walk(cur_path, root_path, cbDone){
+                var results = [];
+                fs.readdir(cur_path, function(err, list) {
+                    if (err) return cbDone(err);
+                    let cur_path_without_root = (cur_path.length > root_path.length) ? cur_path.slice(root_path.length) : "";
+                    var pending = list.length;
+                    if (!pending) return cbDone(null, results);
+                    list.forEach(function(file) {
+                        let file_path_without_root = cur_path_without_root + "\\" + file;
+                        file = cur_path + "\\" + file;
+                        fs.stat(file, function(err, stat) {
+                            if (stat && stat.isDirectory()) {
+                                walk(file, root_path, function(err, list2) {
+                                    if(err) return cbDone(err);
+                                    if(list2.length==0){
+                                        results.push([file_path_without_root+"\\"]);
+                                    }
+                                    else results = results.concat(list2);
+                                    if (!--pending) cbDone(null, results);
+                                });
+                            }else{
+                                results.push([file_path_without_root,stat.size,stat.mtime]);
+                                if (!--pending) cbDone(null, results);
+                            }
+                        });
+                    });
+                });
+            }
+        });
+    }
+    //@ returns manifests of a several dirs. Type object {'launcher':[], 'controller':[]}
+    this.allMansSync=(paths_data)=>{
+        const result = {};
+        paths_data.forEach(path_data=>{
+            try{
+                result[path_data.name] = this.manOfDirSync(path_data.path);
+            }catch(err){
+                console.log("DirStructure.allMansSync(): ERROR: ", err);
+            }
+        });
+        return result;
+    }
+    //@ returns manifests of a several dirs. Type object {'launcher':[], 'controller':[]}
+    this.allMansAsync=(paths_data)=>{
+        return new Promise((resolve,reject)=>{
+            const result = {};
+            let pending = paths_data.length;
+            paths_data.forEach(path_data=>{
+                this.manOfDirAsync(path_data.path).then(res=>{
+                    //console.log()
+                    result[path_data.name] = res;
+                    if(!--pending){resolve(result)}
+                }).catch(err=>{
+                    console.log("ERROR: ", err);
+                    if(!--pending){resolve(result)}
+                })
+            });
+            setTimeout(()=>{reject("DirStructure.allMansAsync(): timeout Error!")},5000);
+        });
+    }
+}
+function DirsComparing(){
+    this.compareResult=undefined;
+    this.compare=(next_mans, prev_mans)=>{
+        const result = {};
+        for(let man in next_mans){
+            const comparedDirs = this.compare2Dirs(next_mans[man], prev_mans[man]);
+            //@ -----Warning: Procedural code: result can be kinda: { new_files: [], files_to_change: [], old_files: [] }
+            let is_really_some_changes = false;
+            for(const part in comparedDirs){
+                if(comparedDirs[part].length>0){ is_really_some_changes = true; }
+            }
+            if(is_really_some_changes) result[man] = comparedDirs;
+            //@ ---------------------------------------
+        }
+        return Object.keys(result).length>0 ? result : undefined;
+    }
+    this.compare2Dirs=(next_man, prev_man)=>{
+        //@ next_man = {controller:[], launcher:[], other:[]}
+        //console.log("DirsComparing.comparing(): next_man=",next_man);
+        const new_files = find_new_files(next_man, prev_man);
+        const files_to_change = find_files_to_change(next_man, prev_man);
+        const old_files = find_old_files(next_man, prev_man);
+        return {new_files, files_to_change, old_files};
+        //@ arrays intersection
+        //@ let intersection = arrA.filter(x => arrB.includes(x));
+        //@ arrays difference: Unique values of first array
+        //@ let difference = arrA.filter(x => !arrB.includes(x));
+        function find_new_files(next_man, prev_man){
+            const FNAME=0, FSIZE=1, FDATE=2;
+            return next_man.filter(n_a =>{
+                let is_new_name=true;
+                prev_man.forEach(p_a=>{
+                    if(n_a[FNAME]==p_a[FNAME]){
+                        is_new_name = false;
+                    }
+                });
+                return is_new_name;
+            });
+        }
+        function find_files_to_change(next_man, prev_man){
+            const FNAME=0, FSIZE=1, FDATE=2;
+            return next_man.filter(n_a =>{
+                let is_new_name=true;
+                let is_diff_size=false;
+                let is_diff_date=false;
+                prev_man.forEach(p_a=>{
+                    if(n_a[FNAME]==p_a[FNAME]){
+                        is_new_name = false;
+                        if(n_a.length > 1){
+                            if(n_a[FSIZE]!=p_a[FSIZE]) is_diff_size = true;
+                            const ndate = convert_to_comparable_date(n_a[FDATE]);
+                            const pdate = convert_to_comparable_date(p_a[FDATE]);
+                            if(ndate>pdate) is_diff_date = true;
+                        }
+                    }
+                });
+                if(is_diff_size||is_diff_date){return true;}
+                else{return false;}
+            });
+        }
+        function find_old_files(next_man, prev_man){
+            const FNAME=0, FSIZE=1, FDATE=2;
+            return prev_man.filter(p_a =>{
+                let is_old_name=true;
+                next_man.forEach(n_a=>{
+                    if(n_a[FNAME]==p_a[FNAME]){
+                        is_old_name = false;
+                    }
+                });
+                if(p_a.length==1){is_old_name = false}
+                return is_old_name;
+            });
+        }
+        function convert_to_comparable_date(date){
+            if (typeof date == "object") return date.getTime();
+            else if(typeof date == "string") return Date.parse(date);
+            else{
+                console.log("Converting Date to Ms ERROR: Unknown type of input date: ", date);
+                return 0;
+            }
+        }
     }
 }
 

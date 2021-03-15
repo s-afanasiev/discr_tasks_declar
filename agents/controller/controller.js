@@ -637,18 +637,18 @@ function SocketIoHandlers(){
 	this.socket = undefined;
 	this.run = async(socket)=>{
 		this.socket = socket;
-		Object.keys(this.events).forEach(ev=>{
+		Object.keys(this.tech_events.concat(this.user_events)).forEach(ev=>{
 			console.log("hanging up '"+ev+"' event.");
 			//@ hangs up all listeners
-            if(this.technical_events_list.includes(ev)){
-                socket.on(ev, this.technical_events_handlers[ev]);   
-            }else if(this.user_events_list.includes(ev)){
-                socket.on(ev, this.user_events_handlers[ev]);           }
+            if(this.tech_events.includes(ev)){
+                socket.on(ev, this.tech_evt_handlers[ev]);   
+            }else if(this.user_events.includes(ev)){
+                socket.on(ev, this.user_evt_handlers[ev]);           }
 		});
 	};
-	this.technical_events_list = ['connect', 'disconnect', 'identifiers', 'manifest', 'partner_leaved', 'partner_appeared', 'same_md5_agents', 'sync_dirs', 'start_agent', 'kill_agent', 'update_folder'];
-	this.user_events_list = ['disk_space', 'gpu_info', 'housekeeping', 'disk_space', 'proc_count', 'void_controller', 'exec_cmd', 'nvidia_smi', 'wetransfer'];
-	this.technical_events_handlers = {
+	this.tech_events = ['connect', 'disconnect', 'identifiers', 'manifest', 'partner_leaved', 'partner_appeared', 'same_md5_agents', 'sync_dirs', 'start_agent', 'kill_agent', 'update_folder'];
+	this.user_events = ['disk_space', 'gpu_info', 'housekeeping', 'disk_space', 'proc_count', 'exec_cmd', 'nvidia_smi', 'wetransfer'];
+	this.tech_evt_handlers = {
 		connect: function(){ console.log("'connect' event"); },
 		disconnect: function(){ console.log("'disconnect' event"); },
 		identifiers: function(){
@@ -658,17 +658,6 @@ function SocketIoHandlers(){
 			}).catch(err=>{
 				console.log("ERR: GS.prepare_identifiers() returns: "+err);
 			});
-		},
-		disk_space: function(){
-			console.log("'disk_space' event");
-			checkDiskSpace("C:/").then((diskSpace) => {
-                // { free: 12345678, size: 98756432 }
-                console.log("diskSpace =",diskSpace);
-                _socket.emit('disk_space', {done:true, res:diskSpace});
-            }).catch((ex)=>{
-                console.log("diskSpace error=",ex);
-                _socket.emit('disk_space', {done:false, details:ex});
-            }); 
 		},
 		compareManifest: function(remote_manifest){
             const comparing = local_manifest.compareWithRemote(remote_manifest);
@@ -684,7 +673,18 @@ function SocketIoHandlers(){
 		kill_agent: function(){},
 		update_folder: function(){}
     }
-    this.user_events_handlers = {
+    this.user_evt_handlers = {
+        disk_space: function(){
+			console.log("'disk_space' event");
+			checkDiskSpace("C:/").then((diskSpace) => {
+                // { free: 12345678, size: 98756432 }
+                console.log("diskSpace =",diskSpace);
+                _socket.emit('disk_space', {done:true, res:diskSpace});
+            }).catch((ex)=>{
+                console.log("diskSpace error=",ex);
+                _socket.emit('disk_space', {done:false, details:ex});
+            }); 
+		},
 		gpu_info: function(){},
 		housekeeping: function(){},
 		proc_count: function(){},
