@@ -1,22 +1,13 @@
-//launcher.js ('shems/shems_1.js' example)
 'use sctrict';
-// requires
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const {spawn, exec} = require('child_process');
 const EventEmitter = require('events');
-
-const SETT_PATH = __dirname+"/../c_settings.json";
-console.log("SETT_PATH = ", path.normalize(SETT_PATH));
-const SETT	= read_settings(path.normalize(SETT_PATH));
-//const socket = require('socket.io-client')(SETT.client_socket);
-const io = require('socket.io-client');
-var socket;
-
-
+const { settings } = require('cluster');
+const glob = {};
 //============IMPLEMENTATION========================
-(function main(){ new App.run(); })();
+(function main(){ new App().run(); })();
 //==================================================
 //==================================================
 
@@ -26,15 +17,19 @@ function App(){
             new Identifiers(),
             new SocketIoHandlers(
                 new IoWrap(
-                    new IoSettings(SETT_PATH),
+                    new IoSettings(__dirname+"../c_settings.json").as("settings"),
                     new StringifiedJson()
                 )
             )
-                .with('compareManifest', new Manifest(
-                    new DirStructure(), new DirsComparing())
-                )
+                .with('compareManifest', new ComparedManifest(
+                    new DirStructure(), 
+                    new DirsComparing(),
+                    "settings"
+                ))
+                .with('killPartner', new KilledPartner())
+                .with('updateFiles', new UpdatedFiles())
+                .with('startPartner', new StartedPartner())
                 .with('diskSpace', new DiskSpace())
-            ,
         ).run();
 	}
 }
@@ -50,11 +45,89 @@ function Launcher(identifiers, socketIoHandlers){
         })
     }
 }
+function Settings(){
+
+}
 
 function Identifiers(){
+    this.identifiers = [];
     this.prepare=()=>{
+        console.log("preparing identifiers for master...");
         return new Promise((resolve,reject)=>{
-            GS.prepare_identifiers().then(res=>resolve(res)).catch(err=>reject(err));
+            const TYPE = 0, SID = 1, MD5 = 2, IP = 3, PID = 4, PPID = 5, APID = 6;
+            let arr = [];
+            arr[TYPE] = "launcher";
+            arr[SID] = false;
+            arr[IP] = false;
+            arr[PID] = process.pid;
+            arr[PPID] = process.ppid;
+            arr[APID] = (isNaN(Number(process.argv[2]))) ? (-1) : (Number(process.argv[2]));
+            if (arr[APID] == 0) arr[APID] = -1;
+            this.get_mac((err, res) => {
+                if (err) {
+                  return reject(err);
+                }
+                arr[MD5] = res;
+                this.identifiers = arr;
+                resolve(arr);
+            }) 
+        }); 
+    }  
+    this.get_mac=(callback)=>{
+        //console.log("now in get_mac()")
+        this.exec_cmd_getmac("getmac").then(res=>{
+            res = MD5hash(res);
+            console.log("Mac address has successfully received")
+            callback(null, res)
+        }).catch(err=>{
+            console.log("try_get_mac_once() returned err:", err)
+            if(++attempts_counter >= MAX_ATTEMPTS) {
+                console.log("attempts_counter has reached max value:", attempts_counter)
+                return callback("MAXX ATTEMPTS to get MAC has reached")
+            }
+            setTimeout(()=>{
+                console.log("Retry to get MAC address...");
+                get_mac(callback);
+            }, ATTEMPTS_INTERVAL)
+        });
+    } 
+    this.exec_cmd_getmac=(command_)=>{
+        var EOL = /(\r\n)|(\n\r)|\n|\r/;
+        let command = command_ || "getmac";
+        return new Promise((resolve,reject)=>{
+            var CMD = exec('cmd');
+            var stdout = '';
+            var stdoutres = '';
+            var stderr = null;
+            CMD.stdout.on('data', function (data) {
+                //console.log('exec_cmd chunk:', data);
+                stdout += data.toString();
+            });
+            CMD.stderr.on('data', function (data) {
+                if (stderr === null) { stderr = data.toString(); }
+                else { stderr += data.toString(); }
+            });
+            CMD.on('exit', function () {
+                stdout = stdout.split(EOL);
+                // Find the line index for the macs
+                //let regexp = /\d\d-\d\d-\d\d-\d\d-\d\d-\d\d/;
+                let regexp = /\w\w-\w\w-\w\w-\w\w-\w\w-\w\w/;
+                stdout.forEach(function (out, index) {
+                    if(typeof out != "undefined")
+                        var n = out.search(regexp);
+                    if (n > -1) {
+                        stdoutres += out.slice(n, 17);
+                    }
+                    if (out && typeof beginRow == 'undefined' && out.indexOf(regexp) === 0) {
+                        beginRow = index;
+                    }
+                });
+                if(stderr) reject(stderr);
+                else { resolve(stdoutres || false) }
+            });
+            //CMD.stdin.write('wmic process get ProcessId,ParentProcessId,CommandLine \n');
+            CMD.stdin.write(command+'\r\n');
+            CMD.stdin.end();
         });
     }
 }
@@ -62,48 +135,19 @@ function Identifiers(){
 function SocketIoHandlers(ioWrap){
     this.ioWrap= ioWrap;
     this.socket = undefined;
-    this.with_events = [];
-    this.run=(agent_ids)=>{
-        this.socket = this.ioWrap.run(agent_ids).socketio();
-		Object.keys(this.tech_events).forEach(ev=>{
-			console.log("hanging up '"+ev+"' event.");
-			//@ hangs up all listeners
-            if(this.tech_events.includes(ev)&& !this.with_events.includes(ev)){
-                this.socket.on(ev, this.tech_evt_handlers[ev].bind(this));   
-            }
-        });
-	};
+    this.allEvHandlers = {};
     this.with=(ev_name, evHandler)=>{
-        this.with_events.push(ev_name);
-        evHandler.run(ev_name, this.socket);
+        this.allEvHandlers[ev_name] = evHandler;
         return this;
     }
+    this.run=(agent_ids)=>{
+        this.socket = this.ioWrap.run(agent_ids).socketio();
+		Object.keys(this.allEvHandlers).forEach(ev_name=>{
+			console.log("hanging up '"+ev_name+"' event.");
+            this.allEvHandlers[ev_name].run(ev_name, this.socket);   
+        });
+	};
 	this.tech_events = ['connect', 'disconnect', 'identifiers', 'compareManifest', 'partner_leaved', 'partner_appeared', 'same_md5_agents', 'sync_dirs', 'start_agent', 'kill_agent', 'update_folder'];
-    this.tech_evt_handlers = {
-		connect: function(){ console.log("'connect' event"); },
-		disconnect: function(){ console.log("'disconnect' event"); },
-		identifiers: function(){
-			console.log("'identifiers' event");
-			GS.prepare_identifiers().then(res=>{
-				this.socket.emit('identifiers', res)
-			}).catch(err=>{
-				console.log("ERR: GS.prepare_identifiers() returns: "+err);
-			});
-		},
-		compareManifest: function(remote_manifest){
-            const comparing = local_manifest.compareWithRemote(remote_manifest);
-            if(comparing){
-                this.socket.emit("compareManifest");
-            }
-        },
-		partner_leaved: function(data){},
-		partner_appeared: function(){},
-		same_md5_agents: function(){},
-		sync_dirs: function(){},
-		start_agent: function(){},
-		kill_agent: function(){},
-		update_folder: function(){}
-    }
 }
 
 function IoWrap(ioSettings, stringifiedJson){
@@ -114,30 +158,35 @@ function IoWrap(ioSettings, stringifiedJson){
     this.run=(agent_ids)=>{
         const io = require('socket.io-client');
 		const settings = this.ioSettings.read(); //sync
+        console.log("IoWrap.run(): settings=", settings);
 		//@ At this moment connection happens
 		this.socket = io(settings.client_socket, {query:{
             "browser_or_agent": "agent",
             "agent_identifiers": this.stringifiedJson.run(agent_ids)
         }});
+        this.socket.on('connect',(par)=>{console.log(">>>connected to server: ", par)})
 		return this;
     }
 }
 function IoSettings(settingsPath){
 	this.settingsPath = settingsPath;
-	this.read = ()=>{
-		const settings = read_settings(this.settingsPath);
-		return settings;
-	}
-	function read_settings(json_path){
+	this.read=()=>{
+        const normalized_path = path.normalize(this.settingsPath);
+        let settings;
 		try{
-			json_path = path.normalize(json_path);
-			const json = fs.readFileSync(json_path, "utf8");
-			const settings = JSON.parse(json);
-			if (settings) return settings;
-			else { return {error: "wrong settings data"}; }
-		}
-		catch(e){ return {error: e}; }
+			const json_file = fs.readFileSync(normalized_path, "utf8");
+			settings = JSON.parse(json_file);
+		}catch(err){
+            console.log("IoSettings.read() Error: ", err);
+            return {error: err};
+        }
+        return settings;
 	}
+    this.settings=()=>{this.settingsPath}
+    this.as=(name)=>{
+        glob[name]=this;
+        return this;
+    }
 }
 function StringifiedJson(){
     this.json = undefined;
@@ -146,88 +195,48 @@ function StringifiedJson(){
         return (this.json) ? JSON.stringify(this.json) : JSON.stringify({})
     };
 }
-
-function Manifest(dirStructure, dirsComparing){
+//@-------------------------------
+function ComparedManifest(dirStructure, dirsComparing, settings){
+    this.dirStructure = dirStructure;
+    this.dirsComparing = dirsComparing;
     this.curMan = [];
+    this.settings = glob[settings] || {}
     this.run=(ev_name, socket)=>{
         //@ ev_name = 'compareManifest'
         socket.on(ev_name, (remote_manif)=>{
-            this.manOfDir().then(local_manif=>{
-                this.compareMans(local_manif, remote_manif).then()
+            this.manifestos(remote_manif).then(local_manif=>{
+                let is_difference;
+                try{
+                    is_difference = this.dirsComparing.compare(local_manif, remote_manif);
+                }catch(err){socket.emit({is_done: false, error: err});}
+                console.log("ComparedManifest: on event: is_difference=",is_difference);
+                //socket.emit({is_done: true, result: is_difference});
+            }).catch(err=>{
+                console.log("ComparedManifest: on event: manifestos() Error: ", err);
+                //socket.emit({is_done: false, error: err});
             })
         })
         return this;
     }
     this.current=()=>{return this.curMan}
-    this.manOfDir=(look_dir)=>{
+    this.manifestos=(remote_manif)=>{
+        //@ remote_manif = {controller:{}, other:{}}
         return new Promise((resolve, reject)=>{
-            look_dir = look_dir || "..\\launcher"
-            walk(look_dir, look_dir, function(err, results) {
-                (err) ? reject(err): resolve(results);
+            const local_dir_controller = this.settings.local_dir_controller || "../controller";
+            const local_dir_other = this.settings.local_dir_other || "../other";
+            const paths = [];
+            Object.keys(remote_manif).forEach(in_fact_folder=>{
+                paths.push({name:in_fact_folder, path: "local_dir_"+in_fact_folder})
             });
-            function walk(cur_path, root_path, cbDone){
-                var results = [];
-                fs.readdir(cur_path, function(err, list) {
-                    if (err) return cbDone(err);
-                    let cur_path_without_root = (cur_path.length > root_path.length) ? cur_path.slice(root_path.length) : "";
-                    var pending = list.length;
-                    if (!pending) return cbDone(null, results);
-                    list.forEach(function(file) {
-                        let file_path_without_root = cur_path_without_root + "\\" + file;
-                        file = cur_path + "\\" + file;
-                        fs.stat(file, function(err, stat) {
-                            if (stat && stat.isDirectory()) {
-                                walk(file, root_path, function(err, list2) {
-                                    if(err) return cbDone(err);
-                                    //@ means empty directory
-                                    if(list2.length==0){
-                                        results.push([file_path_without_root+"\\"]);
-                                    }
-                                    else results = results.concat(list2);
-                                    if (!--pending) cbDone(null, results);
-                                });
-                            }else{
-                                let inner_res = [];
-                                inner_res.push(file_path_without_root);
-                                inner_res.push(stat.size);
-                                inner_res.push(stat.mtime);
-                                results.push(inner_res);
-                                if (!--pending) cbDone(null, results);
-                            }
-                        });
-                    });
-                });
-            }
+            const result = this.dirStructure.allMansAsync(paths).then(local_manifest=>{
+                resolve(local_manifest);
+            }).catch(err=>{
+                reject("ComparedManifest.manifestos() Error: "+JSON.stringify(err));
+            })
         });
     }
 }
 function DirStructure(){
-    //@ returns manifest of one directory. Type Array ['f1', 'f2']
-    this.manOfDirSync=(look_dir)=>{
-        look_dir = look_dir || "\\update";
-        return walk(look_dir, look_dir);
-        function walk(cur_path, root_path){
-            var results = [];
-            const cur_path_without_root = (cur_path.length > root_path.length) ? cur_path.slice(root_path.length) : "";
-            var list;
-            try{list = fs.readdirSync(cur_path);}
-            catch(err){console.log("ERROR: ",err);}
-            list.forEach(function(file){
-                const file_path_without_root = cur_path_without_root + "\\" + file;
-                const file_path = cur_path + "\\" + file;
-                const stat = fs.statSync(file_path);
-                if (stat && stat.isDirectory()){
-                    const sub_res = walk(file_path, root_path);
-                    if(sub_res.length==0){ 
-                        results.push([file_path_without_root+"\\"]); 
-                    }else results = results.concat(sub_res);
-                }else{
-                    results.push([file_path_without_root,stat.size,stat.mtime]);
-                }
-            });
-            return results;
-        }
-    }
     //@ returns manifest of one directory. Type Array ['f1', 'f2']
     this.manOfDirAsync=(look_dir)=>{
         return new Promise((resolve, reject)=>{
@@ -266,18 +275,6 @@ function DirStructure(){
         });
     }
     //@ returns manifests of a several dirs. Type object {'launcher':[], 'controller':[]}
-    this.allMansSync=(paths_data)=>{
-        const result = {};
-        paths_data.forEach(path_data=>{
-            try{
-                result[path_data.name] = this.manOfDirSync(path_data.path);
-            }catch(err){
-                console.log("DirStructure.allMansSync(): ERROR: ", err);
-            }
-        });
-        return result;
-    }
-    //@ returns manifests of a several dirs. Type object {'launcher':[], 'controller':[]}
     this.allMansAsync=(paths_data)=>{
         return new Promise((resolve,reject)=>{
             const result = {};
@@ -299,6 +296,7 @@ function DirStructure(){
 function DirsComparing(){
     this.compareResult=undefined;
     this.compare=(next_mans, prev_mans)=>{
+        console.log();
         const result = {};
         for(let man in next_mans){
             const comparedDirs = this.compare2Dirs(next_mans[man], prev_mans[man]);
@@ -377,6 +375,28 @@ function DirsComparing(){
                 return 0;
             }
         }
+    }
+}
+//@-------------------------------
+function KilledPartner(){
+    this.run=()=>{
+        console.log("KilledPartner.run()...");
+    }
+}
+function UpdatedFiles(){
+    this.run=()=>{
+        console.log("UpdatedFiles.run()...");
+    }
+}
+function StartedPartner(){
+    this.run=()=>{
+        console.log("StartedPartner.run()...");
+    }
+}
+//@-------------------------------
+function DiskSpace(){
+    this.run=()=>{
+        console.log("DiskSpace.run()...");
     }
 }
 
@@ -1010,46 +1030,7 @@ function create_dir_if_need(path_, cb)
     });
 }
 
-function exec_cmd_getmac(command_)
-{
-    var EOL = /(\r\n)|(\n\r)|\n|\r/;
-    let command = command_ || "getmac";
-    return new Promise((resolve,reject)=>{
-        var CMD = exec('cmd');
-        var stdout = '';
-        var stdoutres = '';
-        var stderr = null;
-        CMD.stdout.on('data', function (data) {
-            //console.log('exec_cmd chunk:', data);
-            stdout += data.toString();
-        });
-        CMD.stderr.on('data', function (data) {
-            if (stderr === null) { stderr = data.toString(); }
-            else { stderr += data.toString(); }
-        });
-        CMD.on('exit', function () {
-            stdout = stdout.split(EOL);
-            // Find the line index for the macs
-            //let regexp = /\d\d-\d\d-\d\d-\d\d-\d\d-\d\d/;
-            let regexp = /\w\w-\w\w-\w\w-\w\w-\w\w-\w\w/;
-            stdout.forEach(function (out, index) {
-                if(typeof out != "undefined")
-                    var n = out.search(regexp);
-                if (n > -1) {
-                    stdoutres += out.slice(n, 17);
-                }
-                if (out && typeof beginRow == 'undefined' && out.indexOf(regexp) === 0) {
-                    beginRow = index;
-                }
-            });
-            if(stderr) reject(stderr);
-            else { resolve(stdoutres || false) }
-        });
-        //CMD.stdin.write('wmic process get ProcessId,ParentProcessId,CommandLine \n');
-        CMD.stdin.write(command+'\r\n');
-        CMD.stdin.end();
-    });
-}
+
 
 //get_dir_manifest("../controller", prefix="controller")
 function get_dir_manifest(look_path, suffix)
