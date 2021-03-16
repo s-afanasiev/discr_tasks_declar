@@ -17,7 +17,7 @@ function App(){
             new Identifiers(),
             new SocketIoHandlers(
                 new IoWrap(
-                    new IoSettings(__dirname+"../c_settings.json").as("settings"),
+                    new IoSettings(__dirname+"/../c_settings.json").as("settings"),
                     new StringifiedJson()
                 )
             )
@@ -45,31 +45,25 @@ function Launcher(identifiers, socketIoHandlers){
         })
     }
 }
-function Settings(){
-
-}
 
 function Identifiers(){
-    this.identifiers = [];
     this.prepare=()=>{
         console.log("preparing identifiers for master...");
         return new Promise((resolve,reject)=>{
-            const TYPE = 0, SID = 1, MD5 = 2, IP = 3, PID = 4, PPID = 5, APID = 6;
-            let arr = [];
-            arr[TYPE] = "launcher";
-            arr[SID] = false;
-            arr[IP] = false;
-            arr[PID] = process.pid;
-            arr[PPID] = process.ppid;
-            arr[APID] = (isNaN(Number(process.argv[2]))) ? (-1) : (Number(process.argv[2]));
-            if (arr[APID] == 0) arr[APID] = -1;
-            this.get_mac((err, res) => {
-                if (err) {
-                  return reject(err);
+            let ids = {};
+            ids.ag_type = "launcher";
+            this.get_mac((err, mac) => {
+                if (err) { return reject(err);}
+                else{
+                    ids.md5 = mac;
+                    ids.pid = process.pid;
+                    ids.ppid = process.ppid;
+                    ids.apid = (isNaN(Number(process.argv[2]))) ? (-1) : (Number(process.argv[2]));
+                    if (ids.apid == 0) ids.apid = -1;
+                    ids.sid = "";
+                    ids.ip = "";
+                    resolve(ids);
                 }
-                arr[MD5] = res;
-                this.identifiers = arr;
-                resolve(arr);
             }) 
         }); 
     }  
@@ -164,7 +158,8 @@ function IoWrap(ioSettings, stringifiedJson){
             "browser_or_agent": "agent",
             "agent_identifiers": this.stringifiedJson.run(agent_ids)
         }});
-        this.socket.on('connect',(par)=>{console.log(">>>connected to server: ", par)})
+        this.socket.on('connect',()=>{console.log(">>>connected to server!")})
+        this.socket.on('disconnect',()=>{console.log(">>>disconnected from server!")})
 		return this;
     }
 }
@@ -182,7 +177,6 @@ function IoSettings(settingsPath){
         }
         return settings;
 	}
-    this.settings=()=>{this.settingsPath}
     this.as=(name)=>{
         glob[name]=this;
         return this;
@@ -192,7 +186,8 @@ function StringifiedJson(){
     this.json = undefined;
     this.run=(json)=>{
         this.json = json;
-        return (this.json) ? JSON.stringify(this.json) : JSON.stringify({})
+        const ids = (this.json) ? JSON.stringify(this.json) : JSON.stringify({});
+        return ids;
     };
 }
 //@-------------------------------
@@ -204,7 +199,9 @@ function ComparedManifest(dirStructure, dirsComparing, settings){
     this.run=(ev_name, socket)=>{
         //@ ev_name = 'compareManifest'
         socket.on(ev_name, (remote_manif)=>{
+            console.log("ComparedManifest: remote_manif=",remote_manif)
             this.manifestos(remote_manif).then(local_manif=>{
+                console.log("ComparedManifest: local_manif=",local_manif)
                 let is_difference;
                 try{
                     is_difference = this.dirsComparing.compare(local_manif, remote_manif);
@@ -226,9 +223,13 @@ function ComparedManifest(dirStructure, dirsComparing, settings){
             const local_dir_other = this.settings.local_dir_other || "../other";
             const paths = [];
             Object.keys(remote_manif).forEach(in_fact_folder=>{
-                paths.push({name:in_fact_folder, path: "local_dir_"+in_fact_folder})
+                let local_dir;
+                if(in_fact_folder=="controller"){local_dir = local_dir_controller}
+                else if(in_fact_folder=="other"){local_dir = local_dir_other}
+                else if(in_fact_folder=="launcher"){local_dir = __dirname}
+                paths.push({name:in_fact_folder, path: local_dir})
             });
-            const result = this.dirStructure.allMansAsync(paths).then(local_manifest=>{
+            this.dirStructure.allMansAsync(paths).then(local_manifest=>{
                 resolve(local_manifest);
             }).catch(err=>{
                 reject("ComparedManifest.manifestos() Error: "+JSON.stringify(err));
@@ -240,7 +241,8 @@ function DirStructure(){
     //@ returns manifest of one directory. Type Array ['f1', 'f2']
     this.manOfDirAsync=(look_dir)=>{
         return new Promise((resolve, reject)=>{
-            look_dir = look_dir || "\\update"
+            look_dir = look_dir || "\\update";
+            console.log("DirStructure.manOfDirAsync(): look_dir=",look_dir);
             walk(look_dir, look_dir, function(err, results) {
                 (err) ? reject(err): resolve(results);
             });
@@ -276,16 +278,16 @@ function DirStructure(){
     }
     //@ returns manifests of a several dirs. Type object {'launcher':[], 'controller':[]}
     this.allMansAsync=(paths_data)=>{
+        console.log("DirStructure.allMansAsync: paths_data=", paths_data)
         return new Promise((resolve,reject)=>{
             const result = {};
             let pending = paths_data.length;
             paths_data.forEach(path_data=>{
                 this.manOfDirAsync(path_data.path).then(res=>{
-                    //console.log()
                     result[path_data.name] = res;
                     if(!--pending){resolve(result)}
                 }).catch(err=>{
-                    console.log("ERROR: ", err);
+                    console.log("DirStructure.allMansAsync() Error: ", err);
                     if(!--pending){resolve(result)}
                 })
             });
