@@ -202,15 +202,16 @@ function ComparedManifest(dirStructure, dirsComparing, settings){
             console.log("ComparedManifest: remote_manif=",remote_manif)
             this.manifestos(remote_manif).then(local_manif=>{
                 console.log("ComparedManifest: local_manif=",local_manif)
-                let is_difference;
+                let difference;
                 try{
-                    is_difference = this.dirsComparing.compare(local_manif, remote_manif);
-                }catch(err){socket.emit({is_done: false, error: err});}
-                console.log("ComparedManifest: on event: is_difference=",is_difference);
-                //socket.emit({is_done: true, result: is_difference});
+                    difference = this.dirsComparing.compare(local_manif, remote_manif);
+                }catch(err){socket.emit({is_error: true, error: err});}
+                console.log("ComparedManifest: on event: difference=",JSON.stringify(difference));
+                const is_changes_exist = (difference) ? true : false;
+                socket.emit(ev_name, {is_error: false, is_changes: is_changes_exist});
             }).catch(err=>{
                 console.log("ComparedManifest: on event: manifestos() Error: ", err);
-                //socket.emit({is_done: false, error: err});
+                socket.emit({is_error: true, error: err});
             })
         })
         return this;
@@ -302,13 +303,7 @@ function DirsComparing(){
         const result = {};
         for(let man in next_mans){
             const comparedDirs = this.compare2Dirs(next_mans[man], prev_mans[man]);
-            //@ -----Warning: Procedural code: result can be kinda: { new_files: [], files_to_change: [], old_files: [] }
-            let is_really_some_changes = false;
-            for(const part in comparedDirs){
-                if(comparedDirs[part].length>0){ is_really_some_changes = true; }
-            }
-            if(is_really_some_changes) result[man] = comparedDirs;
-            //@ ---------------------------------------
+            if(Object.keys(comparedDirs).length>0){result[man] = comparedDirs;}
         }
         return Object.keys(result).length>0 ? result : undefined;
     }
@@ -318,7 +313,11 @@ function DirsComparing(){
         const new_files = find_new_files(next_man, prev_man);
         const files_to_change = find_files_to_change(next_man, prev_man);
         const old_files = find_old_files(next_man, prev_man);
-        return {new_files, files_to_change, old_files};
+        const answer = {}
+        if(new_files.length>0) answer.new_files = new_files;
+        if(files_to_change.length>0) answer.files_to_change = files_to_change;
+        if(old_files.length>0) answer.old_files = old_files;
+        return answer;
         //@ arrays intersection
         //@ let intersection = arrA.filter(x => arrB.includes(x));
         //@ arrays difference: Unique values of first array
@@ -381,17 +380,20 @@ function DirsComparing(){
 }
 //@-------------------------------
 function KilledPartner(){
-    this.run=()=>{
-        console.log("KilledPartner.run()...");
+    this.run=(ev_name, socket)=>{
+        socket.on(ev_name, (msg)=>{
+            console.log("KilledPartner.run() pid =", msg.pid);
+            //TODO: 1. cmd_exec(kill) 2. socket.emit(ok)
+        });
     }
 }
 function UpdatedFiles(){
-    this.run=()=>{
+    this.run=(ev_name, socket)=>{
         console.log("UpdatedFiles.run()...");
     }
 }
 function StartedPartner(){
-    this.run=()=>{
+    this.run=(ev_name, socket)=>{
         console.log("StartedPartner.run()...");
     }
 }

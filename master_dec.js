@@ -148,15 +148,7 @@
                                 new RedundantAgentsReservation()
                             ),
                             //@ host pass this object to Agents through run-method
-                            new AgentUpdateChain(                               
-                                new StartingPartner(
-                                    new UpdatingFiles(
-                                        new KillingPartner(
-                                            new CompareManifest()
-                                        )
-                                    )
-                                )
-                            )
+                            new AgentUpdateChain()
                         ),
                         new AgentRecognizing()
                     )
@@ -722,17 +714,19 @@
     }
 
     //@----------------AgentUpdateChain------------------------
-    function AgentUpdateChain(startingPartner, manifest){
-        this.startingPartner=startingPartner;
+    function AgentUpdateChain(manifest){
         this.manifest=manifest;
         console.log("AgentUpdateChain.constructor: manifest=", manifest);
-        this.instance=(manifest)=>{return new AgentUpdateChain(
-            this.startingPartner.instance(),
-            manifest
-        )}
+        this.instance=(manifest)=>{return new AgentUpdateChain(manifest)}
         this.run=(socket, partner)=>{
             return new Promise((resolve,reject)=>{
-                this.startingPartner.run(socket, partner, this.manifest).then(res=>{
+                new StartingPartner(
+                    new UpdatingFiles(
+                        new KillingPartner(
+                            new CompareManifest()
+                        )
+                    )
+                ).run(socket, partner, this.manifest).then(res=>{
                     resolve(res);
                 }).catch(err=>{
                     reject(err);
@@ -760,7 +754,7 @@
     }
     function StartingPartner(updatingFiles){
         this.updatingFiles=updatingFiles;
-        this.instance=()=>{return new StartingPartner(this.updatingFiles.instance())}
+        //this.instance=()=>{return new StartingPartner(this.updatingFiles.instance())}
         this.run=(socket, partner, manifest)=>{
             return new Promise((resolve,reject)=>{
                 this.updatingFiles.run(socket, partner, manifest).then(res=>{
@@ -791,9 +785,7 @@
     }
     function UpdatingFiles(killingPartner){
         this.killingPartner=killingPartner;
-        this.instance=()=>{
-            return new UpdatingFiles(this.killingPartner.instance())
-        }
+        //this.instance=()=>{return new UpdatingFiles(this.killingPartner.instance())}
         this.run=(socket, partner, manifest)=>{
             return new Promise((resolve,reject)=>{
                 this.killingPartner.run(socket, partner, manifest).then(compare_info=>{
@@ -849,31 +841,33 @@
     function KillingPartner(compareManifest){
         //@ must deside 3 things: 1) is partner exist 2) is need to update him 3) if partner is controller and is it in special mode
         this.compareManifest=compareManifest;
-        this.instance=()=>{
-            return new KillingPartner(this.compareManifest.instance())
-        }
+        //this.instance=()=>{return new KillingPartner(this.compareManifest.instance())}
         this.run=(socket, partner, manifest)=>{
             return new Promise((resolve,reject)=>{
-                this.compareManifest.run(socket, partner, manifest).then(compare_info=>{
-                    const c1 = compare_info.is_changes;
-                    const c2 = this.partner.online;
-                    const c3 = this.agent_type=="launcher" && this.partner.mode != "special";
-                    if(c1&c2&c3){
-                        this.kill_partner(socket, ids).then(res=>{
-                            resolve(compare_info)
+                this.compareManifest.run(socket, partner, manifest).then(msg=>{
+                    if(msg.is_error){return reject(msg.error);} // agent cant compare normally
+                    const c1 = msg.is_changes; //changes must exist, otherwise no need to kill
+                    const c2 = (this.partner) ? this.partner.isOnline() : false; //partner must be online, otherwise nothing to kill
+                    const c3 = (this.partner) ? this.partner.isSpecialMode() : false; // if special mode kinda 'render' when we can't kill
+                    console.log("KillingPartner.run(): c1,c2,c3=",c1,c2,c3);
+                    if(c1 & c2 & !c3){
+                        this.kill_partner(socket, partner.look_agent_pid()).then(is_killed=>{
+                            resolve( {is_changes, is_killed} )
                         }).catch(err=>{
                             reject(err);
-                        });
-                    }else{resolve(compare_info)}
+                        })
+                    }else{
+                        resolve( {is_changes} )
+                    }
                 }).catch(err=>{
                     reject("KillingPartner: previous step 'compare' failed. "+err);
                 })
             });
         }
-        this.kill_partner=(socket, ids)=>{
+        this.kill_partner=(socket, pid)=>{
             return new Promise((resolve,reject)=>{
                 const resolve_handler = function(res){resolve(res||{kill:true});}
-                socket.emit("kill_partner", ids).once("kill_partner", resolve_handler);
+                socket.emit("kill_partner", {pid}).once("kill_partner", resolve_handler);
                 setTimeout(()=>{
                     socket.removeListener("kill_partner",resolve_handler);
                     reject("KillingPartner: kill_partner timeout. ");
@@ -882,10 +876,10 @@
         }
     }
     function CompareManifest(){
-        this.instance=()=>{ return new CompareManifest() }
+        //this.instance=()=>{ return new CompareManifest() }
         this.run=(socket, partner, manifest)=>{
             return new Promise((resolve,reject)=>{
-                const resolve_handler = function(changes){resolve(changes);}
+                const resolve_handler = function(is_changes){resolve(is_changes);}
                 socket.emit('compareManifest', manifest).once('compareManifest', resolve_handler);
                 setTimeout(()=>{
                     socket.removeListener("compareManifest",resolve_handler);
@@ -936,7 +930,10 @@
             console.log("Launcher.compareCurManifest(): man=",man);
             return new Promise((resolve,reject)=>{
                 this.switchUpdateMode(true);
-                this.agentUpdateChain.instance(man).run(this.socketio(), this.partner).then(res=>{
+                const man_for_launcher = {};
+                man_for_launcher.controller = man.controller;
+                man_for_launcher.other = man.other;
+                this.agentUpdateChain.instance(man_for_launcher).run(this.socketio(), this.partner).then(res=>{
                     resolve(res);
                 }).catch(err=>{
                     reject(err);
@@ -998,6 +995,8 @@
         this.agent_socket = undefined;
         this.launcher_state = undefined;
         this.work_mode ="normal";
+        //@----------------------------
+        this.look_agent_pid=()=>{return this.agent_ids.pid}
         //@----------------------------
         this.is_online_flag=(agent_ids)?true:false;
 		this.isOnline=function(){return this.is_online_flag}
