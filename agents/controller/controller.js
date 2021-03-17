@@ -1,540 +1,16 @@
 //controller.js
 'use sctrict';
-// requires
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const {spawn, exec} = require('child_process');
 const EventEmitter = require('events');
 const io = require('socket.io-client');
-
-
 //const socket = require('./socket.io.dev.js')(SETT.client_socket);
-
-const checkDiskSpace = require('check-disk-space');
+const $checkDiskSpace = require('check-disk-space');
 var ps = require('ps-node');
 const { emit } = require('process');
-
-// Controller global Structure
-const GS = {
-    main: function() {
-        //*1) SET IO LISTENERS        
-        GS.socket_io_init();
-    },
-    emtr: new EventEmitter(),
-    wait_identifiers: function(){
-        return new Promise((resolve,reject)=>{
-            if(this.identifiers) resolve(this.identifiers);
-            else {
-                this.emtr.once("identifiers", ids=>{
-                    this.identifiers = ids;
-                    resolve(this.identifiers);
-                });
-            }
-        });
-    },
-    prepare_identifiers: function(){
-        console.log("preparing identifiers for master...");
-        var attempts_counter = 0;
-        const MAX_ATTEMPTS = 3;
-        const ATTEMPTS_INTERVAL = 5000;
-        return new Promise((resolve,reject)=>{
-            const TYPE = 0, SID = 1, MD5 = 2, IP = 3, PID = 4, PPID = 5, APID = 6;
-            const _identifiers = {};
-            _identifiers.agent_type = "controller";
-            _identifiers.md5 = "";
-            _identifiers.sid = "";
-            _identifiers.ip = "";
-            _identifiers.pid = String(process.pid);
-            _identifiers.ppid =String(process.ppid);
-            console.log("GS.prepare_identifiers(): process.argv=", process.argv);
-            _identifiers.apid = (isNaN(Number(process.argv[2]))) ? ("") : (String(process.argv[2]));
-            if (_identifiers.apid == 0) _identifiers.apid = "";;
-
-            get_mac((err, res) => {
-              if (err) {
-                return reject(err);
-              }else{
-                _identifiers.md5 = String(res);
-                resolve(_identifiers);
-              }
-            })    
-        });
-        function get_mac(callback){
-          //console.log("now in get_mac()")
-
-          exec_cmd_getmac("getmac").then(res=>{
-            res = MD5hash(res);
-            console.log("Mac address has successfully received")
-            callback(null, res)
-          }).catch(err=>{
-            console.log("try_get_mac_once() returned err:", err)
-            if(++attempts_counter >= MAX_ATTEMPTS) {
-              console.log("attempts_counter has reached max value:", attempts_counter)
-              return callback("MAXX ATTEMPTS to get MAC has reached")
-            }
-            setTimeout(()=>{
-              console.log("Retry to get MAC address...");
-              get_mac(callback);
-            }, ATTEMPTS_INTERVAL)
-          });
-        }
-
-    },
-    TYPE: 0, SID: 1, MD5: 2, IP: 3, PID: 4, PPID: 5, STATE: 6, TASKS: 7,
-    EVS:{CONNECT: 'connect', HOUSEKEEP: 'housekeeping', DISK: 'disk_space', PROC: 'proc_count', 
-         EXEC_CMD: 'exec_cmd', NVSMI: 'nvidia_smi', WETRANSFER: 'wetransfer',
-        VOIDMAIN: 'void_controller', VOIDALL: 'void_all'},
-    socket_io_init: function() {
-        
-        //* 'connect' and 'disconnect' practically not used
-        socket.on('connect', function(){
-            //* prepare identifiers and SEND to master!
-            setTimeout(()=>{
-                GS.prepare_identifiers().then(arr => {
-                    GS.io_to_master({title:"identifiers", kind: "report", done: true, payload: arr});
-                }).catch(ex => {
-                    console.log("fail to prepare own identifiers:", ex);
-                    GS.io_to_master({title:"identifiers", kind: "report", done: false, cause: ex});
-                });
-            }, 400);
-        });
-        socket.on('disconnect', function(){
-            console.log("DISCONNECTED");
-        });
-        socket.on('identifiers', function(){});
-        //* Master pass Update Directory Manifest at the begining and everytime then it changes
-        socket.on('manifest', function(data){
-            let {tid, jid, payload} = data;
-            //console.log("manifest data Object keys=", Object.keys(data));
-            if (typeof tid == 'undefined') { console.log("ERR: Master wasn't pass task ID !"); }
-            if (payload) {
-                GS.manifest.compare(payload).then(res_obj => {
-                    console.log("res_obj=", JSON.stringify(res_obj));
-                    //?e.g.: res_obj = {is_diff: true, is_touch_partner_folder: false}
-                    let parcel = {kind: "report", done: true, title: 'manifest', answer: res_obj, tid: tid, jid: jid};
-                    GS.io_to_master(parcel);
-                }).catch(ex=>{ 
-                    console.log("ERR:",ex); 
-                    let parcel = {kind: "report", done: false, title: 'manifest', cause: ex, tid: tid, jid: jid};
-                    GS.io_to_master(parcel);
-                });
-            } else { 
-                let err_msg = "ERR: 'manifest' event: no manifest !";
-                console.log(err_msg); 
-                let parcel = {kind: "report", done: false, title: 'manifest', cause: err_msg, tid: tid, jid: jid};
-                GS.io_to_master(parcel);
-            }
-        });
-        socket.on('partner_leaved', function(data){
-            //- data = <Array> state_agent || <String> sid
-            console.log("<<<EVENT: partner_leaved, data:", data);
-            GS.partner.is_partner_under_update = false;
-            (GS.partner.count > 0) ? (GS.partner.count--) : (GS.partner.count = 0);
-            if (Array.isArray(data.payload)) {
-                GS.partner.list = GS.partner.list.filter(el=>{return el.sid != data.payload[GS.SID]})
-            }
-            else if (typeof data.payload == 'string') {
-                GS.partner.list = GS.partner.list.filter(el=>{return el.sid != data.payload})
-            }
-        });
-        socket.on('partner_appeared', function(data){
-            //- data.payload = <Array> state_agent || <String> sid
-            console.log("<<<EVENT: partner_appeared, data:", data);
-            GS.partner.is_partner_under_update = false;
-            GS.partner.count++;
-            if (Array.isArray(data.payload)) {
-                GS.partner.list.push({
-                    sid: data.payload[GS.SID],
-                    pid: data.payload[GS.PID],
-                    ppid: data.payload[GS.PPID],
-                    apid: data.payload[GS.APID],
-                });
-            }
-        });
-        //* After Launcher has send "identifiers" to Master, Master pass "same Pids" guys
-        socket.on('same_md5_agents', function(data){ 
-            let {tid, jid, payload} = GS.extract_socketio_data(data);
-            if (payload) {
-                let partners_count = GS.partner.save_identifiers(payload);
-                let is_partner_exist = (partners_count > 0) ? true : false;
-
-                let parcel = {kind: "report", done: true, title: "same_md5_agents", answer: is_partner_exist, tid: tid, id: jid};
-                GS.io_to_master(parcel);
-            } else { 
-                let err_msg = "ERR: 'same_md5_agents' socket event: no payload !";
-                console.log(err_msg);
-                let parcel = {kind: "report", done: false, title: "same_md5_agents", cause: err_msg, tid: tid, id: jid};
-                GS.io_to_master(parcel); 
-            }
-            
-        });
-        socket.on('sync_dirs', function(data){
-            let {tid, jid, payload} = GS.extract_socketio_data(data);
-            console.log("<<EVENT sync_dirs !");
-            
-            sync_dirs(GS.manifest.diff, (errlist, str_res) => {
-                let parcel;
-                if (str_res == 'useless') 
-                {
-                    parcel = {kind: "report", done: false, title: "sync_dirs", cause: "agent has no local changes", tid: tid, jid: jid};
-                }
-                else if (errlist.length > 0) 
-                {
-                    console.log("ERR: fail to sync dirs:", errlist.length);
-                    parcel = {kind: "report", done: false, title: "sync_dirs", cause: errlist, tid: tid, jid: jid};
-                }
-                else 
-                {
-                    console.log("sync dirs:", str_res);
-                    parcel = {kind: "report", done: true, title: "sync_dirs", answer: str_res, tid: tid, jid: jid};
-                }
-                GS.io_to_master(parcel);
-            });
-        });
-        socket.on('start_agent', function(data){ 
-            let {tid, jid, payload} = GS.extract_socketio_data(data);
-            console.log("<< start_agent EVENT !");
-            GS.partner.start("", (err, res) => {
-                if (err) {
-                    console.log("ERR: fail to start_agent:", err);
-                    let parcel = {kind: "report", done: false, title: "start_agent", cause: err, tid: tid, jid: jid};
-                    GS.io_to_master(parcel);
-                }
-                else {
-					GS.partner.is_under_update = false;
-                    let parcel = {kind: "report", done: true, title: "start_agent", answer: "ok", tid: tid, jid: jid};
-                    GS.io_to_master(parcel);
-                }
-            });
-        });  
-        socket.on('kill_agent', function(data){
-            let {tid, jid, payload} = GS.extract_socketio_data(data);
-            console.log("<< kill_agent EVENT !");
-            GS.partner.kill(GS.partner.list, (list) => {
-                GS.partner.list = [];
-                GS.partner.is_under_update = true;
-                //* answer = [<count of killed pids>, <count of killed ppids>]
-                let parcel = {kind: "report", done: true, title: "kill_agent", answer: list, tid: tid, jid: jid};
-                GS.io_to_master(parcel);
-            });
-        });
-        socket.on('update_folder', function(update_folder){
-            GS.master.set_update_folder(update_folder);
-        });
-        socket.on(GS.EVS.HOUSEKEEP, function(data){
-            let {tid, jid, payload} = GS.extract_socketio_data(data);
-            let parcel = {kind: "report", done: true, title: GS.EVS.HOUSEKEEP, answer: "ready", tid: tid, jid: jid};
-            GS.io_to_master(parcel);
-        });
-        socket.on(GS.EVS.DISK, function(data){
-            let {tid, jid, payload} = GS.extract_socketio_data(data);
-            console.log("socket 'disk_space' event: data=", tid, jid, payload);
-            // On Windows
-            //* payload = "C:";
-            if(typeof payload != 'string')
-            {
-                payload = 'C:';
-            }
-            if (payload.endsWith(":")) {payload += "/"}
-            checkDiskSpace(payload).then((diskSpace) => {
-                // { free: 12345678, size: 98756432 }
-                console.log("diskSpace =",diskSpace);
-                let parcel = {kind: "report", done: true, title: GS.EVS.DISK, answer: diskSpace.free, tid: tid, jid: jid};
-                GS.io_to_master(parcel);
-            }).catch((ex)=>{
-                let parcel = {kind: "report", done: false, title: GS.EVS.DISK, cause: ex, tid: tid, jid: jid};
-                GS.io_to_master(parcel);
-            }); 
-        });
-        socket.on(GS.EVS.PROC, function(data){
-            let {tid, jid, payload} = GS.extract_socketio_data(data);
-            console.log("socket 'proc_count' event:", tid, jid, payload);
-            if (typeof payload == "object") 
-            {
-                let process = payload.process;
-                    find_process_by_name(process).then(res=>{
-                        let parcel = {kind: "report", done: true, title: GS.EVS.PROC, answer: res, tid: tid, jid: jid};
-                        GS.io_to_master(parcel);
-                    }).catch(ex=>{
-                        let parcel = {kind: "report", done: false, title: GS.EVS.PROC, cause: ex, tid: tid, jid: jid};
-                        GS.io_to_master(parcel);
-                    });
-
-            } else {console.log("ERR: eng: socket 'data' property must be an Object!")}
-            
-            
-        });
-        socket.on(GS.EVS.EXEC_CMD, function(data){
-
-            console.log('>>>>>>>arbitrary_cmd:', data);
-            let {tid, jid, payload} = GS.extract_socketio_data(data);
-            console.log("socket 'exec_cmd' event: data=", tid, jid, payload);
-            let command;
-            if (typeof payload == 'object')
-            {
-                command = payload.command;
-            }
-            else if (typeof payload == 'string')
-            {
-                command = payload;
-            }
-            execute_command(command).then(res=>{
-                // res = [] || [{pid, ppid, command, argument}, {...}]
-                let parcel = {kind: "report", done: true, answer: res, title: "exec_cmd", tid: tid, jid: jid};
-                GS.io_to_master(parcel);
-            }).catch(ex=>{
-                console.log("ERR: exec_cmd event: fail to execute_command !");
-                let parcel = {kind: "report", done: false, cause: ex, title: "exec_cmd", tid: tid, jid: jid};
-                GS.io_to_master(parcel);
-            });
-        });
-        socket.on(GS.EVS.NVSMI, function(data){
-            let {tid, jid, payload} = GS.extract_socketio_data(data);
-            console.log("socket 'nvidia_smi' event: data=", tid, jid, payload);
-            const NVIDIA_PATH = '"C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvidia-smi.exe"';
-            execute_command(NVIDIA_PATH + '\r\n').then(res=>{
-                // res = [] || [{pid, ppid, command, argument}, {...}]
-                let nvidia_info = parse_nvsmi_result(res);
-                let parcel = {kind: "report", done: true, title: GS.EVS.NVSMI, answer: nvidia_info, tid: tid, jid: jid};
-                GS.io_to_master(parcel);
-            }).catch(ex=>{
-                console.log("ERR: NVSMI: fail to execute_command !");
-                let parcel = {kind: "report", done: false, title: GS.EVS.NVSMI, cause: ex, tid: tid, jid: jid};
-                GS.io_to_master(parcel);
-            });           
-        });
-        socket.on(GS.EVS.WETRANSFER, function(data){
-            let {tid, jid, payload} = GS.extract_socketio_data(data);
-            Selenium.example(payload).then(res=>{
-                console.log("SELENIUM RESULT =",res);
-                let parcel = {kind: "report", done: true, title: GS.EVS.WETRANSFER, answer: res, tid: tid, jid: jid};
-                GS.io_to_master(parcel);
-            }).catch(ex=>{console.log("EX=",ex)});
-        });
-        socket.on(GS.EVS.VOIDMAIN, function(data){
-            let {tid, jid, payload} = GS.extract_socketio_data(data);
-            console.log(GS.EVS.VOIDMAIN, "event, params:", tid, jid, payload);
-            GS.io_to_master({kind: "report", done: true, title: GS.EVS.VOIDMAIN, answer: true, tid: tid, jid: jid});
-        });
-		socket.on(GS.EVS.VOIDALL, function(data){
-            let {tid, jid, payload} = GS.extract_socketio_data(data);
-            console.log(GS.EVS.VOIDALL, "event, params:", tid, jid, payload);
-            GS.io_to_master({kind: "report", done: true, title: GS.EVS.VOIDALL, answer: true, tid: tid, jid: jid});
-        });
-        socket.on('gpu_info', function(data){
-            console.log("'gpu_info' event, params:", data);
-            let {tid, jid, payload} = GS.extract_socketio_data(data);
-            GS.io_to_master({kind: "report", done: true, title: 'gpu_info', answer: 'gpu test ok', tid: tid, jid: jid});
-        });
-		socket.on('check_same_md5', function(data){
-			// data = {tid:'tid', payload:{par1:'', par2:''}} || ...payload:{single_data:[]} || ...single_data:''
-            let {tid, jid, payload} = GS.extract_socketio_data(data);
-
-			const PARTNER = 'launcher';
-            let res = {partners_count:0,
-                is_partner_under_update: GS.partner.is_under_update, 
-                is_partner_exist:false};
-
-            if (Array.isArray(payload)) {
-                // [[GS.TYPE, GS.MD5, GS.SID, GS.IP, GS.PID, GS.PPID, GS.APID], [...], [...]]
-                payload.forEach(agent_arr=>{
-                    if (agent_arr[GS.TYPE] == PARTNER) {
-                        //- add current partners pids and ppids to local list
-                        GS.partner.list.push({
-                            pid: agent_arr[GS.PID],
-                            ppid: agent_arr[GS.PPID],
-                            apid: agent_arr[GS.APID],
-                        });
-                        //- flag true, if at least one partner is present
-                        res.is_partner_exist = true;
-                        res.partners_count++;
-                    }
-                });						
-            }
-            GS.io_to_master({kind: "report", done: true, title: "check_same_md5", answer: res, tid: tid, jid: jid});
-        });
-    },
-    extract_socketio_data: function(data){
-        let res = {};
-        if(typeof data == 'object') {
-            res.tid = data.tid;
-            res.jid = data.jid;
-            res.payload = data.payload;
-        }
-        return res;
-    },
-    io_to_master: function(data){
-        //* {kind: "", title: "", done: Boolean, data: Any}
-        if(!data){ return console.log("io_to_master(): no data!") }
-            //* NOTE: IN Controller Code 'data.from' will be equal to "controller"
-        data.from = "controller";
-        console.log(">>> '" + data.kind + "' to master:" + data.title);
-        //* POSSIBLE OUTBOX EVENTS: 
-        //* "manifest", "same_md5_agents", "update_agent", "sync_dirs", "kill_agent", "start_agent", GS.EVS.HOUSEKEEP, GS.EVS.DISK, GS.EVS.PROC, GS.EVS.EXEC_CMD, GS.EVS.NVSMI
-        socket.emit(data.kind, data);
-    },
-    manifest: {
-        local: null,
-        remote: null,
-        diff: {},
-        compare: function(manifest) {
-            if (typeof manifest == "string") { manifest = JSON.parse(manifest); }
-            //console.log("manifest.compare(): typeof manifest:", typeof manifest);
-            return new Promise((resolve, reject)=>{
-                if(manifest.length > 0) console.log("got remote manifest:",manifest[0]+"...");
-                //? resolve(false) - means that remote directory was empty
-                else { resolve({is_diff:false}); return; }
-                this.remote = manifest;
-                //* get local files tree to compare with remote
-                get_dir_manifest_ctol(GS.partner.folder, except=["controller"])
-                .then(loc_manif => {
-                    this.local = JSON.parse(JSON.stringify(loc_manif));
-
-                    if ((this.remote) && (this.local)) {
-                        //console.log("comparing manifests...");
-                        //*this func() will call GS.ready_to_sync_dirs(copy_names)
-                        let changes = compare_manifests_1rp1lp(this.local, this.remote);
-                        let touch_partner_folder = false;
-                        if((changes.copy_names.length > 0)||(changes.empty_dirs.length > 0)) {
-                            console.log("COPY NAMES =", changes.copy_names);
-                            console.log("EMPTY DIRS =", changes.empty_dirs);
-                            GS.manifest.diff = changes;
-                            if (changes.in_launcher_folder.length > 0) {
-                                touch_partner_folder = true;
-                            }
-                            resolve({is_diff:true, is_touch_partner_folder:touch_partner_folder});
-                        } else {
-                            console.log("remote and local manifests are Match! Nothing to sync...");
-                            resolve({is_diff:false, is_touch_partner_folder:touch_partner_folder});
-                        }
-                    }
-                }).catch(ex => { reject("fail to get Local manifest: " + ex); });
-            });
-        }
-    },
-    partner: {
-        count: 0,
-        list:[], //{sid,pid, ppid, apid}
-        is_started: false,
-		is_under_update: false,
-        file_name: 'launcher.js',
-        folder: '../',
-        file_path: '../launcher/launcher.js',
-        save_identifiers: function(identifiers){
-            //identifiers = [[],[]]; 
-			//?next string need if master sent data with applying JSON.stringify()
-            if(typeof identifiers == "string") { identifiers = JSON.parse(identifiers); }
-            console.log("partner PIDS from master:", identifiers);
-            if (typeof GS.partner.list == 'undefined') GS.partner.list = [];
-            for (let i in identifiers) {
-                //* check if Master give exactly only this MD5 =)
-                if (identifiers[i][GS.MD5] == GS.identifiers[GS.MD5]) {
-                    //* If it's not himself
-                    if(identifiers[i][GS.SID] != GS.identifiers[GS.SID]) {
-                        //* And not same type
-                        if(identifiers[i][GS.TYPE] != GS.identifiers[GS.TYPE]) {
-							GS.partner.list.push({
-								pid: identifiers[i][GS.PID],
-								ppid: identifiers[i][GS.PPID],
-								apid: identifiers[i][GS.APID],
-							});
-                        }
-                    }
-                }
-            }
-            return this.list.length;
-        },
-
-        get_pids: function() {
-            return new Promise((resolve, reject)=>{
-                let pids = {};
-                if (this.pid && this.ppid) resolve ({pid: this.pid, ppid: this.ppid});
-                else {
-                    GS.emtr.once("wait_contragent_ids", ids=>{
-                        //* ids = []
-                        if ((Array.isArray(ids))&&(ids.length > 0)){
-                            resolve({pid: ids[0][GS.PID], ppid: ids[0][GS.PPID]});
-                        } else { resolve({}); }
-                    });
-                    GS.io_to_master({kind: "request_info", titles: ["same_md5_agents"], from: "launcher", own_ids: GS.identifiers});
-                    setTimeout(()=>{ resolve({}); }, 1000);
-                }
-            });
-        },
-        start: function(c_location, callback) {
-            //TODO: CHECK IF FILE EXIST !!!
-            let partner_path = path.normalize(GS.partner.file_path);
-            fs.stat(partner_path, (err)=>{
-                if (err) {
-                    callback(err);
-                    return;
-                }
-                console.log("Starting Launcher...");
-                //var CMD = spawn('cmd');
-                var CMD = exec('cmd');
-                var stdout = '';
-                var stderr = null;
-                CMD.stdout.on('data', function (data) { stdout += data.toString(); });
-                CMD.stderr.on('data', function (data) {
-                    if (stderr === null) { stderr = data.toString(); }
-                    else { stderr += data.toString(); }
-                });
-                CMD.on('exit', function () { callback(stderr, stdout || false);  });
-
-                //CMD.stdin.write('wmic process get ProcessId,ParentProcessId,CommandLine \n');
-                CMD.stdin.write('start cmd.exe @cmd /k "cd..\\launcher & node launcher.js '+process.pid+' '+1+'"\r\n');
-                CMD.stdin.end();
-            });
-        },
-        kill: function(list, callback) {
-            let pending = list.length * 2;
-            let err_pids = [];
-            for (let i in list) 
-            {
-                if (list[i].pid) 
-                {
-                    console.log("Dropping Launcher Node process:", list[i].pid);
-                    try { 
-                        process.kill(list[i].pid);
-                        if (!--pending) {callback(err_pids);}
-                    }
-                    catch(e) {
-                        err_pids.push(list[i].pid);
-                        console.log("Fail to kill Launcher Node process:", e.msg) 
-                        if (!--pending) {callback(err_pids);}
-                    }
-                } 
-                else { console.log("GS.partner.kill(): no PID(node.exe), nothing to kill..."); }
-
-                if (list[i].ppid) 
-                {
-                    console.log("Dropping Launcher CMD process:", list[i].ppid);
-                    try { process.kill(list[i].ppid);
-                        if (!--pending) {callback(err_pids);}
-                    }
-                    catch(e) {
-                        err_pids.push(list[i].ppid);
-                        console.log("Fail to kill Launcher Node process:", e.msg) 
-                        if (!--pending) {callback(err_pids);}
-                    }
-                } 
-                else { console.log("GS.partner.kill(): no PPID(cmd.exe), nothing to kill..."); }
-            }
-            list = [];
-        },
-    },
-    master: {
-        update_folder: false,
-        set_update_folder: function(update_folder){
-            this.update_folder = update_folder;
-        },
-    },
-}
-
 //@ ---------------------------------
-main();
-//mainTest();
 function mainTest(){
 	const settings = read_settings("../c_settings.json");
 	console.log("settings = "+JSON.stringify(settings))
@@ -542,89 +18,143 @@ function mainTest(){
 	const socket = io(settings.client_socket);
 	socket.on("connect", (par)=>{ console.log("connected??") })
 }
-
-function read_settings(json_path){
-	try{
-		json_path = path.normalize(json_path);
-		const json = fs.readFileSync(json_path, "utf8");
-		const settings = JSON.parse(json);
-		if (settings) return settings;
-		else { return {error: "wrong settings data"}; }
-	}
-	catch(e){ return {error: e}; }
-}
-	
-//@----------------------------------
-var local_manifest; //global var
+//@-------IMPLEMENTATION------------
+const glob = {}; //global var
+main();
 function main(){
-	//new App().run();
-
-    const man = new Manifest().init("..\\other");
-    setTimeout(()=>{
-        console.log("man=",man.current());
-    },100)
+	new App().run();
 }
 //@ ---------------------------------
-
 function App(){
-	this.ioWrap = undefined;
-	this.socketIoHandlers = undefined;
-	this.run = async()=>{
-        console.log("App.run()...");
-        const agent_identifers = await GS.prepare_identifiers().catch(err=>{
-            console.log("ERR: App.run(): agent_identifers: "+err);
+	this.run=()=>{
+        new Controller(
+            new Identifiers(),
+            new SocketIoHandlers(
+                new IoWrap(
+                    new IoSettings(__dirname+"/../c_settings.json").as("settings"),
+                    new StringifiedJson()
+                )
+            )
+                .with('compareManifest', new ComparedManifest(
+                    new DirStructure(), 
+                    new DirsComparing(),
+                    "settings"
+                ))
+                .with('killPartner', new KilledPartner())
+                .with('updateFiles', new UpdatedFiles())
+                .with('startPartner', new StartedPartner())
+                .with('diskSpace', new DiskSpace())
+        ).run();
+	}
+}
+function Controller(identifiers, socketIoHandlers){
+    this.identifiers=identifiers;
+    this.socketIoHandlers=socketIoHandlers;
+    this.run=()=>{
+        this.identifiers.prepare().then(agent_ids=>{
+            this.socketIoHandlers.run(agent_ids);
+        }).catch(err=>{
+            console.log("Launcher.run(): this.identifiers.prepare() Error: ", err);
+        })
+    }
+}
+function Identifiers(){
+    this.prepare=()=>{
+        console.log("preparing identifiers for master...");
+        return new Promise((resolve,reject)=>{
+            let ids = {};
+            ids.ag_type = "launcher";
+            this.get_mac((err, mac) => {
+                if (err) { return reject(err);}
+                else{
+                    ids.md5 = mac;
+                    ids.pid = process.pid;
+                    ids.ppid = process.ppid;
+                    ids.apid = (isNaN(Number(process.argv[2]))) ? (-1) : (Number(process.argv[2]));
+                    if (ids.apid == 0) ids.apid = -1;
+                    ids.sid = "";
+                    ids.ip = "";
+                    resolve(ids);
+                }
+            }) 
+        }); 
+    }  
+    this.get_mac=(callback)=>{
+        //console.log("now in get_mac()")
+        this.exec_cmd_getmac("getmac").then(res=>{
+            res = MD5hash(res);
+            console.log("Mac address has successfully received")
+            callback(null, res)
+        }).catch(err=>{
+            console.log("try_get_mac_once() returned err:", err)
+            if(++attempts_counter >= MAX_ATTEMPTS) {
+                console.log("attempts_counter has reached max value:", attempts_counter)
+                return callback("MAXX ATTEMPTS to get MAC has reached")
+            }
+            setTimeout(()=>{
+                console.log("Retry to get MAC address...");
+                get_mac(callback);
+            }, ATTEMPTS_INTERVAL)
         });
-        console.log("agent_identifers=",agent_identifers);
-        this.ioWrap = new IoWrap(
-            new IoSettings("../c_settings.json"),
-            new StringifiedJson(agent_identifers)
-        );
-        //@ TOdo: later remake this variable to be not global
-        local_manifest = new Manifest().init();
-		this.socketIoHandlers = new SocketIoHandlers();
-		await this.ioWrap.run(this);
-		console.log("App: ioWrap.run() ok");
-		await this.socketIoHandlers.run(this.ioWrap.socket);
-		console.log("App: socketIoHandlers.run() ok");
-	}
+    } 
+    this.exec_cmd_getmac=(command_)=>{
+        var EOL = /(\r\n)|(\n\r)|\n|\r/;
+        let command = command_ || "getmac";
+        return new Promise((resolve,reject)=>{
+            var CMD = exec('cmd');
+            var stdout = '';
+            var stdoutres = '';
+            var stderr = null;
+            CMD.stdout.on('data', function (data) {
+                //console.log('exec_cmd chunk:', data);
+                stdout += data.toString();
+            });
+            CMD.stderr.on('data', function (data) {
+                if (stderr === null) { stderr = data.toString(); }
+                else { stderr += data.toString(); }
+            });
+            CMD.on('exit', function () {
+                stdout = stdout.split(EOL);
+                // Find the line index for the macs
+                //let regexp = /\d\d-\d\d-\d\d-\d\d-\d\d-\d\d/;
+                let regexp = /\w\w-\w\w-\w\w-\w\w-\w\w-\w\w/;
+                stdout.forEach(function (out, index) {
+                    if(typeof out != "undefined")
+                        var n = out.search(regexp);
+                    if (n > -1) {
+                        stdoutres += out.slice(n, 17);
+                    }
+                    if (out && typeof beginRow == 'undefined' && out.indexOf(regexp) === 0) {
+                        beginRow = index;
+                    }
+                });
+                if(stderr) reject(stderr);
+                else { resolve(stdoutres || false) }
+            });
+            //CMD.stdin.write('wmic process get ProcessId,ParentProcessId,CommandLine \n');
+            CMD.stdin.write(command+'\r\n');
+            CMD.stdin.end();
+        });
+    }
 }
-function Controller(){
-
-}
-
-function IoSettings(settingsPath){
-	this.settingsPath = settingsPath;
-	this.read = ()=>{
-		const settings = read_settings(this.settingsPath);
-		return settings;
-	}
-	function read_settings(json_path){
-		try{
-			json_path = path.normalize(json_path);
-			const json = fs.readFileSync(json_path, "utf8");
-			const settings = JSON.parse(json);
-			if (settings) return settings;
-			else { return {error: "wrong settings data"}; }
-		}
-		catch(e){ return {error: e}; }
-	}
-}
-
 function IoWrap(ioSettings, stringifiedJson){
 	this.socket = undefined;
-	this.ioSettings = ioSettings;
-	this.stringifiedJson = stringifiedJson;
-	this.run = async(parent)=>{
-        console.log("IoWrap.run()...");
-		const io = require('socket.io-client');
+    this.ioSettings= ioSettings;
+    this.stringifiedJson= stringifiedJson;
+    this.socketio=()=>{return this.socket}
+    this.run=(agent_ids)=>{
+        const io = require('socket.io-client');
 		const settings = this.ioSettings.read(); //sync
+        console.log("IoWrap.run(): settings=", settings);
 		//@ At this moment connection happens
 		this.socket = io(settings.client_socket, {query:{
             "browser_or_agent": "agent",
-            "agent_identifiers": this.stringifiedJson.run()
+            "agent_identifiers": this.stringifiedJson.run(agent_ids)
         }});
+        this.socket.on('connect',()=>{console.log(">>>connected to server!")})
+        this.socket.on('disconnect',()=>{console.log(">>>disconnected from server!")})
 		return this;
-	}
+    }
 }
 function StringifiedJson(json){
     this.json = json;
@@ -632,51 +162,48 @@ function StringifiedJson(json){
         return (this.json) ? JSON.stringify(this.json) : JSON.stringify({})
     };
 }
-//@ Варианты ответов
-function SocketIoHandlers(){
-	this.socket = undefined;
-	this.run = async(socket)=>{
-		this.socket = socket;
-		Object.keys(this.tech_events.concat(this.user_events)).forEach(ev=>{
-			console.log("hanging up '"+ev+"' event.");
-			//@ hangs up all listeners
-            if(this.tech_events.includes(ev)){
-                socket.on(ev, this.tech_evt_handlers[ev]);   
-            }else if(this.user_events.includes(ev)){
-                socket.on(ev, this.user_evt_handlers[ev]);           }
-		});
-	};
-	this.tech_events = ['connect', 'disconnect', 'identifiers', 'manifest', 'partner_leaved', 'partner_appeared', 'same_md5_agents', 'sync_dirs', 'start_agent', 'kill_agent', 'update_folder'];
-	this.user_events = ['disk_space', 'gpu_info', 'housekeeping', 'disk_space', 'proc_count', 'exec_cmd', 'nvidia_smi', 'wetransfer'];
-	this.tech_evt_handlers = {
-		connect: function(){ console.log("'connect' event"); },
-		disconnect: function(){ console.log("'disconnect' event"); },
-		identifiers: function(){
-			console.log("'identifiers' event");
-			GS.prepare_identifiers().then(res=>{
-				_socket.emit('identifiers', res)
-			}).catch(err=>{
-				console.log("ERR: GS.prepare_identifiers() returns: "+err);
-			});
-		},
-		compareManifest: function(remote_manifest){
-            const comparing = local_manifest.compareWithRemote(remote_manifest);
-            if(comparing){
-                this.socket.emit("compareManifest");
-            }
-        },
-		partner_leaved: function(data){},
-		partner_appeared: function(){},
-		same_md5_agents: function(){},
-		sync_dirs: function(){},
-		start_agent: function(){},
-		kill_agent: function(){},
-		update_folder: function(){}
+function IoSettings(settingsPath){
+	this.settingsPath = settingsPath;
+	this.read=()=>{
+		const normalized_path = path.normalize(this.settingsPath);
+        let settings;
+		try{
+			const json_file = fs.readFileSync(normalized_path, "utf8");
+			settings = JSON.parse(json_file);
+		}catch(err){
+            console.log("IoSettings.read() Error: ", err);
+            return {error: err};
+        }
+        return settings;
+	}
+    this.as=(name)=>{
+        glob[name]=this;
+        return this;
     }
+}
+
+function SocketIoHandlers(ioWrap){
+    this.ioWrap= ioWrap;
+	this.socket = undefined;
+    this.allEvHandlers = {};
+    this.with=(ev_name, evHandler)=>{
+        this.allEvHandlers[ev_name] = evHandler;
+        return this;
+    }
+	this.run=(agent_ids)=>{
+        this.socket = this.ioWrap.run(agent_ids).socketio();
+		Object.keys(this.allEvHandlers).forEach(ev_name=>{
+			console.log("hanging up '"+ev_name+"' event.");
+            this.allEvHandlers[ev_name].run(ev_name, this.socket);   
+        });
+	};
+	this.tech_events = ['connect', 'disconnect', 'compareManifest', 'same_md5_agents', 'updateFiles', 'startPartner', 'killPartner', 'identifiers', 'update_folder', 'partner_leaved', 'partner_appeared'];
+	this.user_events = ['diskSpace', 'gpu_info', 'housekeeping', 'proc_count', 'exec_cmd', 'nvidia_smi', 'wetransfer'];
+
     this.user_evt_handlers = {
         disk_space: function(){
 			console.log("'disk_space' event");
-			checkDiskSpace("C:/").then((diskSpace) => {
+			$checkDiskSpace("C:/").then((diskSpace) => {
                 // { free: 12345678, size: 98756432 }
                 console.log("diskSpace =",diskSpace);
                 _socket.emit('disk_space', {done:true, res:diskSpace});
@@ -693,9 +220,268 @@ function SocketIoHandlers(){
 		wetransfer: function(){}
 	}
 }
+//@-------Comparing the Manifest-------------
+function ComparedManifest(dirStructure, dirsComparing, settings){
+    this.dirStructure = dirStructure;
+    this.dirsComparing = dirsComparing;
+    this.curMan = [];
+    this.settings = glob[settings] || {}
+    this.run=(ev_name, socket)=>{
+        //@ ev_name = 'compareManifest'
+        socket.on(ev_name, (remote_manif)=>{
+            console.log("ComparedManifest: remote_manif=",remote_manif)
+            this.manifestos(remote_manif).then(local_manif=>{
+                console.log("ComparedManifest: local_manif=",local_manif)
+                let difference;
+                try{
+                    difference = this.dirsComparing.compare(local_manif, remote_manif);
+                }catch(err){socket.emit({is_error: true, error: err});}
+                console.log("ComparedManifest: on event: difference=",JSON.stringify(difference));
+                const is_changes_exist = (difference) ? true : false;
+                socket.emit(ev_name, {is_error: false, is_changes: is_changes_exist});
+            }).catch(err=>{
+                console.log("ComparedManifest: on event: manifestos() Error: ", err);
+                socket.emit({is_error: true, error: err});
+            })
+        })
+        return this;
+    }
+    this.current=()=>{return this.curMan}
+    this.manifestos=(remote_manif)=>{
+        //@ remote_manif = {controller:{}, other:{}}
+        return new Promise((resolve, reject)=>{
+            const local_dir_controller = this.settings.local_dir_controller || "../controller";
+            const local_dir_other = this.settings.local_dir_other || "../other";
+            const paths = [];
+            Object.keys(remote_manif).forEach(in_fact_folder=>{
+                let local_dir;
+                if(in_fact_folder=="controller"){local_dir = local_dir_controller}
+                else if(in_fact_folder=="other"){local_dir = local_dir_other}
+                else if(in_fact_folder=="launcher"){local_dir = __dirname}
+                paths.push({name:in_fact_folder, path: local_dir})
+            });
+            this.dirStructure.allMansAsync(paths).then(local_manifest=>{
+                resolve(local_manifest);
+            }).catch(err=>{
+                reject("ComparedManifest.manifestos() Error: "+JSON.stringify(err));
+            })
+        });
+    }
+}
+function DirStructure(){
+    //@ returns manifest of one directory. Type Array ['f1', 'f2']
+    this.manOfDirAsync=(look_dir)=>{
+        return new Promise((resolve, reject)=>{
+            look_dir = look_dir || "\\update";
+            console.log("DirStructure.manOfDirAsync(): look_dir=",look_dir);
+            walk(look_dir, look_dir, function(err, results) {
+                (err) ? reject(err): resolve(results);
+            });
+            function walk(cur_path, root_path, cbDone){
+                var results = [];
+                fs.readdir(cur_path, function(err, list) {
+                    if (err) return cbDone(err);
+                    let cur_path_without_root = (cur_path.length > root_path.length) ? cur_path.slice(root_path.length) : "";
+                    var pending = list.length;
+                    if (!pending) return cbDone(null, results);
+                    list.forEach(function(file) {
+                        let file_path_without_root = cur_path_without_root + "\\" + file;
+                        file = cur_path + "\\" + file;
+                        fs.stat(file, function(err, stat) {
+                            if (stat && stat.isDirectory()) {
+                                walk(file, root_path, function(err, list2) {
+                                    if(err) return cbDone(err);
+                                    if(list2.length==0){
+                                        results.push([file_path_without_root+"\\"]);
+                                    }
+                                    else results = results.concat(list2);
+                                    if (!--pending) cbDone(null, results);
+                                });
+                            }else{
+                                results.push([file_path_without_root,stat.size,stat.mtime]);
+                                if (!--pending) cbDone(null, results);
+                            }
+                        });
+                    });
+                });
+            }
+        });
+    }
+    //@ returns manifests of a several dirs. Type object {'launcher':[], 'controller':[]}
+    this.allMansAsync=(paths_data)=>{
+        console.log("DirStructure.allMansAsync: paths_data=", paths_data)
+        return new Promise((resolve,reject)=>{
+            const result = {};
+            let pending = paths_data.length;
+            paths_data.forEach(path_data=>{
+                this.manOfDirAsync(path_data.path).then(res=>{
+                    result[path_data.name] = res;
+                    if(!--pending){resolve(result)}
+                }).catch(err=>{
+                    console.log("DirStructure.allMansAsync() Error: ", err);
+                    if(!--pending){resolve(result)}
+                })
+            });
+            setTimeout(()=>{reject("DirStructure.allMansAsync(): timeout Error!")},5000);
+        });
+    }
+}
+function DirsComparing(){
+    this.compareResult=undefined;
+    this.compare=(next_mans, prev_mans)=>{
+        console.log();
+        const result = {};
+        for(let man in next_mans){
+            const comparedDirs = this.compare2Dirs(next_mans[man], prev_mans[man]);
+            if(Object.keys(comparedDirs).length>0){result[man] = comparedDirs;}
+        }
+        return Object.keys(result).length>0 ? result : undefined;
+    }
+    this.compare2Dirs=(next_man, prev_man)=>{
+        //@ next_man = {controller:[], launcher:[], other:[]}
+        //console.log("DirsComparing.comparing(): next_man=",next_man);
+        const new_files = find_new_files(next_man, prev_man);
+        const files_to_change = find_files_to_change(next_man, prev_man);
+        const old_files = find_old_files(next_man, prev_man);
+        const answer = {}
+        if(new_files.length>0) answer.new_files = new_files;
+        if(files_to_change.length>0) answer.files_to_change = files_to_change;
+        if(old_files.length>0) answer.old_files = old_files;
+        return answer;
+        //@ arrays intersection
+        //@ let intersection = arrA.filter(x => arrB.includes(x));
+        //@ arrays difference: Unique values of first array
+        //@ let difference = arrA.filter(x => !arrB.includes(x));
+        function find_new_files(next_man, prev_man){
+            const FNAME=0, FSIZE=1, FDATE=2;
+            return next_man.filter(n_a =>{
+                let is_new_name=true;
+                prev_man.forEach(p_a=>{
+                    if(n_a[FNAME]==p_a[FNAME]){
+                        is_new_name = false;
+                    }
+                });
+                return is_new_name;
+            });
+        }
+        function find_files_to_change(next_man, prev_man){
+            const FNAME=0, FSIZE=1, FDATE=2;
+            return next_man.filter(n_a =>{
+                let is_new_name=true;
+                let is_diff_size=false;
+                let is_diff_date=false;
+                prev_man.forEach(p_a=>{
+                    if(n_a[FNAME]==p_a[FNAME]){
+                        is_new_name = false;
+                        if(n_a.length > 1){
+                            if(n_a[FSIZE]!=p_a[FSIZE]) is_diff_size = true;
+                            const ndate = convert_to_comparable_date(n_a[FDATE]);
+                            const pdate = convert_to_comparable_date(p_a[FDATE]);
+                            if(ndate>pdate) is_diff_date = true;
+                        }
+                    }
+                });
+                if(is_diff_size||is_diff_date){return true;}
+                else{return false;}
+            });
+        }
+        function find_old_files(next_man, prev_man){
+            const FNAME=0, FSIZE=1, FDATE=2;
+            return prev_man.filter(p_a =>{
+                let is_old_name=true;
+                next_man.forEach(n_a=>{
+                    if(n_a[FNAME]==p_a[FNAME]){
+                        is_old_name = false;
+                    }
+                });
+                if(p_a.length==1){is_old_name = false}
+                return is_old_name;
+            });
+        }
+        function convert_to_comparable_date(date){
+            if (typeof date == "object") return date.getTime();
+            else if(typeof date == "string") return Date.parse(date);
+            else{
+                console.log("Converting Date to Ms ERROR: Unknown type of input date: ", date);
+                return 0;
+            }
+        }
+    }
+}
+//@-------Update chain----------
+function KilledPartner(){
+    this.run=(ev_name, socket)=>{
+        socket.on(ev_name, (msg)=>{
+            console.log("KilledPartner.run() pid =", msg.pid);
+            //TODO: 1. cmd_exec(kill) 2. socket.emit(ok)
+        });
+    }
+}
+function UpdatedFiles(){
+    this.run=(ev_name, socket)=>{
+        socket.on(ev_name, ()=>{
+            console.log("UpdatedFiles.run()...");
+            socket.emit(ev_name, {is_error:false, is_update: true})
+        });
+    }
+}
+function StartedPartner(){
+    this.run=(ev_name, socket)=>{
+        socket.on(ev_name, ()=>{
+            console.log("StartedPartner.run()...");
+            //TODO: 1. cmd_exec(kill) 2. socket.emit(ok)
+            this.start("", (err, res)=>{
+                if(err){
+                    socket.emit(ev_name, {is_error: true, is_started: false});
+                }else{
+                    socket.emit(ev_name, {is_error: false, is_started: true});
+                }
+            });
+        });
+    }
+    this.start=(c_location, callback)=>{
+        //TODO: CHECK IF FILE EXGST !!!
+        let partner_path = path.normalize(GS.partner.file_path);
+        fs.stat(partner_path, (err)=>{
+            if (err) {
+                callback(err);
+                return;
+            }
+            console.log("Starting Controller...");
+            //var CMD = spawn('cmd');
+            var CMD = exec('cmd');
+            var stdout = '';
+            var stderr = null;
+            CMD.stdout.on('data', function (data) { stdout += data.toString(); });
+            CMD.stderr.on('data', function (data) {
+                if (stderr === null) { stderr = data.toString(); }
+                else { stderr += data.toString(); }
+            });
+            CMD.on('exit', function () { callback(stderr, stdout || false);  });
 
+            //CMD.stdin.write('wmic process get ProcessId,ParentProcessId,CommandLine \n');
+            CMD.stdin.write('start cmd.exe @cmd /k "cd..\\controller & node controller.js '+process.pid+' '+1+'"\r\n');
+            CMD.stdin.end();
+        });
+    }
+}
+//@-------------------------------
 
-
+function DiskSpace(){
+    this.run=(ev_name, socket)=>{
+        console.log("DiskSpace.run()...");
+        socket.on(ev_name, ()=>{
+			$checkDiskSpace("C:/").then((disk_space) => {
+                // { free: 12345678, size: 98756432 }
+                console.log("disk_space =",disk_space);
+                socket.emit('diskSpace', {is_error:false, disk_space:disk_space});
+            }).catch((ex)=>{
+                console.log("DiskSpace.run(): $checkDiskSpace Error: ",ex);
+                _socket.emit('disk_space', {is_error:true, error:ex});
+            }); 
+        });
+    }
+}
 
 //==================================================
 //==================================================
@@ -1277,10 +1063,520 @@ function compare_manifests_1rp1lp(local, remote)
 //* sync
 
 
-function test_promise(){
-    return new Promise((resolve, reject)=>{
-        resolve(1);
-    });
+const GS = {
+    main: function() {
+        //*1) SET IO LISTENERS        
+        GS.socket_io_init();
+    },
+    emtr: new EventEmitter(),
+    wait_identifiers: function(){
+        return new Promise((resolve,reject)=>{
+            if(this.identifiers) resolve(this.identifiers);
+            else {
+                this.emtr.once("identifiers", ids=>{
+                    this.identifiers = ids;
+                    resolve(this.identifiers);
+                });
+            }
+        });
+    },
+    prepare_identifiers: function(){
+        console.log("preparing identifiers for master...");
+        var attempts_counter = 0;
+        const MAX_ATTEMPTS = 3;
+        const ATTEMPTS_INTERVAL = 5000;
+        return new Promise((resolve,reject)=>{
+            const TYPE = 0, SID = 1, MD5 = 2, IP = 3, PID = 4, PPID = 5, APID = 6;
+            const _identifiers = {};
+            _identifiers.agent_type = "controller";
+            _identifiers.md5 = "";
+            _identifiers.sid = "";
+            _identifiers.ip = "";
+            _identifiers.pid = String(process.pid);
+            _identifiers.ppid =String(process.ppid);
+            console.log("GS.prepare_identifiers(): process.argv=", process.argv);
+            _identifiers.apid = (isNaN(Number(process.argv[2]))) ? ("") : (String(process.argv[2]));
+            if (_identifiers.apid == 0) _identifiers.apid = "";;
+
+            get_mac((err, res) => {
+              if (err) {
+                return reject(err);
+              }else{
+                _identifiers.md5 = String(res);
+                resolve(_identifiers);
+              }
+            })    
+        });
+        function get_mac(callback){
+          //console.log("now in get_mac()")
+
+          exec_cmd_getmac("getmac").then(res=>{
+            res = MD5hash(res);
+            console.log("Mac address has successfully received")
+            callback(null, res)
+          }).catch(err=>{
+            console.log("try_get_mac_once() returned err:", err)
+            if(++attempts_counter >= MAX_ATTEMPTS) {
+              console.log("attempts_counter has reached max value:", attempts_counter)
+              return callback("MAXX ATTEMPTS to get MAC has reached")
+            }
+            setTimeout(()=>{
+              console.log("Retry to get MAC address...");
+              get_mac(callback);
+            }, ATTEMPTS_INTERVAL)
+          });
+        }
+
+    },
+    TYPE: 0, SID: 1, MD5: 2, IP: 3, PID: 4, PPID: 5, STATE: 6, TASKS: 7,
+    EVS:{CONNECT: 'connect', HOUSEKEEP: 'housekeeping', DISK: 'disk_space', PROC: 'proc_count', 
+         EXEC_CMD: 'exec_cmd', NVSMI: 'nvidia_smi', WETRANSFER: 'wetransfer',
+        VOIDMAIN: 'void_controller', VOIDALL: 'void_all'},
+    socket_io_init: function() {
+        
+        //* 'connect' and 'disconnect' practically not used
+        socket.on('connect', function(){
+            //* prepare identifiers and SEND to master!
+            setTimeout(()=>{
+                GS.prepare_identifiers().then(arr => {
+                    GS.io_to_master({title:"identifiers", kind: "report", done: true, payload: arr});
+                }).catch(ex => {
+                    console.log("fail to prepare own identifiers:", ex);
+                    GS.io_to_master({title:"identifiers", kind: "report", done: false, cause: ex});
+                });
+            }, 400);
+        });
+        socket.on('disconnect', function(){
+            console.log("DISCONNECTED");
+        });
+        socket.on('identifiers', function(){});
+        //* Master pass Update Directory Manifest at the begining and everytime then it changes
+        socket.on('manifest', function(data){
+            let {tid, jid, payload} = data;
+            //console.log("manifest data Object keys=", Object.keys(data));
+            if (typeof tid == 'undefined') { console.log("ERR: Master wasn't pass task ID !"); }
+            if (payload) {
+                GS.manifest.compare(payload).then(res_obj => {
+                    console.log("res_obj=", JSON.stringify(res_obj));
+                    //?e.g.: res_obj = {is_diff: true, is_touch_partner_folder: false}
+                    let parcel = {kind: "report", done: true, title: 'manifest', answer: res_obj, tid: tid, jid: jid};
+                    GS.io_to_master(parcel);
+                }).catch(ex=>{ 
+                    console.log("ERR:",ex); 
+                    let parcel = {kind: "report", done: false, title: 'manifest', cause: ex, tid: tid, jid: jid};
+                    GS.io_to_master(parcel);
+                });
+            } else { 
+                let err_msg = "ERR: 'manifest' event: no manifest !";
+                console.log(err_msg); 
+                let parcel = {kind: "report", done: false, title: 'manifest', cause: err_msg, tid: tid, jid: jid};
+                GS.io_to_master(parcel);
+            }
+        });
+        socket.on('partner_leaved', function(data){
+            //- data = <Array> state_agent || <String> sid
+            console.log("<<<EVENT: partner_leaved, data:", data);
+            GS.partner.is_partner_under_update = false;
+            (GS.partner.count > 0) ? (GS.partner.count--) : (GS.partner.count = 0);
+            if (Array.isArray(data.payload)) {
+                GS.partner.list = GS.partner.list.filter(el=>{return el.sid != data.payload[GS.SID]})
+            }
+            else if (typeof data.payload == 'string') {
+                GS.partner.list = GS.partner.list.filter(el=>{return el.sid != data.payload})
+            }
+        });
+        socket.on('partner_appeared', function(data){
+            //- data.payload = <Array> state_agent || <String> sid
+            console.log("<<<EVENT: partner_appeared, data:", data);
+            GS.partner.is_partner_under_update = false;
+            GS.partner.count++;
+            if (Array.isArray(data.payload)) {
+                GS.partner.list.push({
+                    sid: data.payload[GS.SID],
+                    pid: data.payload[GS.PID],
+                    ppid: data.payload[GS.PPID],
+                    apid: data.payload[GS.APID],
+                });
+            }
+        });
+        //* After Launcher has send "identifiers" to Master, Master pass "same Pids" guys
+        socket.on('same_md5_agents', function(data){ 
+            let {tid, jid, payload} = GS.extract_socketio_data(data);
+            if (payload) {
+                let partners_count = GS.partner.save_identifiers(payload);
+                let is_partner_exist = (partners_count > 0) ? true : false;
+
+                let parcel = {kind: "report", done: true, title: "same_md5_agents", answer: is_partner_exist, tid: tid, id: jid};
+                GS.io_to_master(parcel);
+            } else { 
+                let err_msg = "ERR: 'same_md5_agents' socket event: no payload !";
+                console.log(err_msg);
+                let parcel = {kind: "report", done: false, title: "same_md5_agents", cause: err_msg, tid: tid, id: jid};
+                GS.io_to_master(parcel); 
+            }
+            
+        });
+        socket.on('sync_dirs', function(data){
+            let {tid, jid, payload} = GS.extract_socketio_data(data);
+            console.log("<<EVENT sync_dirs !");
+            
+            sync_dirs(GS.manifest.diff, (errlist, str_res) => {
+                let parcel;
+                if (str_res == 'useless') 
+                {
+                    parcel = {kind: "report", done: false, title: "sync_dirs", cause: "agent has no local changes", tid: tid, jid: jid};
+                }
+                else if (errlist.length > 0) 
+                {
+                    console.log("ERR: fail to sync dirs:", errlist.length);
+                    parcel = {kind: "report", done: false, title: "sync_dirs", cause: errlist, tid: tid, jid: jid};
+                }
+                else 
+                {
+                    console.log("sync dirs:", str_res);
+                    parcel = {kind: "report", done: true, title: "sync_dirs", answer: str_res, tid: tid, jid: jid};
+                }
+                GS.io_to_master(parcel);
+            });
+        });
+        socket.on('start_agent', function(data){ 
+            let {tid, jid, payload} = GS.extract_socketio_data(data);
+            console.log("<< start_agent EVENT !");
+            GS.partner.start("", (err, res) => {
+                if (err) {
+                    console.log("ERR: fail to start_agent:", err);
+                    let parcel = {kind: "report", done: false, title: "start_agent", cause: err, tid: tid, jid: jid};
+                    GS.io_to_master(parcel);
+                }
+                else {
+					GS.partner.is_under_update = false;
+                    let parcel = {kind: "report", done: true, title: "start_agent", answer: "ok", tid: tid, jid: jid};
+                    GS.io_to_master(parcel);
+                }
+            });
+        });  
+        socket.on('kill_agent', function(data){
+            let {tid, jid, payload} = GS.extract_socketio_data(data);
+            console.log("<< kill_agent EVENT !");
+            GS.partner.kill(GS.partner.list, (list) => {
+                GS.partner.list = [];
+                GS.partner.is_under_update = true;
+                //* answer = [<count of killed pids>, <count of killed ppids>]
+                let parcel = {kind: "report", done: true, title: "kill_agent", answer: list, tid: tid, jid: jid};
+                GS.io_to_master(parcel);
+            });
+        });
+        socket.on('update_folder', function(update_folder){
+            GS.master.set_update_folder(update_folder);
+        });
+        socket.on(GS.EVS.HOUSEKEEP, function(data){
+            let {tid, jid, payload} = GS.extract_socketio_data(data);
+            let parcel = {kind: "report", done: true, title: GS.EVS.HOUSEKEEP, answer: "ready", tid: tid, jid: jid};
+            GS.io_to_master(parcel);
+        });
+        socket.on(GS.EVS.DISK, function(data){
+            let {tid, jid, payload} = GS.extract_socketio_data(data);
+            console.log("socket 'disk_space' event: data=", tid, jid, payload);
+            // On Windows
+            //* payload = "C:";
+            if(typeof payload != 'string')
+            {
+                payload = 'C:';
+            }
+            if (payload.endsWith(":")) {payload += "/"}
+            checkDiskSpace(payload).then((diskSpace) => {
+                // { free: 12345678, size: 98756432 }
+                console.log("diskSpace =",diskSpace);
+                let parcel = {kind: "report", done: true, title: GS.EVS.DISK, answer: diskSpace.free, tid: tid, jid: jid};
+                GS.io_to_master(parcel);
+            }).catch((ex)=>{
+                let parcel = {kind: "report", done: false, title: GS.EVS.DISK, cause: ex, tid: tid, jid: jid};
+                GS.io_to_master(parcel);
+            }); 
+        });
+        socket.on(GS.EVS.PROC, function(data){
+            let {tid, jid, payload} = GS.extract_socketio_data(data);
+            console.log("socket 'proc_count' event:", tid, jid, payload);
+            if (typeof payload == "object") 
+            {
+                let process = payload.process;
+                    find_process_by_name(process).then(res=>{
+                        let parcel = {kind: "report", done: true, title: GS.EVS.PROC, answer: res, tid: tid, jid: jid};
+                        GS.io_to_master(parcel);
+                    }).catch(ex=>{
+                        let parcel = {kind: "report", done: false, title: GS.EVS.PROC, cause: ex, tid: tid, jid: jid};
+                        GS.io_to_master(parcel);
+                    });
+
+            } else {console.log("ERR: eng: socket 'data' property must be an Object!")}
+            
+            
+        });
+        socket.on(GS.EVS.EXEC_CMD, function(data){
+
+            console.log('>>>>>>>arbitrary_cmd:', data);
+            let {tid, jid, payload} = GS.extract_socketio_data(data);
+            console.log("socket 'exec_cmd' event: data=", tid, jid, payload);
+            let command;
+            if (typeof payload == 'object')
+            {
+                command = payload.command;
+            }
+            else if (typeof payload == 'string')
+            {
+                command = payload;
+            }
+            execute_command(command).then(res=>{
+                // res = [] || [{pid, ppid, command, argument}, {...}]
+                let parcel = {kind: "report", done: true, answer: res, title: "exec_cmd", tid: tid, jid: jid};
+                GS.io_to_master(parcel);
+            }).catch(ex=>{
+                console.log("ERR: exec_cmd event: fail to execute_command !");
+                let parcel = {kind: "report", done: false, cause: ex, title: "exec_cmd", tid: tid, jid: jid};
+                GS.io_to_master(parcel);
+            });
+        });
+        socket.on(GS.EVS.NVSMI, function(data){
+            let {tid, jid, payload} = GS.extract_socketio_data(data);
+            console.log("socket 'nvidia_smi' event: data=", tid, jid, payload);
+            const NVIDIA_PATH = '"C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvidia-smi.exe"';
+            execute_command(NVIDIA_PATH + '\r\n').then(res=>{
+                // res = [] || [{pid, ppid, command, argument}, {...}]
+                let nvidia_info = parse_nvsmi_result(res);
+                let parcel = {kind: "report", done: true, title: GS.EVS.NVSMI, answer: nvidia_info, tid: tid, jid: jid};
+                GS.io_to_master(parcel);
+            }).catch(ex=>{
+                console.log("ERR: NVSMI: fail to execute_command !");
+                let parcel = {kind: "report", done: false, title: GS.EVS.NVSMI, cause: ex, tid: tid, jid: jid};
+                GS.io_to_master(parcel);
+            });           
+        });
+        socket.on(GS.EVS.WETRANSFER, function(data){
+            let {tid, jid, payload} = GS.extract_socketio_data(data);
+            Selenium.example(payload).then(res=>{
+                console.log("SELENIUM RESULT =",res);
+                let parcel = {kind: "report", done: true, title: GS.EVS.WETRANSFER, answer: res, tid: tid, jid: jid};
+                GS.io_to_master(parcel);
+            }).catch(ex=>{console.log("EX=",ex)});
+        });
+        socket.on(GS.EVS.VOIDMAIN, function(data){
+            let {tid, jid, payload} = GS.extract_socketio_data(data);
+            console.log(GS.EVS.VOIDMAIN, "event, params:", tid, jid, payload);
+            GS.io_to_master({kind: "report", done: true, title: GS.EVS.VOIDMAIN, answer: true, tid: tid, jid: jid});
+        });
+		socket.on(GS.EVS.VOIDALL, function(data){
+            let {tid, jid, payload} = GS.extract_socketio_data(data);
+            console.log(GS.EVS.VOIDALL, "event, params:", tid, jid, payload);
+            GS.io_to_master({kind: "report", done: true, title: GS.EVS.VOIDALL, answer: true, tid: tid, jid: jid});
+        });
+        socket.on('gpu_info', function(data){
+            console.log("'gpu_info' event, params:", data);
+            let {tid, jid, payload} = GS.extract_socketio_data(data);
+            GS.io_to_master({kind: "report", done: true, title: 'gpu_info', answer: 'gpu test ok', tid: tid, jid: jid});
+        });
+		socket.on('check_same_md5', function(data){
+			// data = {tid:'tid', payload:{par1:'', par2:''}} || ...payload:{single_data:[]} || ...single_data:''
+            let {tid, jid, payload} = GS.extract_socketio_data(data);
+
+			const PARTNER = 'launcher';
+            let res = {partners_count:0,
+                is_partner_under_update: GS.partner.is_under_update, 
+                is_partner_exist:false};
+
+            if (Array.isArray(payload)) {
+                // [[GS.TYPE, GS.MD5, GS.SID, GS.IP, GS.PID, GS.PPID, GS.APID], [...], [...]]
+                payload.forEach(agent_arr=>{
+                    if (agent_arr[GS.TYPE] == PARTNER) {
+                        //- add current partners pids and ppids to local list
+                        GS.partner.list.push({
+                            pid: agent_arr[GS.PID],
+                            ppid: agent_arr[GS.PPID],
+                            apid: agent_arr[GS.APID],
+                        });
+                        //- flag true, if at least one partner is present
+                        res.is_partner_exist = true;
+                        res.partners_count++;
+                    }
+                });						
+            }
+            GS.io_to_master({kind: "report", done: true, title: "check_same_md5", answer: res, tid: tid, jid: jid});
+        });
+    },
+    extract_socketio_data: function(data){
+        let res = {};
+        if(typeof data == 'object') {
+            res.tid = data.tid;
+            res.jid = data.jid;
+            res.payload = data.payload;
+        }
+        return res;
+    },
+    io_to_master: function(data){
+        //* {kind: "", title: "", done: Boolean, data: Any}
+        if(!data){ return console.log("io_to_master(): no data!") }
+            //* NOTE: IN Controller Code 'data.from' will be equal to "controller"
+        data.from = "controller";
+        console.log(">>> '" + data.kind + "' to master:" + data.title);
+        //* POSSIBLE OUTBOX EVENTS: 
+        //* "manifest", "same_md5_agents", "update_agent", "sync_dirs", "kill_agent", "start_agent", GS.EVS.HOUSEKEEP, GS.EVS.DISK, GS.EVS.PROC, GS.EVS.EXEC_CMD, GS.EVS.NVSMI
+        socket.emit(data.kind, data);
+    },
+    manifest: {
+        local: null,
+        remote: null,
+        diff: {},
+        compare: function(manifest) {
+            if (typeof manifest == "string") { manifest = JSON.parse(manifest); }
+            //console.log("manifest.compare(): typeof manifest:", typeof manifest);
+            return new Promise((resolve, reject)=>{
+                if(manifest.length > 0) console.log("got remote manifest:",manifest[0]+"...");
+                //? resolve(false) - means that remote directory was empty
+                else { resolve({is_diff:false}); return; }
+                this.remote = manifest;
+                //* get local files tree to compare with remote
+                get_dir_manifest_ctol(GS.partner.folder, except=["controller"])
+                .then(loc_manif => {
+                    this.local = JSON.parse(JSON.stringify(loc_manif));
+
+                    if ((this.remote) && (this.local)) {
+                        //console.log("comparing manifests...");
+                        //*this func() will call GS.ready_to_sync_dirs(copy_names)
+                        let changes = compare_manifests_1rp1lp(this.local, this.remote);
+                        let touch_partner_folder = false;
+                        if((changes.copy_names.length > 0)||(changes.empty_dirs.length > 0)) {
+                            console.log("COPY NAMES =", changes.copy_names);
+                            console.log("EMPTY DIRS =", changes.empty_dirs);
+                            GS.manifest.diff = changes;
+                            if (changes.in_launcher_folder.length > 0) {
+                                touch_partner_folder = true;
+                            }
+                            resolve({is_diff:true, is_touch_partner_folder:touch_partner_folder});
+                        } else {
+                            console.log("remote and local manifests are Match! Nothing to sync...");
+                            resolve({is_diff:false, is_touch_partner_folder:touch_partner_folder});
+                        }
+                    }
+                }).catch(ex => { reject("fail to get Local manifest: " + ex); });
+            });
+        }
+    },
+    partner: {
+        count: 0,
+        list:[], //{sid,pid, ppid, apid}
+        is_started: false,
+		is_under_update: false,
+        file_name: 'launcher.js',
+        folder: '../',
+        file_path: '../launcher/launcher.js',
+        save_identifiers: function(identifiers){
+            //identifiers = [[],[]]; 
+			//?next string need if master sent data with applying JSON.stringify()
+            if(typeof identifiers == "string") { identifiers = JSON.parse(identifiers); }
+            console.log("partner PIDS from master:", identifiers);
+            if (typeof GS.partner.list == 'undefined') GS.partner.list = [];
+            for (let i in identifiers) {
+                //* check if Master give exactly only this MD5 =)
+                if (identifiers[i][GS.MD5] == GS.identifiers[GS.MD5]) {
+                    //* If it's not himself
+                    if(identifiers[i][GS.SID] != GS.identifiers[GS.SID]) {
+                        //* And not same type
+                        if(identifiers[i][GS.TYPE] != GS.identifiers[GS.TYPE]) {
+							GS.partner.list.push({
+								pid: identifiers[i][GS.PID],
+								ppid: identifiers[i][GS.PPID],
+								apid: identifiers[i][GS.APID],
+							});
+                        }
+                    }
+                }
+            }
+            return this.list.length;
+        },
+
+        get_pids: function() {
+            return new Promise((resolve, reject)=>{
+                let pids = {};
+                if (this.pid && this.ppid) resolve ({pid: this.pid, ppid: this.ppid});
+                else {
+                    GS.emtr.once("wait_contragent_ids", ids=>{
+                        //* ids = []
+                        if ((Array.isArray(ids))&&(ids.length > 0)){
+                            resolve({pid: ids[0][GS.PID], ppid: ids[0][GS.PPID]});
+                        } else { resolve({}); }
+                    });
+                    GS.io_to_master({kind: "request_info", titles: ["same_md5_agents"], from: "launcher", own_ids: GS.identifiers});
+                    setTimeout(()=>{ resolve({}); }, 1000);
+                }
+            });
+        },
+        start: function(c_location, callback) {
+            //TODO: CHECK IF FILE EXIST !!!
+            let partner_path = path.normalize(GS.partner.file_path);
+            fs.stat(partner_path, (err)=>{
+                if (err) {
+                    callback(err);
+                    return;
+                }
+                console.log("Starting Launcher...");
+                //var CMD = spawn('cmd');
+                var CMD = exec('cmd');
+                var stdout = '';
+                var stderr = null;
+                CMD.stdout.on('data', function (data) { stdout += data.toString(); });
+                CMD.stderr.on('data', function (data) {
+                    if (stderr === null) { stderr = data.toString(); }
+                    else { stderr += data.toString(); }
+                });
+                CMD.on('exit', function () { callback(stderr, stdout || false);  });
+
+                //CMD.stdin.write('wmic process get ProcessId,ParentProcessId,CommandLine \n');
+                CMD.stdin.write('start cmd.exe @cmd /k "cd..\\launcher & node launcher.js '+process.pid+' '+1+'"\r\n');
+                CMD.stdin.end();
+            });
+        },
+        kill: function(list, callback) {
+            let pending = list.length * 2;
+            let err_pids = [];
+            for (let i in list) 
+            {
+                if (list[i].pid) 
+                {
+                    console.log("Dropping Launcher Node process:", list[i].pid);
+                    try { 
+                        process.kill(list[i].pid);
+                        if (!--pending) {callback(err_pids);}
+                    }
+                    catch(e) {
+                        err_pids.push(list[i].pid);
+                        console.log("Fail to kill Launcher Node process:", e.msg) 
+                        if (!--pending) {callback(err_pids);}
+                    }
+                } 
+                else { console.log("GS.partner.kill(): no PID(node.exe), nothing to kill..."); }
+
+                if (list[i].ppid) 
+                {
+                    console.log("Dropping Launcher CMD process:", list[i].ppid);
+                    try { process.kill(list[i].ppid);
+                        if (!--pending) {callback(err_pids);}
+                    }
+                    catch(e) {
+                        err_pids.push(list[i].ppid);
+                        console.log("Fail to kill Launcher Node process:", e.msg) 
+                        if (!--pending) {callback(err_pids);}
+                    }
+                } 
+                else { console.log("GS.partner.kill(): no PPID(cmd.exe), nothing to kill..."); }
+            }
+            list = [];
+        },
+    },
+    master: {
+        update_folder: false,
+        set_update_folder: function(update_folder){
+            this.update_folder = update_folder;
+        },
+    },
 }
 
 //--------------------

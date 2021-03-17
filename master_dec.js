@@ -15,8 +15,8 @@
     const LOOK_UPDATE_INTERVAL = SETT.update_folder_watch_timer || 60000; // 1 min
     const VISUALIZER_PATH = __dirname + "/visualizer/index.html"
 
-	const techinal_events = ['connect', 'disconnect', 'identifiers', 'manifest', 'partner_leaved', 'partner_appeared', 'same_md5_agents', 'sync_dirs', 'start_agent', 'kill_agent', 'update_folder'];
-    const user_events = ['gpu_info', 'housekeeping', 'disk_space', 'proc_count', 'exec_cmd', 'nvidia_smi', 'wetransfer'];
+
+    const JOBS_DICTIONARY = ['gpu_info', 'housekeeping', 'disk_space', 'proc_count', 'exec_cmd', 'nvidia_smi', 'wetransfer'];
     
 	const jobs_config = 
     [
@@ -27,17 +27,17 @@
     //@ -----I-M-P-L-E-M-E-N-T-A-T-I-O-N-----
 	main();
 	//mainTest();
-	function mainTest(){
+	function main(){
+		new App().run();
+        //dirsComparingTest();
+        //dirStructureSyncTest();
+	}
+    function mainTest(){
 		const http = require('http').createServer(webRequest).listen(55999);
 		this.io = require('socket.io')(http);
 		this.io.on('connection', agent => {
 			console.log("io.connection event: agent="+Object.keys(agent));
 		});
-	}
-	function main(){
-		new App().run();
-        //dirsComparingTest();
-        //dirStructureSyncTest();
 	}
 
     function dirStructureSyncTest(){
@@ -58,17 +58,6 @@
         ]);
         setTimeout(()=>{console.log("res=",res);}, 1000)
     }
-
-	function Jobs(config = jobs_config){
-        this.config = config;
-		this.run=()=>{
-			if(!this.config) return new Error("No global var 'jobs_config' !");
-            else return this.config;
-		}
-		this.sort_jobs=()=>{
-			//@ coupling jobs with same names
-		}
-	}
     //@ При включении сервера к нему должны сразу начать подключаться Лончеры и КОнтролеры, 
     //@ которые автоматические реконектятся. За исключением самого превого развертывания, когда 
     //@ Лончеров запускает человек и Контроллеры будут запущены после соотв. команды от сервера Лончеру
@@ -345,7 +334,7 @@
             paths_data.forEach(path_data=>{
                 try{
                     result[path_data.name] = this.manOfDirSync(path_data.path);
-                    console.log("DirStructure.allMansSync(): result=", result[path_data.name]);
+                    //console.log("DirStructure.allMansSync(): result=", result[path_data.name]);
                 }catch(err){
                     console.log("DirStructure.allMansSync(): ERROR: ", err);
                 }
@@ -589,9 +578,8 @@
             }, time_||3000);
         }
         this.run_agents_after_first_host_init_timeout=()=>{
-            //@-----------------------------------------------------------
-            this.launcher.init(this.controller, this.agentUpdateChain.instance());
-            this.controller.init(this.launcher, this.agentUpdateChain.instance());
+            this.launcher.init(this.agentUpdateChain.instance());
+            this.controller.init(this.agentUpdateChain.instance());
             //@like a first start on the remote machine, when a human starts the launcher
             if(this.launcher.isOnline() && !this.controller.isOnline()){
                 console.log("HostAsPair: run_agents_after_first_host_init_timeout(): launcher is online...");
@@ -627,7 +615,11 @@
             this.manifest_snapshot = manifest_snapshot;
             if(this.connectedAgentsThrottle.adaptConnectedAgent(agent_ids).isAllowed()){
                 const ag_type = agent_ids.ag_type;
-                this[ag_type].welcomeAgent(agent_socket, agent_ids, manifest_snapshot);
+                if(ag_type=="launcher"){
+                    this[ag_type].welcomeAgent(agent_socket, agent_ids, manifest_snapshot, this.controller);
+                }else if(ag_type=="controller"){
+                    this[ag_type].welcomeAgent(agent_socket, agent_ids, manifest_snapshot, this.launcher);
+                }
                 //@ first host init and agents update was finished.Now its a new agents connections and new singles comparings.
                 if(this.is_init_timeout()){
                     this[ag_type].compareCurManifest(manifest_snapshot);
@@ -712,184 +704,8 @@
         }
         
     }
-
-    //@----------------AgentUpdateChain------------------------
-    function AgentUpdateChain(manifest){
-        this.manifest=manifest;
-        console.log("AgentUpdateChain.constructor: manifest=", manifest);
-        this.instance=(manifest)=>{return new AgentUpdateChain(manifest)}
-        this.run=(socket, partner)=>{
-            return new Promise((resolve,reject)=>{
-                new StartingPartner(
-                    new UpdatingFiles(
-                        new KillingPartner(
-                            new CompareManifest()
-                        )
-                    )
-                ).run(socket, partner, this.manifest).then(res=>{
-                    resolve(res);
-                }).catch(err=>{
-                    reject(err);
-                })
-            });
-        }
-    }
-    function AgentUpdateWithoutCompare(manifest){
-        this.instance=(...args)=>{return new AgentUpdateChain(args)}
-        this.manifest=manifest;
-        this.run=(man, socket)=>{
-            return new Promise((resolve,reject)=>{
-                new StartingPartner(
-                    new UpdatingFiles(
-                        new KillingPartner(),
-                        this.manifest
-                    )
-                ).run(man, socket).then(res=>{
-                    resolve(res);
-                }).catch(err=>{
-                    reject(err);
-                })
-            });
-        }
-    }
-    function StartingPartner(updatingFiles){
-        this.updatingFiles=updatingFiles;
-        //this.instance=()=>{return new StartingPartner(this.updatingFiles.instance())}
-        this.run=(socket, partner, manifest)=>{
-            return new Promise((resolve,reject)=>{
-                this.updatingFiles.run(socket, partner, manifest).then(res=>{
-                    if(typeof partner.isOnline == 'function' && partner.isOnline()){
-                        resolve("partner is already started");
-                    }else{
-                        this.start_partner(socket).then(res=>{
-                            resolve();
-                        }).catch(err=>{
-                            reject("StartingPartner: cant start partner. "+err);
-                        });
-                    }
-                }).catch(err=>{
-                    reject("StartingPartner: this.updatingFiles err: "+err);
-                })
-            });
-        }
-        this.start_partner=(socket)=>{
-            return new Promise((resolve,reject)=>{
-                const resolve_handler = function(res){resolve(res);}
-                socket.emit("start_partner", ids).once("start_partner", resolve_handler);
-                setTimeout(()=>{
-                    socket.removeListener("start_partner",resolve_handler);
-                    reject("update_files timeout. ");
-                }, 5000);
-            })
-        }
-    }
-    function UpdatingFiles(killingPartner){
-        this.killingPartner=killingPartner;
-        //this.instance=()=>{return new UpdatingFiles(this.killingPartner.instance())}
-        this.run=(socket, partner, manifest)=>{
-            return new Promise((resolve,reject)=>{
-                this.killingPartner.run(socket, partner, manifest).then(compare_info=>{
-                    if(compare_info.is_changes){
-                        this.update_files().then(res=>{
-                            resolve(compare_info);
-                        }).catch(err=>{
-                            reject("UpdatingFiles: "+err);
-                        });
-                    } else{
-                        resolve(compare_info);
-                    }
-                }).catch(err=>{
-                    reject("UpdatingFiles rejected: "+err);
-                })
-            });
-        }
-        this.update_files=()=>{
-            return new Promise((resolve,reject)=>{
-                const resolve_handler = function(res){resolve(res);}
-                socket.emit("update_files", ids).once("update_files", resolve_handler);
-                setTimeout(()=>{
-                    socket.removeListener("update_files",resolve_handler);
-                    reject("update_files timeout. ");
-                }, 5000);
-            })
-        }
-    }
-    function OperationWithAttempts(operation, attempts){
-        this.operation=operation;
-        this.attempts=attempts;
-        this.instance=(operation, attempts)=>{
-            return new OperationWithAttempts(operation, attempts);
-        }
-        this.run=(args)=>{
-            return new Promise((resolve,reject)=>{
-                this.attempt(args, (err,res)=>{
-                    if(err)reject(err);
-                    else resolve(res)
-                });
-            });
-        }
-        this.attempt=(man, socket, cb)=>{
-            killingPartner.run(man, socket).then(res=>{
-                cb(undefined, res);
-            }).catch(err=>{
-                if(--this.attempts>0){
-                    this.attempt(man, socket, cb);
-                }
-            })
-        }
-    }
-    function KillingPartner(compareManifest){
-        //@ must deside 3 things: 1) is partner exist 2) is need to update him 3) if partner is controller and is it in special mode
-        this.compareManifest=compareManifest;
-        //this.instance=()=>{return new KillingPartner(this.compareManifest.instance())}
-        this.run=(socket, partner, manifest)=>{
-            return new Promise((resolve,reject)=>{
-                this.compareManifest.run(socket, partner, manifest).then(msg=>{
-                    if(msg.is_error){return reject(msg.error);} // agent cant compare normally
-                    const c1 = msg.is_changes; //changes must exist, otherwise no need to kill
-                    const c2 = (this.partner) ? this.partner.isOnline() : false; //partner must be online, otherwise nothing to kill
-                    const c3 = (this.partner) ? this.partner.isSpecialMode() : false; // if special mode kinda 'render' when we can't kill
-                    console.log("KillingPartner.run(): c1,c2,c3=",c1,c2,c3);
-                    if(c1 & c2 & !c3){
-                        this.kill_partner(socket, partner.look_agent_pid()).then(is_killed=>{
-                            resolve( {is_changes, is_killed} )
-                        }).catch(err=>{
-                            reject(err);
-                        })
-                    }else{
-                        resolve( {is_changes} )
-                    }
-                }).catch(err=>{
-                    reject("KillingPartner: previous step 'compare' failed. "+err);
-                })
-            });
-        }
-        this.kill_partner=(socket, pid)=>{
-            return new Promise((resolve,reject)=>{
-                const resolve_handler = function(res){resolve(res||{kill:true});}
-                socket.emit("kill_partner", {pid}).once("kill_partner", resolve_handler);
-                setTimeout(()=>{
-                    socket.removeListener("kill_partner",resolve_handler);
-                    reject("KillingPartner: kill_partner timeout. ");
-                }, 3000);
-            })
-        }
-    }
-    function CompareManifest(){
-        //this.instance=()=>{ return new CompareManifest() }
-        this.run=(socket, partner, manifest)=>{
-            return new Promise((resolve,reject)=>{
-                const resolve_handler = function(is_changes){resolve(is_changes);}
-                socket.emit('compareManifest', manifest).once('compareManifest', resolve_handler);
-                setTimeout(()=>{
-                    socket.removeListener("compareManifest",resolve_handler);
-                    reject("CompareManifest timeout. ");
-                }, 5000);
-            })
-        }
-    }    
-    //@---------------------------------------------------
-	function Launcher(agent_ids){
+    //@------------------Launcher-----------------------
+    function Launcher(agent_ids){
         this.agent_ids = agent_ids;
         this.partner = undefined;
         this.agentUpdateChain = undefined;
@@ -913,21 +729,22 @@
         this.switchUpdateMode=(is_update_mode)=>{this.is_update_mode_flag = is_update_mode;}
         //@----------------------------
 		this.instance=function(agent_ids){ return new Launcher(agent_ids); }
-		this.init=(partner, agentUpdateChain)=>{
-            this.partner = partner;
+		//@ this in fact not some kind of initialization, but simply pass the object
+        this.init=(agentUpdateChain)=>{
             this.agentUpdateChain = agentUpdateChain;
             return this;
         }
-        this.welcomeAgent=(agent_socket, agent_ids, manifest_snapshot)=>{
+        this.welcomeAgent=(agent_socket, agent_ids, manifest_snapshot, controller)=>{
             this.agent_socket = agent_socket;
             this.agent_ids = agent_ids;
             this.manifest_snapshot = manifest_snapshot;
+            this.controller = controller;
             //@------------------------------------
             this.switchOnline(true);
 			this.listenForDisconnect();
 		}
         this.compareCurManifest=(man)=>{
-            console.log("Launcher.compareCurManifest(): man=",man);
+            //console.log("Launcher.compareCurManifest(): man=",man);
             return new Promise((resolve,reject)=>{
                 this.switchUpdateMode(true);
                 const man_for_launcher = {};
@@ -985,7 +802,8 @@
                 )
             }
         }
-	}	
+    }
+    //@------------------Controller-----------------------
 	function Controller(specialControllerMode, normalControllerMode, agent_ids){
         this.specialControllerMode = specialControllerMode;
         this.normalControllerMode = normalControllerMode;
@@ -1015,13 +833,13 @@
                 agent_ids
             );
         }
-		this.init =(launcher, agentUpdateChain)=>{
-            this.launcher = launcher;
+        //@ this in fact not some kind of initialization, but simply pass the object
+		this.init =(agentUpdateChain)=>{
             this.agentUpdateChain = agentUpdateChain;
             return this;
         }
-		this.welcomeAgent = (agent_socket, agent_ids, manifest_snapshot)=>{
-            this.launcher_state = launcher_state;
+		this.welcomeAgent = (agent_socket, agent_ids, manifest_snapshot, launcher)=>{
+            this.launcher = launcher;
             this.switchOnline(true);
             this.listenForDisconnect();
 			this.agent_socket = agent_socket;
@@ -1069,10 +887,204 @@
         }
 		
     }
+    //@----------------AgentUpdateChain------------------------
+    function AgentUpdateChain(manifest){
+        this.manifest=manifest;
+        this.instance=(manifest)=>{return new AgentUpdateChain(manifest)}
+        this.run=(socket, partner)=>{
+            return new Promise((resolve,reject)=>{
+                new StartingPartner(
+                    new UpdatingFiles(
+                        new KillingPartner(
+                            new CompareManifest()
+                        )
+                    )
+                ).run(socket, partner, this.manifest).then(res=>{
+                    resolve(res);
+                }).catch(err=>{
+                    reject(err);
+                })
+            });
+        }
+    }
+    function AgentUpdateWithoutCompare(manifest){
+        this.instance=(...args)=>{return new AgentUpdateChain(args)}
+        this.manifest=manifest;
+        this.run=(man, socket)=>{
+            return new Promise((resolve,reject)=>{
+                new StartingPartner(
+                    new UpdatingFiles(
+                        new KillingPartner(),
+                        this.manifest
+                    )
+                ).run(man, socket).then(res=>{
+                    resolve(res);
+                }).catch(err=>{
+                    reject(err);
+                })
+            });
+        }
+    }
+    function StartingPartner(updatingFiles){
+        this.updatingFiles=updatingFiles;
+        //this.instance=()=>{return new StartingPartner(this.updatingFiles.instance())}
+        this.run=(socket, partner, manifest)=>{
+            return new Promise((resolve,reject)=>{
+                this.updatingFiles.run(socket, partner, manifest).then(prev_msg=>{
+                    if(partner && partner.isOnline()){
+                        resolve("partner is already started");
+                    }else{
+                        this.start_partner(socket).then(res=>{
+                            resolve();
+                        }).catch(err=>{
+                            reject("StartingPartner: cant start partner. "+err);
+                        });
+                    }
+                }).catch(err=>{
+                    reject("StartingPartner: this.updatingFiles err: "+err);
+                })
+            });
+        }
+        this.start_partner=(socket)=>{
+            return new Promise((resolve,reject)=>{
+                const resolve_handler = function(res){resolve(res);}
+                socket.emit("startPartner").once("startPartner", resolve_handler);
+                setTimeout(()=>{
+                    socket.removeListener("startPartner",resolve_handler);
+                    reject("startPartner timeout. ");
+                }, 5000);
+            })
+        }
+    }
+    function UpdatingFiles(killingPartner){
+        this.killingPartner=killingPartner;
+        //this.instance=()=>{return new UpdatingFiles(this.killingPartner.instance())}
+        this.run=(socket, partner, manifest)=>{
+            return new Promise((resolve,reject)=>{
+                this.killingPartner.run(socket, partner, manifest).then(prev_msg=>{
+                    if(prev_msg.is_changes){
+                        this.update_files(socket).then(update_msg=>{
+                            resolve(prev_msg);
+                        }).catch(err=>{
+                            reject("UpdatingFiles: "+err);
+                        });
+                    } else{
+                        resolve(prev_msg);
+                    }
+                }).catch(err=>{
+                    reject("UpdatingFiles rejected: "+err);
+                })
+            });
+        }
+        this.update_files=(socket)=>{
+            return new Promise((resolve,reject)=>{
+                const resolve_handler = function(res){resolve(res);}
+                socket.emit("updateFiles").once("updateFiles", resolve_handler);
+                setTimeout(()=>{
+                    socket.removeListener("updateFiles",resolve_handler);
+                    reject("updateFiles timeout. ");
+                }, 5000);
+            })
+        }
+    }
+    function OperationWithAttempts(operation, attempts){
+        this.operation=operation;
+        this.attempts=attempts;
+        this.instance=(operation, attempts)=>{
+            return new OperationWithAttempts(operation, attempts);
+        }
+        this.run=(args)=>{
+            return new Promise((resolve,reject)=>{
+                this.attempt(args, (err,res)=>{
+                    if(err)reject(err);
+                    else resolve(res)
+                });
+            });
+        }
+        this.attempt=(man, socket, cb)=>{
+            killingPartner.run(man, socket).then(res=>{
+                cb(undefined, res);
+            }).catch(err=>{
+                if(--this.attempts>0){
+                    this.attempt(man, socket, cb);
+                }
+            })
+        }
+    }
+    function KillingPartner(compareManifest){
+        //@ must deside 3 things: 1) is partner exist 2) is need to update him 3) if partner is controller and is it in special mode
+        this.compareManifest=compareManifest;
+        //this.instance=()=>{return new KillingPartner(this.compareManifest.instance())}
+        this.cbGui=()=>{console.log("KillingPartner.cbGui(): must implement")}
+        this.onGui=(cb)=>{this.cbGui = cb;}
+        this.run=(socket, partner, manifest)=>{
+            return new Promise((resolve,reject)=>{
+                this.compareManifest.run(socket, partner, manifest).then(compare_msg=>{
+                    if(compare_msg.is_error){
+                        return reject(compare_msg.error); // agent cant compare normally
+                    }
+                    const cond1 = compare_msg.is_changes; //changes must exist, otherwise no need to kill
+                    const cond2 = (this.partner) ? this.partner.isOnline() : false; //partner must be online, otherwise nothing to kill
+                    const cond3 = (this.partner) ? this.partner.isSpecialMode() : false; // if special mode kinda 'render' when we can't kill
+                    if(cond1 & cond2 & !cond3){
+                        this.kill_partner(socket, partner.look_agent_pid()).then(is_killed=>{
+                            resolve( {is_changes:cond1, is_killed:is_killed} )
+                        }).catch(err=>{
+                            reject(err);
+                        })
+                    }else{
+                        resolve( {is_changes:cond1} )
+                    }
+                }).catch(err=>{
+                    reject("KillingPartner: previous step 'compare' failed. "+err);
+                }).finally(()=>{
+                    this.cbGui({msg:"killing ok"});
+                })
+            });
+        }
+        this.kill_partner=(socket, pid)=>{
+            return new Promise((resolve,reject)=>{
+                const resolve_handler = function(res){resolve(res||{is_killed:true});}
+                socket.emit("kill_partner", {pid}).once("kill_partner", resolve_handler);
+                setTimeout(()=>{
+                    socket.removeListener("kill_partner",resolve_handler);
+                    reject("KillingPartner: kill_partner timeout. ");
+                }, 3000);
+            })
+        }
+    }
+    function CompareManifest(){
+        //this.instance=()=>{ return new CompareManifest() }
+        this.run=(socket, partner, manifest)=>{
+            return new Promise((resolve,reject)=>{
+                const resolve_handler = function(compare_msg){
+                    //@ compare_msg = {is_error: false, is_changes: true}
+                    console.log("CompareManifest.run(): is_changes=",compare_msg);
+                    resolve(compare_msg);
+                }
+                socket.emit('compareManifest', manifest).once('compareManifest', resolve_handler);
+                setTimeout(()=>{
+                    socket.removeListener("compareManifest",resolve_handler);
+                    reject("CompareManifest timeout. ");
+                }, 5000);
+            })
+        }
+    }    
+    //@---------------------------------------------------
     function SpecialControllerMode(){}
     function NormalControllerMode(jobs){
         this.jobs=jobs;
     }
+    function Jobs(config = jobs_config){
+        this.config = config;
+		this.run=()=>{
+			if(!this.config) return new Error("No global var 'jobs_config' !");
+            else return this.config;
+		}
+		this.sort_jobs=()=>{
+			//@ coupling jobs with same names
+		}
+	}
 
     function Microtask(name){
         this.name = name;
@@ -1091,8 +1103,6 @@
             return this.done;
         }
     }
-    
-    function IoBrowser(){}
 
 	//@ ready=1
 	function HttpServer(webRequest, settings){

@@ -29,7 +29,6 @@ function App(){
                 .with('killPartner', new KilledPartner())
                 .with('updateFiles', new UpdatedFiles())
                 .with('startPartner', new StartedPartner())
-                .with('diskSpace', new DiskSpace())
         ).run();
 	}
 }
@@ -126,24 +125,6 @@ function Identifiers(){
     }
 }
 
-function SocketIoHandlers(ioWrap){
-    this.ioWrap= ioWrap;
-    this.socket = undefined;
-    this.allEvHandlers = {};
-    this.with=(ev_name, evHandler)=>{
-        this.allEvHandlers[ev_name] = evHandler;
-        return this;
-    }
-    this.run=(agent_ids)=>{
-        this.socket = this.ioWrap.run(agent_ids).socketio();
-		Object.keys(this.allEvHandlers).forEach(ev_name=>{
-			console.log("hanging up '"+ev_name+"' event.");
-            this.allEvHandlers[ev_name].run(ev_name, this.socket);   
-        });
-	};
-	this.tech_events = ['connect', 'disconnect', 'identifiers', 'compareManifest', 'partner_leaved', 'partner_appeared', 'same_md5_agents', 'sync_dirs', 'start_agent', 'kill_agent', 'update_folder'];
-}
-
 function IoWrap(ioSettings, stringifiedJson){
     this.socket = undefined;
     this.ioSettings= ioSettings;
@@ -162,6 +143,14 @@ function IoWrap(ioSettings, stringifiedJson){
         this.socket.on('disconnect',()=>{console.log(">>>disconnected from server!")})
 		return this;
     }
+}
+function StringifiedJson(){
+    this.json = undefined;
+    this.run=(json)=>{
+        this.json = json;
+        const ids = (this.json) ? JSON.stringify(this.json) : JSON.stringify({});
+        return ids;
+    };
 }
 function IoSettings(settingsPath){
 	this.settingsPath = settingsPath;
@@ -182,13 +171,22 @@ function IoSettings(settingsPath){
         return this;
     }
 }
-function StringifiedJson(){
-    this.json = undefined;
-    this.run=(json)=>{
-        this.json = json;
-        const ids = (this.json) ? JSON.stringify(this.json) : JSON.stringify({});
-        return ids;
-    };
+function SocketIoHandlers(ioWrap){
+    this.ioWrap= ioWrap;
+    this.socket = undefined;
+    this.allEvHandlers = {};
+    this.with=(ev_name, evHandler)=>{
+        this.allEvHandlers[ev_name] = evHandler;
+        return this;
+    }
+    this.run=(agent_ids)=>{
+        this.socket = this.ioWrap.run(agent_ids).socketio();
+		Object.keys(this.allEvHandlers).forEach(ev_name=>{
+			console.log("hanging up '"+ev_name+"' event.");
+            this.allEvHandlers[ev_name].run(ev_name, this.socket);   
+        });
+	};
+	this.tech_events = ['connect', 'disconnect', 'identifiers', 'compareManifest', 'partner_leaved', 'partner_appeared', 'same_md5_agents', 'sync_dirs', 'start_agent', 'kill_agent', 'update_folder'];
 }
 //@-------------------------------
 function ComparedManifest(dirStructure, dirsComparing, settings){
@@ -389,20 +387,54 @@ function KilledPartner(){
 }
 function UpdatedFiles(){
     this.run=(ev_name, socket)=>{
-        console.log("UpdatedFiles.run()...");
+        socket.on(ev_name, ()=>{
+            console.log("UpdatedFiles.run()...");
+            socket.emit(ev_name, {is_error:false, is_update: true})
+        });
     }
 }
 function StartedPartner(){
     this.run=(ev_name, socket)=>{
-        console.log("StartedPartner.run()...");
+        socket.on(ev_name, ()=>{
+            console.log("StartedPartner.run()...");
+            //TODO: 1. cmd_exec(kill) 2. socket.emit(ok)
+            this.start("", (err, res)=>{
+                if(err){
+                    socket.emit(ev_name, {is_error: true, is_started: false});
+                }else{
+                    socket.emit(ev_name, {is_error: false, is_started: true});
+                }
+            });
+        });
+    }
+    this.start=(c_location, callback)=>{
+        //TODO: CHECK IF FILE EXGST !!!
+        let partner_path = path.normalize(GS.partner.file_path);
+        fs.stat(partner_path, (err)=>{
+            if (err) {
+                callback(err);
+                return;
+            }
+            console.log("Starting Controller...");
+            //var CMD = spawn('cmd');
+            var CMD = exec('cmd');
+            var stdout = '';
+            var stderr = null;
+            CMD.stdout.on('data', function (data) { stdout += data.toString(); });
+            CMD.stderr.on('data', function (data) {
+                if (stderr === null) { stderr = data.toString(); }
+                else { stderr += data.toString(); }
+            });
+            CMD.on('exit', function () { callback(stderr, stdout || false);  });
+
+            //CMD.stdin.write('wmic process get ProcessId,ParentProcessId,CommandLine \n');
+            CMD.stdin.write('start cmd.exe @cmd /k "cd..\\controller & node controller.js '+process.pid+' '+1+'"\r\n');
+            CMD.stdin.end();
+        });
     }
 }
 //@-------------------------------
-function DiskSpace(){
-    this.run=()=>{
-        console.log("DiskSpace.run()...");
-    }
-}
+
 
 // Launcher global Structure
 const GS = {
