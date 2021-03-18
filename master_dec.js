@@ -581,15 +581,25 @@
             this.launcher.init(this.agentUpdateChain.instance());
             this.controller.init(this.agentUpdateChain.instance());
             //@like a first start on the remote machine, when a human starts the launcher
-            if(this.launcher.isOnline() && !this.controller.isOnline()){
-                console.log("HostAsPair: run_agents_after_first_host_init_timeout(): launcher is online...");
+            const l_on = this.launcher.isOnline();
+            const c_on = this.controller.isOnline();
+            if(l_on && !c_on){
+                console.log("HostAsPair: run_agents_after_first_host_init_timeout(): only launcher is online...");
                 this.launcher.compareCurManifest(this.last_manifest_snapshot()).then(res=>{
                     //@res = {compare:false, kill:false, update:false, start:true}
                 }).catch(err=>{
                     console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.launcher.compareCurManifest() Error 1: ",err);
                 })
             //@ this situation can occur, when both agents was continued to work, but server was restarted.
-            }else if(this.launcher.isOnline() && this.controller.isOnline()){
+            }else if(!l_on && c_on){
+                console.log("HostAsPair: run_agents_after_first_host_init_timeout(): only controller is online...");
+                this.controller.compareCurManifest(this.last_manifest_snapshot()).then(res=>{
+
+                }).catch(err=>{
+                    console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.controller.compareCurManifest() Error 1: ",err);
+                })
+            }
+            else if(l_on && c_on){
                 console.log("HostAsPair: run_agents_after_first_host_init_timeout(): Launcher and Controller are online...");
                 this.launcher.compareCurManifest(this.last_manifest_snapshot()).then(msg=>{
                     console.log("HostAsPair: after Launcher's comparing result=",msg);

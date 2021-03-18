@@ -5,6 +5,7 @@ const os = require('os');
 const {spawn, exec} = require('child_process');
 const EventEmitter = require('events');
 const { settings } = require('cluster');
+const AGENT_SETTINGS_PATH = __dirname+"/../other/c_settings.json";
 const glob = {};
 //============IMPLEMENTATION========================
 (function main(){ new App().run(); })();
@@ -17,14 +18,14 @@ function App(){
             new Identifiers(),
             new SocketIoHandlers(
                 new IoWrap(
-                    new IoSettings(__dirname+"/../c_settings.json").as("settings"),
+                    new IoSettings(AGENT_SETTINGS_PATH).as("settings_"),
                     new StringifiedJson()
                 )
             )
                 .with('compareManifest', new ComparedManifest(
                     new DirStructure(), 
                     new DirsComparing(),
-                    "settings"
+                    "settings_"
                 ))
                 .with('killPartner', new KilledPartner())
                 .with('updateFiles', new UpdatedFiles())
@@ -189,11 +190,11 @@ function SocketIoHandlers(ioWrap){
 	this.tech_events = ['connect', 'disconnect', 'identifiers', 'compareManifest', 'partner_leaved', 'partner_appeared', 'same_md5_agents', 'sync_dirs', 'start_agent', 'kill_agent', 'update_folder'];
 }
 //@-------------------------------
-function ComparedManifest(dirStructure, dirsComparing, settings){
+function ComparedManifest(dirStructure, dirsComparing, settings_){
     this.dirStructure = dirStructure;
     this.dirsComparing = dirsComparing;
     this.curMan = [];
-    this.settings = glob[settings] || {}
+    this.settings_ = glob[settings_] || {}
     this.run=(ev_name, socket)=>{
         //@ ev_name = 'compareManifest'
         socket.on(ev_name, (remote_manif)=>{
@@ -219,7 +220,7 @@ function ComparedManifest(dirStructure, dirsComparing, settings){
         //@ remote_manif = {controller:{}, other:{}}
         return new Promise((resolve, reject)=>{
             const local_dir_controller = this.settings.local_dir_controller || "../controller";
-            const local_dir_other = this.settings.local_dir_other || "../other";
+            const local_dir_other = this.settings_.local_dir_other || "../other";
             const paths = [];
             Object.keys(remote_manif).forEach(in_fact_folder=>{
                 let local_dir;

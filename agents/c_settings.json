@@ -1,5 +1,0 @@
-{
-	"client_socket": "http://localhost:55999",
-	"local_dir_controller": "/../controller",
-	"local_dir_other": "/../other"
-}

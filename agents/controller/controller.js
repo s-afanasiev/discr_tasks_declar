@@ -10,6 +10,7 @@ const io = require('socket.io-client');
 const $checkDiskSpace = require('check-disk-space');
 var ps = require('ps-node');
 const { emit } = require('process');
+const AGENT_SETTINGS_PATH = __dirname+"/../other/c_settings.json";
 //@ ---------------------------------
 function mainTest(){
 	const settings = read_settings("../c_settings.json");
@@ -30,18 +31,19 @@ function App(){
         new Controller(
             new Identifiers(),
             new SocketIoHandlers(
+                new SharEvStor(),
                 new IoWrap(
-                    new IoSettings(__dirname+"/../c_settings.json").as("settings"),
+                    new IoSettings(AGENT_SETTINGS_PATH).as("settings_"),
                     new StringifiedJson()
                 )
             )
                 .with('compareManifest', new ComparedManifest(
                     new DirStructure(), 
                     new DirsComparing(),
-                    "settings"
+                    "settings_"
                 ))
                 .with('killPartner', new KilledPartner())
-                .with('updateFiles', new UpdatedFiles())
+                .with('updateFiles', new UpdatedFiles("settings_"))
                 .with('startPartner', new StartedPartner())
                 .with('diskSpace', new DiskSpace())
         ).run();
@@ -166,17 +168,21 @@ function StringifiedJson(){
 }
 function IoSettings(settingsPath){
 	this.settingsPath = settingsPath;
+    this.settingsCash =undefined;
 	this.read=()=>{
+        if(this.settingsCash){
+            console.log("IoSettings.read() cashed file!");
+            return this.settingsCash;
+        }
 		const normalized_path = path.normalize(this.settingsPath);
-        let settings;
 		try{
 			const json_file = fs.readFileSync(normalized_path, "utf8");
-			settings = JSON.parse(json_file);
+			this.settingsCash = JSON.parse(json_file);
 		}catch(err){
             console.log("IoSettings.read() Error: ", err);
             return {error: err};
         }
-        return settings;
+        return this.settingsCash;
 	}
     this.as=(name)=>{
         glob[name]=this;
@@ -184,7 +190,8 @@ function IoSettings(settingsPath){
     }
 }
 
-function SocketIoHandlers(ioWrap){
+function SocketIoHandlers(sharEvStor, ioWrap){
+    this.sharEvStor= sharEvStor;
     this.ioWrap= ioWrap;
 	this.socket = undefined;
     this.allEvHandlers = {};
@@ -196,7 +203,7 @@ function SocketIoHandlers(ioWrap){
         this.socket = this.ioWrap.run(agent_ids).socketio();
 		Object.keys(this.allEvHandlers).forEach(ev_name=>{
 			console.log("hanging up '"+ev_name+"' event.");
-            this.allEvHandlers[ev_name].run(ev_name, this.socket);   
+            this.allEvHandlers[ev_name].run(ev_name, this.socket, this.sharEvStor);   
         });
 	};
 	this.tech_events = ['connect', 'disconnect', 'compareManifest', 'same_md5_agents', 'updateFiles', 'startPartner', 'killPartner', 'identifiers', 'update_folder', 'partner_leaved', 'partner_appeared'];
@@ -222,24 +229,46 @@ function SocketIoHandlers(ioWrap){
 		wetransfer: function(){}
 	}
 }
+function SharEvStor(){
+    this.store = {};
+    this.owners = {};
+    this.put=(data_id, data, obj_name)=>{
+        const owner = this.owners[data_id];
+        if(owner == undefined){
+            this.owners[data_id] =obj_name;
+            this.store[data_id] =data;
+        }else if(owner == obj_name){
+            //@ owner can rewrite file
+            this.store[data_id] =data;
+        }else if(owner != obj_name){
+            console.log("SharEvStor.put() Warning:",obj_name,"does not have the right to overwrite the existing property. Owner is",owner);
+        }else{
+            console.log("SharEvStor.put() Unhandled state!");
+        }
+    }
+    this.take=(data_id)=>{ return this.store[data_id]; }
+}
 //@-------Comparing the Manifest-------------
-function ComparedManifest(dirStructure, dirsComparing, settings){
+function ComparedManifest(dirStructure, dirsComparing, settings_){
     this.dirStructure = dirStructure;
     this.dirsComparing = dirsComparing;
+    this.sharEvStor = undefined;
     this.curMan = [];
-    this.settings = glob[settings] || {}
-    this.run=(ev_name, socket)=>{
+    this.settings_ = glob[settings_] || {}
+    this.run=(ev_name, socket, sharEvStor)=>{
+        this.sharEvStor = sharEvStor;
         //@ ev_name = 'compareManifest'
         socket.on(ev_name, (remote_manif)=>{
             console.log("ComparedManifest: remote_manif=",remote_manif)
             this.manifestos(remote_manif).then(local_manif=>{
                 console.log("ComparedManifest: local_manif=",local_manif)
-                let difference;
+                let mans_diff;
                 try{
-                    difference = this.dirsComparing.compare(local_manif, remote_manif);
+                    mans_diff = this.dirsComparing.compare(local_manif, remote_manif);
                 }catch(err){socket.emit({is_error: true, error: err});}
-                console.log("ComparedManifest: on event: difference=",JSON.stringify(difference));
-                const is_changes_exist = (difference) ? true : false;
+                console.log("ComparedManifest: on event: mans_diff=",JSON.stringify(mans_diff));
+                this.sharEvStor.put("mans_diff", mans_diff, "ComparedManifest");
+                const is_changes_exist = (mans_diff) ? true : false;
                 socket.emit(ev_name, {is_error: false, is_changes: is_changes_exist});
             }).catch(err=>{
                 console.log("ComparedManifest: on event: manifestos() Error: ", err);
@@ -252,8 +281,8 @@ function ComparedManifest(dirStructure, dirsComparing, settings){
     this.manifestos=(remote_manif)=>{
         //@ remote_manif = {controller:{}, other:{}}
         return new Promise((resolve, reject)=>{
-            const local_dir_controller = this.settings.local_dir_controller || "../controller";
-            const local_dir_other = this.settings.local_dir_other || "../other";
+            const local_dir_controller = this.settings_.local_dir_controller || "../controller";
+            const local_dir_other = this.settings_.local_dir_other || "../other";
             const paths = [];
             Object.keys(remote_manif).forEach(in_fact_folder=>{
                 let local_dir;
@@ -428,11 +457,41 @@ function KilledPartner(){
         }
     }
 }
-function UpdatedFiles(){
-    this.run=(ev_name, socket)=>{
+function UpdatedFiles(settings_){
+    this.sharEvStor=undefined;
+    this.settings = glob[settings_] || {}
+    console.log("UpdatedFiles.constr() this.settings_=",this.settings)
+    this.DELETE_OLD_FILES = false;
+    this.run=(ev_name, socket, sharEvStor)=>{
+        this.sharEvStor = sharEvStor;
         socket.on(ev_name, ()=>{
+            const mans_diff = this.sharEvStor.take("mans_diff");
             console.log("UpdatedFiles.run()...");
-            socket.emit(ev_name, {is_updated: true})
+            this.sync_dirs(mans_diff, this.settings.read()).then(res=>{
+                socket.emit(ev_name, {is_updated: true});
+            }).catch(err=>{
+                socket.emit(ev_name, {is_error: true, is_updated: false, error:err});
+            })
+            
+        });
+    }
+    this.sync_dirs=(mans_diff, settings)=>{
+        console.log("UpdatedFiles.sync_dirs(): mans_diff=", JSON.stringify(mans_diff));
+        console.log("UpdatedFiles.sync_dirs(): settings=", settings);
+        const LAUNCHER_DIR = settings["local_dir_launcher"];
+        const REMOTE_DIR = settings["remote_dir"];
+        console.log("UpdatedFiles.sync_dirs(): LAUNCHER_DIR=", LAUNCHER_DIR);
+        console.log("UpdatedFiles.sync_dirs(): REMOTE_DIR=", REMOTE_DIR);
+        return new Promise((resolve, reject) => {
+            //@ dont touch The Old Files!
+            let files_to_write = [];
+            Object.keys(mans_diff["launcher"]).forEach(upd_subtype=>{
+                files_to_write = files_to_write.concat(mans_diff["launcher"][upd_subtype]);
+            });
+            const FNAME = 0;
+            files_to_write.forEach(file_info=>{
+                console.log("copying", REMOTE_DIR+file_info[FNAME]);
+            })
         });
     }
 }
