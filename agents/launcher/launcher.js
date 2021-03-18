@@ -145,11 +145,11 @@ function IoWrap(ioSettings, stringifiedJson){
     }
 }
 function StringifiedJson(){
-    this.json = undefined;
-    this.run=(json)=>{
-        this.json = json;
-        const ids = (this.json) ? JSON.stringify(this.json) : JSON.stringify({});
-        return ids;
+    this.ids_json = undefined;
+    this.run=(ids_json)=>{
+        this.ids_json = ids_json;
+        const ids_string = (this.ids_json) ? JSON.stringify(this.ids_json) : JSON.stringify({});
+        return ids_string;
     };
 }
 function IoSettings(settingsPath){
@@ -206,7 +206,7 @@ function ComparedManifest(dirStructure, dirsComparing, settings){
                 }catch(err){socket.emit({is_error: true, error: err});}
                 console.log("ComparedManifest: on event: difference=",JSON.stringify(difference));
                 const is_changes_exist = (difference) ? true : false;
-                socket.emit(ev_name, {is_error: false, is_changes: is_changes_exist});
+                socket.emit(ev_name, {is_changes: is_changes_exist});
             }).catch(err=>{
                 console.log("ComparedManifest: on event: manifestos() Error: ", err);
                 socket.emit({is_error: true, error: err});
@@ -382,14 +382,23 @@ function KilledPartner(){
         socket.on(ev_name, (msg)=>{
             console.log("KilledPartner.run() pid =", msg.pid);
             //TODO: 1. cmd_exec(kill) 2. socket.emit(ok)
+            this.kill_by_pid(msg.pid);
+            socket.emit(ev_name, {is_killed: true});
         });
+    }
+    this.kill_by_pid=(pid)=>{
+        try { 
+            process.kill(list[i].pid);
+        } catch(ex) {
+            console.log("KilledPartner.kill_by_pid() Error: ", ex);
+        }
     }
 }
 function UpdatedFiles(){
     this.run=(ev_name, socket)=>{
         socket.on(ev_name, ()=>{
             console.log("UpdatedFiles.run()...");
-            socket.emit(ev_name, {is_error:false, is_update: true})
+            socket.emit(ev_name, {is_updated: true})
         });
     }
 }
@@ -399,23 +408,23 @@ function StartedPartner(){
             console.log("StartedPartner.run()...");
             //TODO: 1. cmd_exec(kill) 2. socket.emit(ok)
             this.start("", (err, res)=>{
-                if(err){
-                    socket.emit(ev_name, {is_error: true, is_started: false});
-                }else{
-                    socket.emit(ev_name, {is_error: false, is_started: true});
-                }
+                const start_msg = {};
+                if(err){ start_msg.is_error = true; start_msg.is_started = false; }
+                else{ start_msg.is_started = true; }
+                socket.emit(ev_name, start_msg);
             });
         });
     }
     this.start=(c_location, callback)=>{
         //TODO: CHECK IF FILE EXGST !!!
+        const agent_type = "controller";
         let partner_path = path.normalize(GS.partner.file_path);
         fs.stat(partner_path, (err)=>{
             if (err) {
                 callback(err);
                 return;
             }
-            console.log("Starting Controller...");
+            console.log("Starting "+agent_type+"...");
             //var CMD = spawn('cmd');
             var CMD = exec('cmd');
             var stdout = '';
@@ -428,7 +437,7 @@ function StartedPartner(){
             CMD.on('exit', function () { callback(stderr, stdout || false);  });
 
             //CMD.stdin.write('wmic process get ProcessId,ParentProcessId,CommandLine \n');
-            CMD.stdin.write('start cmd.exe @cmd /k "cd..\\controller & node controller.js '+process.pid+' '+1+'"\r\n');
+            CMD.stdin.write('start cmd.exe @cmd /k "cd..\\'+agent_type+' & node '+agent_type+'.js '+process.pid+' '+1+'"\r\n');
             CMD.stdin.end();
         });
     }

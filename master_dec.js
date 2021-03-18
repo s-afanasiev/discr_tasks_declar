@@ -20,9 +20,9 @@
     
 	const jobs_config = 
     [
-		{job:"disk_space", condition: "lte 1 gb", action:"clean_space", interval:5000},
-		{job:"disk_space", condition: "gte 100 gb", action:"increase_traffic"},
-		{job:"disk_space", condition: "lte 50 gb", action:"decrease_traffic"}
+		{name:"disk_space", condition: "lte 1 gb", action:"clean_space", interval:5000},
+		{name:"disk_space", condition: "gte 100 gb", action:"increase_traffic"},
+		{name:"disk_space", condition: "lte 50 gb", action:"decrease_traffic"}
 	];
     //@ -----I-M-P-L-E-M-E-N-T-A-T-I-O-N-----
 	main();
@@ -177,7 +177,7 @@
             this.browserIoClients = browserIoClients;
             require('socket.io')(this.httpServer.run().http).on('connection', (socket) => {
                 console.log("IoServer2.run() connection:"+socket.id);
-                console.log("IoServer2.run() query=",socket.handshake.query);
+                console.log("IoServer2.run() query=", Object.values(socket.handshake.query).join("|"));
                 const io_srv_msg = { 
                     agent_socket: socket,
                     browser_or_agent: socket.handshake.query.browser_or_agent,
@@ -591,10 +591,10 @@
             //@ this situation can occur, when both agents was continued to work, but server was restarted.
             }else if(this.launcher.isOnline() && this.controller.isOnline()){
                 console.log("HostAsPair: run_agents_after_first_host_init_timeout(): Launcher and Controller are online...");
-                this.launcher.compareCurManifest(this.last_manifest_snapshot()).then(res=>{
-                    console.log("HostAsPair: after Launcher's comparing result=",res);
+                this.launcher.compareCurManifest(this.last_manifest_snapshot()).then(msg=>{
+                    console.log("HostAsPair: after Launcher's comparing result=",msg);
                     //@res = {compare:false, kill:false, update:false, start:true}
-                    if(res.kill == false){
+                    if(msg.is_killed == false){
                         this.controller.compareCurManifest(this.last_manifest_snapshot()).then(res=>{
                             this.controller.doNormalWork();
                         }).catch(err=>{
@@ -613,8 +613,10 @@
         //@ when first time calling this method
 		this.welcomeAgent = (agent_socket, agent_ids, manifest_snapshot)=>{
             this.manifest_snapshot = manifest_snapshot;
+            //console.log("HostAsPair.welcomeAgent(): manifest_snapshot=",manifest_snapshot)
             if(this.connectedAgentsThrottle.adaptConnectedAgent(agent_ids).isAllowed()){
                 const ag_type = agent_ids.ag_type;
+                console.log("HostAsPair.welcomeAgent() agent",ag_type,"passed!");
                 if(ag_type=="launcher"){
                     this[ag_type].welcomeAgent(agent_socket, agent_ids, manifest_snapshot, this.controller);
                 }else if(ag_type=="controller"){
@@ -625,7 +627,7 @@
                     this[ag_type].compareCurManifest(manifest_snapshot);
                 }
             }else{
-                console.log("HostAsPair.welcomeAgent(): Throttle blocked the agent! ", agent_ids);
+                console.log("HostAsPair.welcomeAgent(): Throttle blocked the agent! ", Object.values(agent_ids).join("|"));
             }
 		}
         this.propagateManifest = (man_regular)=>{
@@ -696,7 +698,7 @@
             //@ so if one Agent already exist and there is coming one more the same Agent, In fact, we prohibit duplicates.
             if(this[ag_type].isOnline()){
                 this.switchCurrentAgentAllowed(false);
-                console.log("ConnectedAgentsThrottle: Agent dublicated: ",agent_ids);
+                console.log("ConnectedAgentsThrottle: Agent dublicated: ", Object.values(agent_ids).join("|"));
             }else{
                 this.switchCurrentAgentAllowed(true);
             }
@@ -709,24 +711,19 @@
         this.agent_ids = agent_ids;
         this.partner = undefined;
         this.agentUpdateChain = undefined;
-        this.hasNowUpdatesThePartner = false;
         this.agent_socket = undefined;
-        this.manifest_snapshot = undefined;
-        this.manifest_regular = undefined;
         this.manifest_actual = undefined;
-        this.microtaskStack = [];
         //@----------------------------
+        this.look_agent_pid=()=>{return this.agent_ids.pid}
         this.socketio=()=>{return this.agent_socket}
-        //this.is_online_flag=(agent_ids)?true:false;
-        this.is_online_flag=false;
-        //console.log("Launcher.constructor: is_online = ", this.is_online_flag);
-		this.isOnline=function(){return this.is_online_flag;}
-		this.switchOnline=function(is_online){
-            this.is_online_flag=is_online;
-        }
+        //@----------------------------
+        this.is_online_flag = false;
+		this.isOnline=function(){return this.is_online_flag}
+		this.switchOnline=function(is_online){this.is_online_flag=is_online}
+        //@----------------------------
         this.is_update_mode_flag=false;
-        this.isUpdateMode=()=>{return this.is_update_mode_flag;}
-        this.switchUpdateMode=(is_update_mode)=>{this.is_update_mode_flag = is_update_mode;}
+        this.isUpdateMode=()=>{return this.is_update_mode_flag}
+        this.switchUpdateMode=(is_update_mode)=>{this.is_update_mode_flag = is_update_mode}
         //@----------------------------
 		this.instance=function(agent_ids){ return new Launcher(agent_ids); }
 		//@ this in fact not some kind of initialization, but simply pass the object
@@ -736,15 +733,21 @@
         }
         this.welcomeAgent=(agent_socket, agent_ids, manifest_snapshot, controller)=>{
             this.agent_socket = agent_socket;
-            this.agent_ids = agent_ids;
+            this.agent_ids = agent_ids;//{ag_type, md5, ip, pid, ppid, apid} 
             this.manifest_snapshot = manifest_snapshot;
             this.controller = controller;
             //@------------------------------------
             this.switchOnline(true);
 			this.listenForDisconnect();
 		}
+        this.listenForDisconnect=()=>{
+            this.agent_socket.once('disconnect', ()=>{
+                this.switchOnline(false);
+                this.agent_socket = undefined;
+            });
+        }
         this.compareCurManifest=(man)=>{
-            //console.log("Launcher.compareCurManifest(): man=",man);
+            //console.log("Launcher.compareCurManifest(): man=", man);
             return new Promise((resolve,reject)=>{
                 this.switchUpdateMode(true);
                 const man_for_launcher = {};
@@ -761,45 +764,19 @@
         }
         //@ launher must check controller's work Mode (normal or special ?)
         this.propagateManifest=(man)=>{
-            if(this.controller.work_mode=="normal"){
+            //@ Special Mode - E.g. COntroller Doing a Render
+            if(this.controller && this.controller.isSpecialMode()){
                 this.switchUpdateMode(true);
-                new AgentUpdateChain(man).run().then(res=>{
-
-                }).catch(err=>{
-
-                }).finally(()=>{
-                    this.switchUpdateMode(false);
-                })
+            man_for_controller.launcher = man.launcher;
+            new AgentUpdateWithoutCompare(man_for_controller).run(this.socketio(), this.partner).then(res=>{
+                resolve(res);
+            }).catch(err=>{
+                reject(err);
+            }).finally(()=>{
+                this.switchUpdateMode(false);
+            })
             }else{
                 console.log("Launcher.propagateManifest(): controller work mode is:"+this.controller.work_mode);
-            }
-        }
-        this.listenForDisconnect=()=>{
-            this.agent_socket.once('disconnect', ()=>{
-                this.switchOnline(false);
-                this.agent_socket = undefined;
-            });
-        }
-        this.incoming_regular_manifest=(manifest_regular)=>{
-            //@ 100% need to change because regular updater detects difference. 
-            //@ Don't forget to control on Parent object level(Host) which of 3 Manifest are changes?
-            //@ 1) fact that this changes comes here say us about, that there is exist changes for controller, not for launcher. 
-            //@ So, on the parent level we already must decide: if all kinds of updates are exists, than call this function only for Launcher, not for Controller.
-            //@ Если же, обновления придут только для Лончера, то вот такая же функция будет вызвана у Контроллера и он будет понимать, что можно обновлять Лончера.
-            //@ При этом всё равно будет нужно менять state="underUpdate" на родительском объекте Host, и отрубать таких ребят.
-            //@ Итак, запускаем трёх-этапную (трёх-микротасковую) функцию, которая сделает kill->update->start
-            //@ Т.е. нужен флаг типа "я начал заниматься апдейтом" и тогда эта функция ничего не делает, кроме this.manifest_regular = manifest_regular
-            this.manifest_regular = manifest_regular;
-            if(this.hasNowUpdatesThePartner){}
-            else{
-                this.hasNowUpdatesThePartner = true;
-                new Chainer(
-                    new ChainAccum()
-                        .with(kill_the_partner)
-                        .with(update_the_files)
-                        .with(start_the_partner),
-                    cb=>{}
-                )
             }
         }
     }
@@ -808,23 +785,25 @@
         this.specialControllerMode = specialControllerMode;
         this.normalControllerMode = normalControllerMode;
         this.agent_ids = agent_ids;
+        this.partner = undefined;
         this.agentUpdateChain = undefined;//run
-        this.launcher = undefined;//run
         this.agent_socket = undefined;
-        this.launcher_state = undefined;
-        this.work_mode ="normal";
+        this.manifest_actual = undefined;
         //@----------------------------
         this.look_agent_pid=()=>{return this.agent_ids.pid}
+        this.socketio=()=>{return this.agent_socket}
         //@----------------------------
-        this.is_online_flag=(agent_ids)?true:false;
+        this.is_online_flag = false;
 		this.isOnline=function(){return this.is_online_flag}
 		this.switchOnline=function(is_online){this.is_online_flag=is_online;}
+        //@----------------------------
         this.is_update_mode_flag=false;
-        this.isUpdateMode=()=>{return this.is_update_mode_flag;}
-        this.switchUpdateMode=(is_update_mode)=>{this.is_update_mode_flag = is_update_mode;}
+        this.isUpdateMode=()=>{return this.is_update_mode_flag}
+        this.switchUpdateMode=(is_update_mode)=>{this.is_update_mode_flag = is_update_mode}
+        //@----------------------------
         this.is_special_mode_flag=false;
         this.isSpecialMode=()=>{return this.is_special_mode_flag;}
-        this.switchUpdateMode=(is_special_mode)=>{this.is_special_mode_flag = is_special_mode;}
+        this.switchSpecialMode=(is_special_mode)=>{this.is_special_mode_flag = is_special_mode;}
         //@----------------------------
 		this.instance=function(agent_ids){
             return new Controller(
@@ -839,11 +818,12 @@
             return this;
         }
 		this.welcomeAgent = (agent_socket, agent_ids, manifest_snapshot, launcher)=>{
+			this.agent_socket = agent_socket;
+			this.agent_ids = agent_ids;//{ag_type, md5, ip, pid, ppid, apid} 
+			this.manifest_snapshot = manifest_snapshot;
             this.launcher = launcher;
             this.switchOnline(true);
             this.listenForDisconnect();
-			this.agent_socket = agent_socket;
-			this.agent_ids = agent_ids;//{agent_type, md5, ip, pid, ppid, apid} 
 		}
         this.listenForDisconnect=()=>{
             this.agent_socket.once('disconnect', ()=>{
@@ -851,46 +831,57 @@
                 this.agent_socket = undefined;
             });
         }
+        //@ this comparing promote, when master first time welcome the Agent
         this.compareCurManifest=(man)=>{
+            //console.log("Controller.compareCurManifest(): man=", man);
             return new Promise((resolve,reject)=>{
                 this.switchUpdateMode(true);
-                new AgentUpdateChain(man).run().then(res=>{
-                    this.switchUpdateMode(false);
+                const man_for_controller = {};
+                man_for_controller.launcher = man.launcher;
+                this.agentUpdateChain.instance(man_for_controller).run(this.socketio(), this.partner).then(res=>{
                     resolve(res);
                 }).catch(err=>{
-                    this.switchUpdateMode(false);
                     reject(err);
+                }).finally(()=>{
+                    this.switchUpdateMode(false);
                 })
             });
         }
-        this.doNormalWork=()=>{
-            if(this.work_mode == "normal"){
-                this.normalControllerMode.do();
-                // jobs.config.forEach(obj=>{
-                //     console.log("one job ="+JSON.stringify(obj))
-                //     agent_socket.emit(obj.job, obj);
-                //     agent_socket.once(obj.job, res=>{
-                //         console.log("controller says:"+JSON.stringify(res));
-                //     });
-                // });
-            }else if(this.work_mode == "special"){
-                this.specialControllerMode.do();
-            }
-        }
         this.propagateManifest=(man)=>{
             this.switchUpdateMode(true);
-            new AgentUpdateChain(man).run().then(res=>{
-                this.switchUpdateMode(false);
+            man_for_controller.launcher = man.launcher;
+            new AgentUpdateWithoutCompare(man_for_controller).run(this.socketio(), this.partner).then(res=>{
+                resolve(res);
             }).catch(err=>{
+                reject(err);
+            }).finally(()=>{
                 this.switchUpdateMode(false);
             })
         }
+        this.doNormalWork=()=>{
+            if(this.isSpecialMode()){
+                //@ Special Mode: for example some Render operation.
+                this.specialControllerMode.do();
+            }else{
+                //@ Normal Mode: 'diskSpace' and so on...
+                this.normalControllerMode.do();
+                jobs.config.forEach(job=>{
+                    console.log("one job ="+JSON.stringify(job))
+                    agent_socket.emit(job.name, job);
+                    agent_socket.once(job.name, res=>{
+                        console.log("Controller.doNormalWork(): "+JSON.stringify(res));
+                    });
+                });
+            }
+        }
+        
 		
     }
     //@----------------AgentUpdateChain------------------------
     function AgentUpdateChain(manifest){
         this.manifest=manifest;
         this.instance=(manifest)=>{return new AgentUpdateChain(manifest)}
+        this.short_names = ["start", "update", "kill", "compare"];
         this.run=(socket, partner)=>{
             return new Promise((resolve,reject)=>{
                 new StartingPartner(
@@ -908,16 +899,15 @@
         }
     }
     function AgentUpdateWithoutCompare(manifest){
-        this.instance=(...args)=>{return new AgentUpdateChain(args)}
         this.manifest=manifest;
-        this.run=(man, socket)=>{
+        this.instance=(manifest)=>{return new AgentUpdateWithoutCompare(manifest)}
+        this.run=(socket, partner)=>{
             return new Promise((resolve,reject)=>{
                 new StartingPartner(
                     new UpdatingFiles(
-                        new KillingPartner(),
-                        this.manifest
+                        new KillingPartner()
                     )
-                ).run(man, socket).then(res=>{
+                ).run(socket, partner, this.manifest).then(res=>{
                     resolve(res);
                 }).catch(err=>{
                     reject(err);
@@ -930,12 +920,15 @@
         //this.instance=()=>{return new StartingPartner(this.updatingFiles.instance())}
         this.run=(socket, partner, manifest)=>{
             return new Promise((resolve,reject)=>{
-                this.updatingFiles.run(socket, partner, manifest).then(prev_msg=>{
+                this.updatingFiles.run(socket, partner, manifest).then(chain_msg=>{
                     if(partner && partner.isOnline()){
-                        resolve("partner is already started");
+                        const extended_msg = Object.assign(chain_msg, {updated_msg:"partner is already started"});
+                        resolve(extended_msg);
                     }else{
-                        this.start_partner(socket).then(res=>{
-                            resolve();
+                        this.start_partner(socket).then(start_msg=>{
+                            console.log("StartingPartner.run(): start_partner().then: res= ",start_msg);
+                            const extended_msg = Object.assign(chain_msg, start_msg)
+                            resolve(extended_msg);
                         }).catch(err=>{
                             reject("StartingPartner: cant start partner. "+err);
                         });
@@ -947,7 +940,7 @@
         }
         this.start_partner=(socket)=>{
             return new Promise((resolve,reject)=>{
-                const resolve_handler = function(res){resolve(res);}
+                const resolve_handler = function(start_msg){resolve(start_msg);}
                 socket.emit("startPartner").once("startPartner", resolve_handler);
                 setTimeout(()=>{
                     socket.removeListener("startPartner",resolve_handler);
@@ -961,22 +954,23 @@
         //this.instance=()=>{return new UpdatingFiles(this.killingPartner.instance())}
         this.run=(socket, partner, manifest)=>{
             return new Promise((resolve,reject)=>{
-                this.killingPartner.run(socket, partner, manifest).then(prev_msg=>{
-                    if(prev_msg.is_changes){
-                        this.update_files(socket).then(update_msg=>{
-                            resolve(prev_msg);
+                this.killingPartner.run(socket, partner, manifest).then(chain_msg=>{
+                    if(chain_msg.is_changes){
+                        this.update_files(socket, manifest).then(update_msg=>{
+                            const extended_msg = Object.assign(chain_msg, update_msg);
+                            resolve(extended_msg);
                         }).catch(err=>{
                             reject("UpdatingFiles: "+err);
                         });
                     } else{
-                        resolve(prev_msg);
+                        resolve(chain_msg);
                     }
                 }).catch(err=>{
                     reject("UpdatingFiles rejected: "+err);
                 })
             });
         }
-        this.update_files=(socket)=>{
+        this.update_files=(socket, manifest)=>{
             return new Promise((resolve,reject)=>{
                 const resolve_handler = function(res){resolve(res);}
                 socket.emit("updateFiles").once("updateFiles", resolve_handler);
@@ -1027,13 +1021,15 @@
                     const cond2 = (this.partner) ? this.partner.isOnline() : false; //partner must be online, otherwise nothing to kill
                     const cond3 = (this.partner) ? this.partner.isSpecialMode() : false; // if special mode kinda 'render' when we can't kill
                     if(cond1 & cond2 & !cond3){
-                        this.kill_partner(socket, partner.look_agent_pid()).then(is_killed=>{
-                            resolve( {is_changes:cond1, is_killed:is_killed} )
+                        this.kill_partner(socket, partner.look_agent_pid()).then(kill_msg=>{
+                            //@ TODO: data like 'is_error' can get lost by next chained msg
+                            const extended_msg = Object.assign(compare_msg, kill_msg);
+                            resolve(extended_msg);
                         }).catch(err=>{
                             reject(err);
                         })
                     }else{
-                        resolve( {is_changes:cond1} )
+                        resolve(compare_msg);
                     }
                 }).catch(err=>{
                     reject("KillingPartner: previous step 'compare' failed. "+err);
@@ -1127,9 +1123,6 @@
     function Pages(){
         const _map = {};
         this.with=(req_path, page)=>{
-            //console.log("Pages.with(): req_path="+req_path);
-            //console.log("Pages.with(): page="+Object.keys(page));
-            //console.log("Pages.with(): _map.length="+Object.keys(_map));
             _map[req_path] = page;
             return this;
         }
@@ -1150,7 +1143,6 @@
         console.log("new Page '"+page_type+"'");
         const file_html = new FileFromFs();
         this.asText=async function(response){
-            //console.log("Page.asText(): response='"+Object.keys(response));
             response.statusCode = 200;
             //response.setEncoding('utf8'); //not a function
             response.setHeader("Content-Type", "text/html");

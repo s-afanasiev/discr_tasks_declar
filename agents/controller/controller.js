@@ -63,7 +63,7 @@ function Identifiers(){
         console.log("preparing identifiers for master...");
         return new Promise((resolve,reject)=>{
             let ids = {};
-            ids.ag_type = "launcher";
+            ids.ag_type = "controller";
             this.get_mac((err, mac) => {
                 if (err) { return reject(err);}
                 else{
@@ -156,10 +156,12 @@ function IoWrap(ioSettings, stringifiedJson){
 		return this;
     }
 }
-function StringifiedJson(json){
-    this.json = json;
-    this.run=()=>{
-        return (this.json) ? JSON.stringify(this.json) : JSON.stringify({})
+function StringifiedJson(){
+    this.ids_json = undefined;
+    this.run=(ids_json)=>{
+        this.ids_json=ids_json;
+        const ids_string = (this.ids_json) ? JSON.stringify(this.ids_json) : JSON.stringify({})
+        return ids_string;
     };
 }
 function IoSettings(settingsPath){
@@ -414,14 +416,23 @@ function KilledPartner(){
         socket.on(ev_name, (msg)=>{
             console.log("KilledPartner.run() pid =", msg.pid);
             //TODO: 1. cmd_exec(kill) 2. socket.emit(ok)
+            this.kill_by_pid(msg.pid);
+            socket.emit(ev_name, {is_killed: true});
         });
+    }
+    this.kill_by_pid=(pid)=>{
+        try { 
+            process.kill(list[i].pid);
+        } catch(ex) {
+            console.log("KilledPartner.kill_by_pid() Error: ", ex);
+        }
     }
 }
 function UpdatedFiles(){
     this.run=(ev_name, socket)=>{
         socket.on(ev_name, ()=>{
             console.log("UpdatedFiles.run()...");
-            socket.emit(ev_name, {is_error:false, is_update: true})
+            socket.emit(ev_name, {is_updated: true})
         });
     }
 }
@@ -431,23 +442,23 @@ function StartedPartner(){
             console.log("StartedPartner.run()...");
             //TODO: 1. cmd_exec(kill) 2. socket.emit(ok)
             this.start("", (err, res)=>{
-                if(err){
-                    socket.emit(ev_name, {is_error: true, is_started: false});
-                }else{
-                    socket.emit(ev_name, {is_error: false, is_started: true});
-                }
+                const start_msg = {};
+                if(err){ start_msg.is_error = true; start_msg.is_started = false; }
+                else{ start_msg.is_started = true; }
+                socket.emit(ev_name, start_msg);
             });
         });
     }
     this.start=(c_location, callback)=>{
         //TODO: CHECK IF FILE EXGST !!!
+        const agent_type = "launcher";
         let partner_path = path.normalize(GS.partner.file_path);
         fs.stat(partner_path, (err)=>{
             if (err) {
                 callback(err);
                 return;
             }
-            console.log("Starting Controller...");
+            console.log("Starting "+agent_type+"...");
             //var CMD = spawn('cmd');
             var CMD = exec('cmd');
             var stdout = '';
@@ -460,7 +471,7 @@ function StartedPartner(){
             CMD.on('exit', function () { callback(stderr, stdout || false);  });
 
             //CMD.stdin.write('wmic process get ProcessId,ParentProcessId,CommandLine \n');
-            CMD.stdin.write('start cmd.exe @cmd /k "cd..\\controller & node controller.js '+process.pid+' '+1+'"\r\n');
+            CMD.stdin.write('start cmd.exe @cmd /k "cd..\\'+agent_type+' & node '+agent_type+'.js '+process.pid+' '+1+'"\r\n');
             CMD.stdin.end();
         });
     }
@@ -1088,7 +1099,7 @@ const GS = {
         return new Promise((resolve,reject)=>{
             const TYPE = 0, SID = 1, MD5 = 2, IP = 3, PID = 4, PPID = 5, APID = 6;
             const _identifiers = {};
-            _identifiers.agent_type = "controller";
+            _identifiers.ag_type = "controller";
             _identifiers.md5 = "";
             _identifiers.sid = "";
             _identifiers.ip = "";
