@@ -584,23 +584,23 @@
             const l_on = this.launcher.isOnline();
             const c_on = this.controller.isOnline();
             if(l_on && !c_on){
-                console.log("HostAsPair: run_agents_after_first_host_init_timeout(): only launcher is online...");
+                console.log("HostAsPair: only launcher is online...");
                 this.launcher.compareCurManifest(this.last_manifest_snapshot()).then(res=>{
                     //@res = {compare:false, kill:false, update:false, start:true}
                 }).catch(err=>{
-                    console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.launcher.compareCurManifest() Error 1: ",err);
+                    console.log("HostAsPair: this.launcher.compareCurManifest() Error 1: ",err);
                 })
             //@ this situation can occur, when both agents was continued to work, but server was restarted.
             }else if(!l_on && c_on){
-                console.log("HostAsPair: run_agents_after_first_host_init_timeout(): only controller is online...");
+                console.log("HostAsPair: only controller is online...");
                 this.controller.compareCurManifest(this.last_manifest_snapshot()).then(res=>{
 
                 }).catch(err=>{
-                    console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.controller.compareCurManifest() Error 1: ",err);
+                    console.log("HostAsPair: this.controller.compareCurManifest() Error 1: ",err);
                 })
             }
             else if(l_on && c_on){
-                console.log("HostAsPair: run_agents_after_first_host_init_timeout(): Launcher and Controller are online...");
+                console.log("HostAsPair: Launcher and Controller are online...");
                 this.launcher.compareCurManifest(this.last_manifest_snapshot()).then(msg=>{
                     console.log("HostAsPair: after Launcher's comparing result=",msg);
                     //@res = {compare:false, kill:false, update:false, start:true}
@@ -608,15 +608,15 @@
                         this.controller.compareCurManifest(this.last_manifest_snapshot()).then(res=>{
                             this.controller.doNormalWork();
                         }).catch(err=>{
-                            console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.controller.compareCurManifest() Error: ",err);
+                            console.log("HostAsPair: this.controller.compareCurManifest() Error: ",err);
                         })
                     }
                 }).catch(err=>{
-                    console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.launcher.compareCurManifest() Error 2: ",err);
+                    console.log("HostAsPair: this.launcher.compareCurManifest() Error 2: ",err);
                 })
             //@-----------------------------------------------------------
             }else{
-                console.log("HostAsPair: run_agents_after_first_host_init_timeout(): Unhandled situation!");
+                console.log("HostAsPair: Unhandled situation!");
                 console.log("launcher state:", this.launcher.isOnline(), ", controller state:", this.controller.isOnline());
             }
         }
@@ -889,6 +889,7 @@
     }
     //@----------------AgentUpdateChain------------------------
     function AgentUpdateChain(manifest){
+        //console.log("AgentUpdateChain.constr(): manifest=",manifest);
         this.manifest=manifest;
         this.instance=(manifest)=>{return new AgentUpdateChain(manifest)}
         this.short_names = ["start", "update", "kill", "compare"];
@@ -983,7 +984,7 @@
         this.update_files=(socket, manifest)=>{
             return new Promise((resolve,reject)=>{
                 const resolve_handler = function(res){resolve(res);}
-                socket.emit("updateFiles").once("updateFiles", resolve_handler);
+                socket.emit("updateFiles", manifest).once("updateFiles", resolve_handler);
                 setTimeout(()=>{
                     socket.removeListener("updateFiles",resolve_handler);
                     reject("updateFiles timeout. ");
