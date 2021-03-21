@@ -122,60 +122,35 @@
 		$(document).unbind("mousedown");
 		$(document).unbind("mousemove");
 		$(document).unbind("mouseup");
-
-		$(document).bind("mousedown", function(mouse_ev) 
-		{
+		//@-----------------------------------------
+		$(document).bind("mousedown", function(mouse_ev){
 			window["document_last_ms"] = new Date().getTime();
-			//console_out_event_keys(e);
 			console.log("mousedown: ID =", mouse_ev.target.id, ", ClassName =", mouse_ev.target.className);
 			window["curr_elem_id"] = mouse_ev.target.id;
 			//- if not such class - then return empty string ""
 			window["curr_elem_class"] = mouse_ev.target.className;
-
-      //delete_this_later_if_class_input();
-
 			window["document_xd"] = mouse_ev.pageX;
-			window["document_xu"] = mouse_ev.pageX;
 			window["document_yd"] = mouse_ev.pageY;
-			window["document_yu"] = mouse_ev.pageY;
 		});
-		
-		$(document).bind("mousemove", function(e) {
-			window["document_xu"] = e.pageX;
-			window["document_yu"] = e.pageY;
-			//console.log("document_xu ="+window["document_xu"]);
-		});
-		
-		$(document).bind("mouseup", function(e)
-		{
-			if(window["curr_elem_class"].endsWith("_input"))
-			{
+		$(document).bind("mousemove", function(e) {});
+		$(document).bind("mouseup", function(e){
+			if(window["curr_elem_class"].endsWith("_input")){
 				//-? 'mouseup' event happened in input and no reaction is required
 			}
-			else
-			{
-				console.log("mouseup:", e.target.id);
-				var dx = Math.abs(window["document_xd"] - window["document_xu"]);
-				var dy = Math.abs(window["document_yd"] - window["document_yu"]);
+			else{
+				var dx = Math.abs(window["document_xd"] - e.pageX);
+				var dy = Math.abs(window["document_yd"] - e.pageY);
 				var timestamp = new Date().getTime();
 				var dt = Math.abs(window["document_last_ms"] - timestamp);
-				if(dx < 20 && dy < 20 && dt > 30) 
-				{	
+				if(dx < 20 && dy < 20 && dt > 30){	
 					var this_id_decode = window["curr_elem_id"].split("-");
-          console.log("curr elem id decode =", this_id_decode);
-          //- get custom function name by id
+          			//console.log("curr elem id decode =", this_id_decode);
 					var custom_function = this_id_decode[1];
-					
-					if(typeof custom_function !== 'undefined') {
-						if(typeof window[custom_function] !== 'undefined') {
-							if(typeof window[custom_function] == 'function') {
-								console.log("calling custom function");
-								window[custom_function](window["curr_elem_id"]);
-							}
-						} 
-						else { console.log("couldn't find function: "+ custom_function); }
-					}
+					if(typeof window[custom_function] == 'function') {
+						window[custom_function](window["curr_elem_id"]);
+					}else{ console.log("couldn't find function: "+ custom_function); }
 				}
+				console.log("mouseup:", e.target.id);
 			}
 		});
 

@@ -22,13 +22,18 @@ function App(){
                     new StringifiedJson()
                 )
             )
-                .with('compareManifest', new ComparedManifest(
-                    new DirStructure(), 
-                    new DirsComparing(),
-                    "settings_"
-                ))
+                .with('compareManifest', 
+                    new ComparedManifest(
+                        new DirStructure(), 
+                        new DirsComparing(),
+                        "settings_"
+                    ).as("comparedManifest_")
+                )
                 .with('killPartner', new KilledPartner())
-                .with('updateFiles', new UpdatedFiles())
+                .with('updateFiles', new UpdatedFiles(
+                    "settings_", 
+                    "comparedManifest_"
+                ))
                 .with('startPartner', new StartedPartner())
         ).run();
 	}
@@ -187,52 +192,53 @@ function SocketIoHandlers(ioWrap){
             this.allEvHandlers[ev_name].run(ev_name, this.socket);   
         });
 	};
-	this.tech_events = ['connect', 'disconnect', 'identifiers', 'compareManifest', 'partner_leaved', 'partner_appeared', 'same_md5_agents', 'sync_dirs', 'start_agent', 'kill_agent', 'update_folder'];
+	this.tech_events = ['connect', 'disconnect', 'compareManifest', 'same_md5_agents', 'updateFiles', 'startPartner', 'killPartner', 'identifiers', 'update_folder', 'partner_leaved', 'partner_appeared'];
 }
 //@-------------------------------
 function ComparedManifest(dirStructure, dirsComparing, settings_){
     this.dirStructure = dirStructure;
     this.dirsComparing = dirsComparing;
-    this.curMan = [];
-    this.settings_ = glob[settings_] || {}
+    this.curMans = [];
+    this.is_keep_old_files = true;
+    this.settings = glob[settings_].read() || {}
+    this.CONTROLLER_DIR =  __dirname + this.settings.local_dir_controller;
+    this.OTHER_DIR =  __dirname + this.settings.local_dir_other;
+    const PATHS_DATA = [
+        {name: "controller", path: this.CONTROLLER_DIR},
+        {name: "other", path: this.OTHER_DIR}
+    ];
+    console.log("ComparedManifest.constr(): PATHS_DATA=",PATHS_DATA);
+    this.as=(name)=>{
+        glob[name] = this;
+        return this;
+    }
     this.run=(ev_name, socket)=>{
         //@ ev_name = 'compareManifest'
-        socket.on(ev_name, (remote_manif)=>{
-            console.log("ComparedManifest: remote_manif=",remote_manif)
-            this.manifestos(remote_manif).then(local_manif=>{
-                console.log("ComparedManifest: local_manif=",local_manif)
-                let difference;
-                try{
-                    difference = this.dirsComparing.compare(local_manif, remote_manif);
-                }catch(err){socket.emit({is_error: true, error: err});}
-                console.log("ComparedManifest: on event: difference=",JSON.stringify(difference));
-                const is_changes_exist = (difference) ? true : false;
+        socket.on(ev_name, (remote_mans)=>{
+            console.log("ComparedManifest: remote_mans=",remote_mans)
+            this.dirStructure.allMansAsync(PATHS_DATA).then(local_mans=>{
+                const mans_diff = this.dirsComparing.compare(local_mans, remote_mans, this.is_keep_old_files);
+                const is_changes_exist = Object.keys(mans_diff).length>0;
                 socket.emit(ev_name, {is_changes: is_changes_exist});
             }).catch(err=>{
-                console.log("ComparedManifest: on event: manifestos() Error: ", err);
-                socket.emit({is_error: true, error: err});
+                console.log("WTF!!!",err)
+                //reject("ComparedManifest.manifestos() Error: "+JSON.stringify(err));
+                socket.emit(ev_name, {is_error: true, error: err});
             })
         })
         return this;
     }
-    this.current=()=>{return this.curMan}
-    this.manifestos=(remote_manif)=>{
-        //@ remote_manif = {controller:{}, other:{}}
+    this.current=()=>{return this.curMans}
+    //@ local function called by UpdatedFiles object.
+    this.mansDiff=(remote_mans)=>{
         return new Promise((resolve, reject)=>{
-            const local_dir_controller = this.settings.local_dir_controller || "../controller";
-            const local_dir_other = this.settings_.local_dir_other || "../other";
-            const paths = [];
-            Object.keys(remote_manif).forEach(in_fact_folder=>{
-                let local_dir;
-                if(in_fact_folder=="controller"){local_dir = local_dir_controller}
-                else if(in_fact_folder=="other"){local_dir = local_dir_other}
-                else if(in_fact_folder=="launcher"){local_dir = __dirname}
-                paths.push({name:in_fact_folder, path: local_dir})
-            });
-            this.dirStructure.allMansAsync(paths).then(local_manifest=>{
-                resolve(local_manifest);
+            this.dirStructure.allMansAsync(PATHS_DATA).then(local_mans=>{
+                const mans_diff = this.dirsComparing.compare(local_mans, remote_mans, this.is_keep_old_files);
+                console.log("ComparedManifest.mansDiff(): mans_diff=",JSON.stringify(mans_diff));
+                resolve(mans_diff);
             }).catch(err=>{
-                reject("ComparedManifest.manifestos() Error: "+JSON.stringify(err));
+                console.log("ComparedManifest: on socket event Error: ", err);
+                reject(err);
             })
         });
     }
@@ -278,35 +284,42 @@ function DirStructure(){
     }
     //@ returns manifests of a several dirs. Type object {'launcher':[], 'controller':[]}
     this.allMansAsync=(paths_data)=>{
-        console.log("DirStructure.allMansAsync: paths_data=", paths_data)
+        console.log("DirStructure.allMansAsync: paths_data=", paths_data);
         return new Promise((resolve,reject)=>{
             const result = {};
             let pending = paths_data.length;
             paths_data.forEach(path_data=>{
-                this.manOfDirAsync(path_data.path).then(res=>{
-                    result[path_data.name] = res;
-                    if(!--pending){resolve(result)}
-                }).catch(err=>{
-                    console.log("DirStructure.allMansAsync() Error: ", err);
-                    if(!--pending){resolve(result)}
-                })
+                if(path_data==undefined){
+                    if(!--pending){return resolve(result);}
+                }else{
+                    this.manOfDirAsync(path_data.path).then(res=>{
+                        console.log("DirStructure.allMansAsync: manOfDirAsync res=", res);
+                        result[path_data.name] = res;
+                        if(!--pending){resolve(result)}
+                    }).catch(err=>{
+                        console.log("DirStructure.allMansAsync() Error: ", err);
+                        if(!--pending){resolve(result)}
+                    })
+                }
             });
-            setTimeout(()=>{reject("DirStructure.allMansAsync(): timeout Error!")},5000);
+            setTimeout(()=>{
+                reject("DirStructure.allMansAsync(): timeout Error!")},5000);
         });
     }
 }
 function DirsComparing(){
-    this.compareResult=undefined;
-    this.compare=(next_mans, prev_mans)=>{
+    this.compare=(local_man, remote_man, is_keep_old_files)=>{
         console.log();
         const result = {};
-        for(let man in next_mans){
-            const comparedDirs = this.compare2Dirs(next_mans[man], prev_mans[man]);
+        for(let man in local_man){
+            console.log("DirsComparing.compare(): man =",man);
+            console.log("DirsComparing.compare(): remote_man =",remote_man);
+            const comparedDirs = this.compare2Dirs(remote_man[man], local_man[man], is_keep_old_files);
             if(Object.keys(comparedDirs).length>0){result[man] = comparedDirs;}
         }
-        return Object.keys(result).length>0 ? result : undefined;
+        return result;
     }
-    this.compare2Dirs=(next_man, prev_man)=>{
+    this.compare2Dirs=(next_man, prev_man, is_keep_old_files)=>{
         //@ next_man = {controller:[], launcher:[], other:[]}
         //console.log("DirsComparing.comparing(): next_man=",next_man);
         const new_files = find_new_files(next_man, prev_man);
@@ -315,7 +328,9 @@ function DirsComparing(){
         const answer = {}
         if(new_files.length>0) answer.new_files = new_files;
         if(files_to_change.length>0) answer.files_to_change = files_to_change;
-        if(old_files.length>0) answer.old_files = old_files;
+        if(!is_keep_old_files){
+            if(old_files.length>0) answer.old_files = old_files;
+        }
         return answer;
         //@ arrays intersection
         //@ let intersection = arrA.filter(x => arrB.includes(x));
@@ -395,12 +410,155 @@ function KilledPartner(){
         }
     }
 }
-function UpdatedFiles(){
+function UpdatedFiles(settings_, comparedManifest_){
+    this.comparedManifest = glob[comparedManifest_] || {}
+    this.settings = glob[settings_].read() || {}
+    const CONTROLLER_DIR = __dirname + this.settings.local_dir_controller;
+    const OTHER_DIR = __dirname + this.settings.local_dir_other;
+    const REMOTE_DIR = this.settings.remote_dir;
+    this.is_keep_old_files = true;
     this.run=(ev_name, socket)=>{
-        socket.on(ev_name, ()=>{
-            console.log("UpdatedFiles.run()...");
-            socket.emit(ev_name, {is_updated: true})
+        console.log("UpdatedFiles.run()...");
+        socket.on(ev_name, (remote_mans)=>{
+            this.comparedManifest.mansDiff(remote_mans).then(diff=>{
+                console.log("UpdatedFiles.run(): diff=",diff);
+                this.sync_dirs(diff, this.is_keep_old_files).then(res=>{
+                    console.log("UpdatedFiles: emitting success 'updateFiles' procedure");
+                    socket.emit(ev_name, {is_updated: true});
+                }).catch(err=>{
+                    console.log("UpdatedFiles: sync_dirs() Error: ",err);
+                    socket.emit(ev_name, {is_updated: false, is_error: true, error:err});
+                })
+            }).catch(err=>{
+                console.log("UpdatedFiles: comparedManifest_.mansDiff() Error: ",err);
+            });
         });
+    }
+    this.sync_dirs=(mans_diff, is_keep_old_files)=>{
+        //@ mans_diff can be undefined
+        return new Promise((resolve, reject) => {
+            //@ dont touch The Old Files!
+            let struct_to_write = concat_filelist_to_update(mans_diff, is_keep_old_files);
+            console.log("UpdatedFiles.sync_dirs(): copy_files(): files_to_write=",struct_to_write);
+            this.createEmptyDirsByStruct(struct_to_write).then(err_names=>{
+                console.log("UpdatedFiles.sync_dirs(): createEmptyDirs(): err_names=",err_names);
+                return this.copy_files_by_struct(struct_to_write);
+            }).then(err_names=>{
+                console.log("UpdatedFiles.sync_dirs(): copy_files(): err_names=",err_names);
+                resolve(err_names);
+            }).catch(err=>{
+                console.log("UpdatedFiles.sync_dirs(): Error:",err);
+                reject(err);
+            })
+            
+        });
+    }
+    //@ mans_diff must be at least = {}, NOT undefined
+    function concat_filelist_to_update(mans_diff, is_keep_old_files){
+        //@ mans_diff = {} || {controller: {new_files: [[Array],[Array]], old_files: [[Array]] }, other: {new_files:[[]], ...} }
+        const struct = {};
+        const mans_names = Object.keys(mans_diff);
+        mans_names.forEach(man_name=>{
+            let files_to_write = [];
+            Object.keys(mans_diff[man_name]).forEach(subtype=>{
+                if(is_keep_old_files && subtype=="old_files"){}
+                else{
+                    files_to_write = files_to_write.concat(mans_diff[man_name][subtype]);        
+                }
+            });
+            struct[man_name] = files_to_write;
+        });
+        return struct;
+    }
+    this.copy_files_by_struct=(struct_to_write)=>{
+        return new Promise((resolve, reject) => {
+            let error_names = [];
+            const mans_names = Object.keys(struct_to_write);
+            let pending = mans_names.length;
+            if(pending==0){ return resolve(); }
+            mans_names.forEach(man_name=>{
+                this.copy_files(struct_to_write[man_name], man_name).then(err_names=>{
+                    if (!--pending) {
+                        error_names = error_names.concat(err_names);
+                        resolve(error_names);
+                    }
+                }).catch(err=>{
+                    console.log("UpdatedFiles.copy_files_by_struct() Error:",err);
+                    reject(err);
+                });
+            });
+        });
+    }
+    this.copy_files=(files_to_write, update_fold_lvl2)=>{
+        console.log("UpdatedFiles.copy_files() files_to_write=",files_to_write);
+        if(!update_fold_lvl2.startsWith("/")){ update_fold_lvl2 = "/"+update_fold_lvl2 }
+        return new Promise((resolve, reject) => {
+            const FNAME = 0;
+            let pending = files_to_write.length;
+            if(pending==0){ return resolve(); }
+            const err_names = [];
+            files_to_write.forEach(file_info=>{
+                console.log("copy_files() file_info=",file_info);
+                const is_end1 = file_info[FNAME].endsWith("\\");
+                const is_end2 = file_info[FNAME].endsWith("/");
+                if(is_end1 || is_end2){
+                    //@ Ignore Empty Dirs
+                    if (!--pending) { resolve(err_names); }
+                }else{
+                    const loc_file = (update_fold_lvl2.endsWith("controller")) ? CONTROLLER_DIR+file_info[FNAME] : OTHER_DIR+file_info[FNAME];
+                    const rem_file = REMOTE_DIR+update_fold_lvl2+file_info[FNAME] ;
+                    console.log("copy_files() loc_file=",loc_file);
+                    console.log("copy_files() rem_file=",rem_file);
+                    fs.copyFile(rem_file, loc_file, (err)=>{
+                        if (err) {
+                            console.log("copy_files() Error=",err);
+                            err_names.push(file_info);
+                            if (!--pending) { resolve(err_names); }
+                        }   
+                        else {
+                            if (!--pending) { resolve(err_names); }
+                        }
+                    });
+                }
+            });
+        });
+    }
+    this.createEmptyDirsByStruct=(struct_to_write)=>{
+        return new Promise((resolve, reject) => {
+            let error_names = [];
+            const mans_names = Object.keys(struct_to_write);
+            let pending = mans_names.length;
+            if(pending==0){ return resolve(); }
+            mans_names.forEach(man_name=>{
+                this.createEmptyDirs(struct_to_write[man_name]).then(err_names=>{
+                    if (!--pending) {
+                        error_names = error_names.concat(err_names);
+                        resolve(error_names);
+                    }
+                }).catch(err=>{
+                    console.log("UpdatedFiles.createEmptyDirsByStruct() Error:",err);
+                    reject(err);
+                });
+            });
+        });
+    }
+    this.createEmptyDirs=(files_to_write)=>{
+        return new Promise((resolve, reject) => {
+            const FNAME = 0;
+            const err_names = [];
+            let pending = files_to_write.length;
+            if(pending==0){ return resolve(); }
+            files_to_write.forEach(file_info=>{
+                if(file_info[FNAME].endsWith("\\")){
+                    const loc_dir = CONTROLLER_DIR+file_info[FNAME] ;
+                    console.log("createEmptyDirs() loc_dir=",loc_dir);
+                    fs.mkdir(loc_dir, { recursive: true }, (err) => {
+                        if(err) {err_names.push(file_info);}
+                        if (!--pending) {resolve(err_names)}
+                    })
+                }else if(!--pending){resolve(err_names)}
+            });
+        })
     }
 }
 function StartedPartner(){

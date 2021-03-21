@@ -45,10 +45,12 @@ function App(){
                 )
                 .with('killPartner', new KilledPartner())
                 .with('updateFiles', 
-                    new UpdatedFiles("settings_", "comparedManifest_")
+                    new UpdatedFiles(
+                        "settings_", 
+                        "comparedManifest_")
                 )
                 .with('startPartner', new StartedPartner())
-                .with('diskSpace', new DiskSpace())
+                .with('disk_space', new DiskSpace())
         ).run();
 	}
 }
@@ -236,6 +238,7 @@ function ComparedManifest(dirStructure, dirsComparing, settings_){
     this.dirStructure = dirStructure;
     this.dirsComparing = dirsComparing;
     this.curMan = [];
+    this.is_keep_old_files = true;
     this.settings = glob[settings_].read() || {}
     const LAUNCHER_DIR = __dirname + this.settings.local_dir_launcher;
     this.as=(name)=>{
@@ -249,7 +252,7 @@ function ComparedManifest(dirStructure, dirsComparing, settings_){
             this.dirStructure.manOfDirAsync(LAUNCHER_DIR).then(local_manif=>{
                 local_manif = {launcher: local_manif}
                 console.log("ComparedManifest: local_manif=",local_manif)
-                const mans_diff = this.dirsComparing.compare(local_manif, remote_manif);
+                const mans_diff = this.dirsComparing.compare(local_manif, remote_manif, this.is_keep_old_files);
                 console.log("ComparedManifest: on event: mans_diff=",JSON.stringify(mans_diff));
                 const is_changes_exist = (Object.keys(mans_diff).length>0) ? true : false;
                 socket.emit(ev_name, {is_changes: is_changes_exist});
@@ -265,7 +268,7 @@ function ComparedManifest(dirStructure, dirsComparing, settings_){
         return new Promise((resolve, reject)=>{
             this.dirStructure.manOfDirAsync(LAUNCHER_DIR).then(local_manif=>{
                 local_manif = {launcher: local_manif}
-                const mans_diff = this.dirsComparing.compare(local_manif, remote_manif);
+                const mans_diff = this.dirsComparing.compare(local_manif, remote_manif, this.is_keep_old_files);
                 console.log("ComparedManifest.mansDiff(): mans_diff=",JSON.stringify(mans_diff));
                 resolve(mans_diff);
             }).catch(err=>{
@@ -274,7 +277,6 @@ function ComparedManifest(dirStructure, dirsComparing, settings_){
             })
         });
     }
-
     this.current=()=>{return this.curMan}
 }
 function DirStructure(){
@@ -323,29 +325,35 @@ function DirStructure(){
             const result = {};
             let pending = paths_data.length;
             paths_data.forEach(path_data=>{
-                this.manOfDirAsync(path_data.path).then(res=>{
-                    result[path_data.name] = res;
-                    if(!--pending){resolve(result)}
-                }).catch(err=>{
-                    console.log("DirStructure.allMansAsync() Error: ", err);
-                    if(!--pending){resolve(result)}
-                })
+                if(path_data==undefined){
+                    if(!--pending){return resolve(result);}
+                }else{
+                    this.manOfDirAsync(path_data.path).then(res=>{
+                        result[path_data.name] = res;
+                        if(!--pending){resolve(result)}
+                    }).catch(err=>{
+                        console.log("DirStructure.allMansAsync() Error: ", err);
+                        if(!--pending){resolve(result)}
+                    });
+                }
             });
             setTimeout(()=>{reject("DirStructure.allMansAsync(): timeout Error!")},5000);
         });
     }
 }
 function DirsComparing(){
-    this.compare=(local_man, remote_man)=>{
+    this.compare=(local_man, remote_man, is_keep_old_files)=>{
         console.log();
         const result = {};
         for(let man in local_man){
-            const comparedDirs = this.compare2Dirs(local_man[man], remote_man[man]);
-            if(Object.keys(comparedDirs).length>0){result[man] = comparedDirs;}
+            const comparedDirs = this.compare2Dirs(remote_man[man], local_man[man], is_keep_old_files);
+            if(Object.keys(comparedDirs).length>0){
+                result[man] = comparedDirs;
+            }
         }
         return result;
     }
-    this.compare2Dirs=(next_man, prev_man)=>{
+    this.compare2Dirs=(next_man, prev_man, is_keep_old_files)=>{
         //@ next_man = {controller:[], launcher:[], other:[]}
         //console.log("DirsComparing.comparing(): next_man=",next_man);
         const new_files = find_new_files(next_man, prev_man);
@@ -354,7 +362,9 @@ function DirsComparing(){
         const answer = {}
         if(new_files.length>0) answer.new_files = new_files;
         if(files_to_change.length>0) answer.files_to_change = files_to_change;
-        if(old_files.length>0) answer.old_files = old_files;
+        if(!is_keep_old_files){
+            if(old_files.length>0) answer.old_files = old_files;
+        }
         return answer;
         //@ arrays intersection
         //@ let intersection = arrA.filter(x => arrB.includes(x));
@@ -428,7 +438,7 @@ function KilledPartner(){
     }
     this.kill_by_pid=(pid)=>{
         try { 
-            process.kill(list[i].pid);
+            process.kill(list[i][pid]);
         } catch(ex) {
             console.log("KilledPartner.kill_by_pid() Error: ", ex);
         }
@@ -437,11 +447,13 @@ function KilledPartner(){
 function UpdatedFiles(settings_, comparedManifest_){
     this.comparedManifest = glob[comparedManifest_] || {}
     this.settings = glob[settings_].read() || {}
-    const LAUNCHER_DIR = this.settings.local_dir_launcher;
+    const LAUNCHER_DIR = __dirname + this.settings.local_dir_launcher;
     const REMOTE_DIR = this.settings.remote_dir;
     //console.log("UpdatedFiles.constr(): glob=",Object.keys(glob));
-    this.DELETE_OLD_FILES = false;
+    //@ this flag
+    this.is_keep_old_files = true;
     this.run=(ev_name, socket)=>{
+        console.log("UpdatedFiles.run()...");
         socket.on(ev_name, (remote_manif)=>{
             //@----Check exception----
             if(Object.keys(this.settings).length==0){
@@ -450,7 +462,8 @@ function UpdatedFiles(settings_, comparedManifest_){
             }
             //@-------------------
             this.comparedManifest.mansDiff(remote_manif).then(diff=>{
-                this.sync_dirs(diff).then(res=>{
+                console.log("UpdatedFiles.run(): diff=",diff);
+                this.sync_dirs(diff, this.is_keep_old_files).then(res=>{
                     console.log("UpdatedFiles: emitting success 'updateFiles' procedure");
                     socket.emit(ev_name, {is_updated: true});
                 }).catch(err=>{
@@ -462,17 +475,16 @@ function UpdatedFiles(settings_, comparedManifest_){
             });
         });
     }
-    this.sync_dirs=(mans_diff)=>{
+    this.sync_dirs=(mans_diff, is_keep_old_files)=>{
         //@ mans_diff can be undefined
         return new Promise((resolve, reject) => {
             //@ dont touch The Old Files!
-            let files_to_write = [];
-            Object.keys(mans_diff["launcher"]).forEach(upd_subtype=>{
-                files_to_write = files_to_write.concat(mans_diff["launcher"][upd_subtype]);
-            });
+            let files_to_write = concat_filelist_to_update(mans_diff, is_keep_old_files);
+            console.log("UpdatedFiles.sync_dirs(): copy_files(): files_to_write=",files_to_write);
+            if(files_to_write.length==0){ return resolve(); }
             this.createEmptyDirs(files_to_write).then(err_names=>{
                 console.log("UpdatedFiles.sync_dirs(): createEmptyDirs(): err_names=",err_names);
-                return copy_files(files_to_write);
+                return this.copy_files(files_to_write, "launcher");
             }).then(err_names=>{
                 console.log("UpdatedFiles.sync_dirs(): copy_files(): err_names=",err_names);
             }).catch(err=>{
@@ -481,10 +493,25 @@ function UpdatedFiles(settings_, comparedManifest_){
             
         });
     }
-    this.copy_files=(files_to_write)=>{
+    function concat_filelist_to_update(mans_diff, is_keep_old_files){
+        const fold_name = "launcher";
+        let files_to_write = [];
+        //@ mans_diff = {launcher: { new_files: [ [Array], [Array] ], old_files: [ [Array] ] } }
+        Object.keys(mans_diff[fold_name]).forEach(subtype=>{
+            if(is_keep_old_files && subtype=="old_files"){}
+            else{
+                files_to_write = files_to_write.concat(mans_diff[fold_name][subtype]);        
+            }
+        });
+        return files_to_write;
+    }
+    this.copy_files=(files_to_write, update_fold_lvl2)=>{
+        console.log("UpdatedFiles.copy_files() files_to_write=",files_to_write);
+        if(!update_fold_lvl2.startsWith("/")){ update_fold_lvl2 = "/"+update_fold_lvl2 }
         return new Promise((resolve, reject) => {
             const FNAME = 0;
             let pending = files_to_write.length;
+            if(pending==0){return resolve();}
             const err_names = [];
             files_to_write.forEach(file_info=>{
                 console.log("copy_files() file_info=",file_info);
@@ -493,12 +520,13 @@ function UpdatedFiles(settings_, comparedManifest_){
                     if (!--pending) { resolve(err_names); }
                 }else{
                     const loc_file = LAUNCHER_DIR+file_info[FNAME] ;
-                    const rem_file = REMOTE_DIR+file_info[FNAME] ;
+                    const rem_file = REMOTE_DIR+update_fold_lvl2+file_info[FNAME] ;
                     console.log("copy_files() loc_file=",loc_file);
                     console.log("copy_files() rem_file=",rem_file);
                     fs.copyFile(rem_file, loc_file, (err)=>{
                         if (err) {
-                            err_names.push(item);
+                            console.log("copy_files() Error=",err);
+                            err_names.push(file_info);
                             if (!--pending) { resolve(err_names); }
                         }   
                         else {
@@ -513,13 +541,14 @@ function UpdatedFiles(settings_, comparedManifest_){
         return new Promise((resolve, reject) => {
             const FNAME = 0;
             let pending = files_to_write.length;
+            if(pending==0){return resolve();}
             const err_names = [];
             files_to_write.forEach(file_info=>{
                 if(file_info[FNAME].endsWith("\\")){
                     const loc_dir = LAUNCHER_DIR+file_info[FNAME] ;
                     console.log("createEmptyDirs() loc_dir=",loc_dir);
                     fs.mkdir(loc_dir, { recursive: true }, (err) => {
-                        if(err) {err_names.push(item);}
+                        if(err) {err_names.push(file_info);}
                         if (!--pending) {resolve(err_names)}
                     })
                 }else if(!--pending){resolve(err_names)}
@@ -572,14 +601,23 @@ function StartedPartner(){
 function DiskSpace(){
     this.run=(ev_name, socket)=>{
         console.log("DiskSpace.run()...");
-        socket.on(ev_name, ()=>{
-			$checkDiskSpace("C:/").then((disk_space) => {
+        socket.on(ev_name, (data)=>{
+            let disk_letter = "C:/";
+            if(typeof data == 'object'){
+                if(data.disk_letter){disk_letter=data.disk_letter}
+            }
+            if(disk_letter.endsWith(":")){
+                disk_letter=disk_letter+"/"
+            }else if(disk_letter.length==1){
+                disk_letter=disk_letter+":/"
+            }
+			$checkDiskSpace(disk_letter).then((disk_space) => {
                 // { free: 12345678, size: 98756432 }
                 console.log("disk_space =",disk_space);
-                socket.emit('diskSpace', {is_error:false, disk_space:disk_space});
+                socket.emit(ev_name, {disk_space:disk_space});
             }).catch((ex)=>{
                 console.log("DiskSpace.run(): $checkDiskSpace Error: ",ex);
-                _socket.emit('disk_space', {is_error:true, error:ex});
+                _socket.emit(ev_name, {is_error:true, error:ex});
             }); 
         });
     }
