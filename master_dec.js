@@ -181,8 +181,13 @@
         }
         //@ msg from inside host cluster to outside Browser
         this.gui_news=(msg)=>{
+            //@ from HostCluster: msg={ msg:'host_table', table: [{md5:""},{md5:""}] };
             if(this.socket){
-                this.socket.emit('gui_news', msg);
+                if(msg == "host_table"){
+                    this.socket.emit('host_table', msg);
+                }else{
+                    this.socket.emit('gui_news', msg);
+                }
             }
         }
     }
@@ -240,6 +245,7 @@
         }
         this.gui_ctrl=(msg)=>{
             console.log("UpdatableHostCluster.gui_ctrl() msg=",msg);
+            this.hostCluster.gui_ctrl(msg);
         }
     }
 
@@ -510,6 +516,17 @@
             _hosts_list.push(agentObj);
             return agentObj;
         }
+        this.gui_ctrl=(msg)=>{
+            console.log("HostCluster.gui_ctrl() msg=",msg);
+            if(msg=='host_table'){
+                const result = _hosts_list.map(host=>{
+                    const res = {};
+                    res.md5 = host.commonMd5();
+                    return res;
+                });
+                this.browserIoClients.gui_news({msg:'host_table', table: result});
+            }
+        }
 	}
 
     function AgentRecognizing(agent_identifiers){
@@ -584,11 +601,9 @@
         this.gui_news=(msg)=>{
             if(this.browserIoClients){
                 msg.md5 = this.commonMd5();
-                if(this.browserIoClients){
-                    this.browserIoClients.gui_news(msg);
-                }else{
-                    console.log("HostAspair.gui_news(): No browserIoClients object ");
-                }
+                this.browserIoClients.gui_news(msg);
+            }else{
+                console.log("HostAspair.gui_news(): No browserIoClients object ");
             }
         }
         this.run=(browserIoClients)=>{
@@ -1168,7 +1183,7 @@
                 creator.gui_news("sending Manifest to compare...");
                 socket.emit('compareManifest', manifest).once('compareManifest', resolve_handler);
                 setTimeout(()=>{
-                    if(!is_ok){ 
+                    if(!this.is_ok){ 
                         creator.gui_news("timeout while comparing the Manifest"); 
                         socket.removeListener("compareManifest",resolve_handler);
                         reject("CompareManifest timeout. ");
@@ -1305,10 +1320,10 @@
         this.cache = undefined;
         this.file=(filepath)=>{
             return new Promise((resolve,reject)=>{
-                if(this.cache){
-                    console.log("return cached file "+filepath);
-                    resolve(this.cache)}
-                else{
+                // if(this.cache){
+                //     console.log("return cached file "+filepath);
+                //     resolve(this.cache)}
+                // else{
                     fs.readFile(path.normalize(filepath), (err, res)=>{
                         if (err) { reject("Server file read error:",err);}
                         else{
@@ -1316,7 +1331,7 @@
                             resolve(res);
                         }
                     });
-                }
+                // }
             });
         }
     }

@@ -487,8 +487,10 @@ function UpdatedFiles(settings_, comparedManifest_){
                 return this.copy_files(files_to_write, "launcher");
             }).then(err_names=>{
                 console.log("UpdatedFiles.sync_dirs(): copy_files(): err_names=",err_names);
+                resolve();
             }).catch(err=>{
                 console.log("UpdatedFiles.sync_dirs(): Error:",err);
+                reject();
             })
             
         });

@@ -130,7 +130,7 @@
 			function connect_to_server()
 			{
 				const myObj = new MyObj();
-				$("#"+"main_div").empty().append(myObj.init());
+				$("#"+"main_div").append(myObj.init());
 				server_ = io.connect(endvr_server_address, {query:{browser_or_agent:"browser"}});
 				server_.on('connect', function()
 				{
@@ -205,12 +205,14 @@
 					a += "</table>";
 					$("#"+"main_div").empty().append(a);
 				});
-				
-				server_.on('gui_news', function(gui_news){
-					console.log("gui_news: ", gui_news);
-					if(gui_news == "the host was born"){
-						const a = this.draw_new_host(gui_news);
-						$("#"+"main_div").append(a);
+				server_.emit('gui_ctrl', 'host_table');
+				server_.on('gui_news', function(data){
+					console.log("gui_news: ", data);
+					if(data.msg == 'host_table'){
+						const a = this.draw_host_table(data);
+					}else if(data.msg == "the host was born"){
+						const a = this.draw_new_host(data);
+						$(".current").append(a);
 					}else{
 
 					}
@@ -222,17 +224,68 @@
 				this.cur_col_index = 0;
 				this.init=()=>{
 					let a = "";
-					a += "<table style = 'width:100%; height:100%'>";
-					//a += "<tr class='current' style='border:1px solid red; width:90%;'>hi</tr>"
-					//a += "<tr class='current'><td><div style='border:1px solid red; width:30%; height:20%;>hi there!</div></td></tr>"
+					a += "<table>";
+					a += "<tr class='current'></tr>"
 					a += "</table>";
 					return a;
 				}
+				this.draw_host_table=(data)=>{
+					this.cur_row_index = 0;
+					this.cur_col_index = 0;
+					var a = "";
+					a += "<table id='host_table' style = 'width:100%; height:100%'>";
+					a += "<tr>";
+					for(var i = 0; i<data.table.length; i++){
+						if(this.cur_col_index == this.max_width){
+							this.cur_col_index = 1;
+							a += "</tr><tr>";
+						}
+						a += "<td valign = 'top'>";
+							a +="<table style = 'border:1px solid red; width:100%;'>";
+								a +="<tr><td colspan = '3'>";
+									a += "host : "+data.table[i].md5;
+								a +="</td></tr>";
+								a +="<tr><td colspan = '3' style = 'border-bottom:1px solid black;'>";
+									a += "info:";
+								a +="</td></tr>";
+							a +="</table>";
+						a += "</td>";
+					}
+					a += "</tr>";
+					a += "</table>";
+					$("#"+"main_div").empty().append(a);
+				}
 				this.draw_new_host=(gui_news)=>{
 					//@ {msg: "the host was born", md5: "6e8bc6f1e3ef10adf9dd98617c133110"}
-
+					console.log("draw_new_host()...");
+					let a = "";
+					a += "<td>";
+						a +="<table style = 'border:1px solid red; width:100%;'>";
+							a +="<tr><td colspan = '3'>";
+								a += "host : ";
+							a +="</td></tr>";
+						a +="</table>";
+					a += "</td>";
+					if(this.cur_col_index == this.max_width){
+						console.log("add on the new line");
+						$('table#host_table').append("<tr>"+a+"</tr>");
+					}else{
+						console.log("add on the current line");
+						$('table#host_table tr:last').append(a);
+					}
 				}
 			}
 		</script>
+		<style type="text/css">
+			TABLE {
+			 /*border-collapse: collapse; */
+			 width: 100%; 
+			}
+			TD {
+			 border: 1px solid black;
+			 text-align: center; /* Выравнивание по центру */
+			 padding: 4px; /* Поля вокруг текста */
+			}
+		   </style>
 	</body>
 </html>
