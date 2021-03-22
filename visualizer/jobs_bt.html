@@ -1,229 +1,79 @@
-<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" 
-							"http://www.w3.org/TR/html4/loose.dtd">
-		  
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml">
 	<head>
 		<meta http-equiv="content-type" content="text/html;charset=UTF-8" />
 		<meta name="viewport" content="width=320, user-scalable=0, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0" />
 		<title>Relay_Control</title>
-		
 		<script type="text/javascript" src="socket.js"></script>
 		<script type="text/javascript" src="engine.js"></script>
 		<script type="text/javascript" src="core.js"></script>
 		<script type="text/javascript" src="browser_detect.js"></script>
-		
 	</head>
-	
 	<body style = 'margin:0px;' >
-		
 		<div id = "nav_div" style = "position:relative; overflow:hidden; ">nav menu</div>
 		<div id = "main_div" style = "position:relative;overflow:hidden; text-align: center; display: table-cell; vertical-align: middle; "></div>
-		
 		<script>
 			document.body.onselectstart = function(){return false;}
 			document.body.ondragstart = function(){return false;}			
-			
 			var endvr_server_address = "http://192.168.0.110:55999";
-			
-			
-			onload = function()
-			{
+			onload = function(){
 				console.log("onload");
 				BrowserDetect.init();
-				page_constructor();
-				connect_to_server();
-				
+				//page_constructor();
+				//connect_to_server();
 				var ww = $(window).width();
 				var wh = $(window).height();
-				
 				$("#"+"nav_div").width(parseInt(ww*0.98)).height(parseInt(wh*.05)).css("left", parseInt(5)+"px").css("top", parseInt(0)+"px").css("border","1px solid green");
-
-				$("#"+"nav_div").append(RENDER.nav_button("show JBT"));
-
+				$("#main_div").append(my_table_2());
+				setTimeout(()=>{
+					const sibl = $($("table#fuck tr")[0]).siblings();
+					console.log("sibl="+sibl);
+					$(sibl[sibl.length-1]).append("<td>second</td>")
+					//$($("table#fuck tr")[0]).append("<td>second</td>")
+				},10000);
 				$("#"+"main_div").width(parseInt(ww)).height(parseInt(wh*.95)).css("left", parseInt(0)+"px").css("top", parseInt(0)+"px");
-				
 				$("#"+"main_div").bind({
 					click: function() {},
-					mouseenter: function() 
-					{
+					mouseenter: function(){
 						$("#"+"main_div").css("backgroundColor", "#fbfbfb");
 					},
-					mouseleave: function() 
-					{
+					mouseleave: function(){
 						$("#"+"main_div").css("backgroundColor", "#ffffff");
 					}
 				});
-
-
 			}
-			
-			window.onresize = function()
-			{
-				var ww = $(window).width();
-				var wh = $(window).height();
-				$("#"+"nav_div").width(parseInt(ww*0.98)).height(parseInt(wh*.05)).css("left", parseInt(5)+"px").css("top", parseInt(0)+"px").css("border","1px solid green");
-				$("#"+"main_div").width(parseInt(ww)).height(parseInt(wh)).css("left", parseInt(0)+"px").css("top", parseInt(0)+"px");
-			};
-			
-			var my_socket_id = "";
-			
-			var RENDER = 
-			{
-				center_button: function(btn_name , index){
-					var a = "";
-					a += "<div style = ' width:"+100+"px; height:"+20+"px; box-shadow: 0 4px 2px -2px #dddddd; overflow:hidden; border: 1px solid #dde; margin:auto; display: inline-block;'>";
-						a += "<div class = '"+"render_btn"+"'  id = '"+"process-notepad_starter-"+index+"' style = 'margin: auto; position:absolute; cursor:pointer; width:"+100+"px; height:"+20+"px;line-height:"+20+"px; text-align:center;font-size:16px;' >" +btn_name+ "</div>"
-					a += "</div>";
-					return a;
-				},
-				stop_button: function(btn_name , index, task_name){
-					var a = "";
-					let width = 40, height = 15;
-					let id = "process-stop_repeated_task-"+index+"-"+task_name;
-					a += "<div style = ' width:"+width+"px; height:"+height+"px; box-shadow: 0 4px 2px -2px #dddddd; overflow:hidden; border: 1px solid #dde; margin:auto; '>";
-						a += "<div class = '"+"render_btn"+"'  id = '"+id+"' style = 'margin: auto; position:absolute; cursor:pointer; width:"+width+"px; height:"+height+"px;line-height:"+height+"px; text-align:center;font-size:12px;' >" +btn_name+ "</div>"
-					a += "</div>";
-					return a;
-				},
-				nav_button: function(btn_name){
-					var a = "";
-					var wh = $(window).height();
-					let width = 100, height = wh*.022;
-					let id = "nav-jobs_behavior_templates";
-					a += "<div style = ' width:"+width+"px; height:"+height+"px; box-shadow: 0 4px 2px -2px #dddddd; overflow:hidden; border: 1px solid #dde;  '>";
-						a += "<div class = '"+"render_btn"+"'  id = '"+id+"' style = ' position:absolute; cursor:pointer; width:"+width+"px; height:"+height+"px;line-height:"+height+"px; text-align:center;font-size:16px;' >" +btn_name+ "</div>"
-					a += "</div>";
-					return a;
-				},
-			}
-			
-			function connect_to_server()
-			{
-				server_ = io.connect(endvr_server_address);
-				server_.on('connect', function()
-				{
-					console.log("connected");
-					server_.emit('get_socket_id',"");
-				});
-				
-				server_.on('id_assigned', function(msg)
-				{
-					// this is going to be an array buffer 
-					//alert("got_socket_id: " + msg);
-					my_socket_id = msg;
-				});
-
-				server_.on('jobs_bt_table', function(jobs_bt_table)
-				{					
-					var max_width = 6;
-					var cur_row_index = 0;
-					var cur_col_index = 0;
-					
-					var a = "";
-					
-					a += "<table style = 'width:100%; height:100%'>";
+			function my_table(){
+				let a = "";
+				a += "<table id='fuck'>";
+					a+="<tr>";
+						a+="<td>";
+							a+="hi";
+						a+="</td>";
+					a+="</tr>";
+				a += "</table>";
+				console.log("my_table");
+				return a;
+			}	
+			function my_table_2(){
+				let a = "";
+				a += "<table id='fuck' style = 'width:100%; height:100%'>";
 					a += "<tr>";
-					
-					for(var i = 0; i<agent_table.length; i++)
-					{
-						cur_col_index = cur_col_index + 1;
-						if(cur_col_index == max_width)
-						{
-							cur_col_index = 0;
-							cur_row_index = cur_row_index + 1;
-							a += "</tr><tr>";
-						}
-						
 						a += "<td valign = 'top'>";
 							a +="<table style = 'border:1px solid red; width:100%;'>";
 								a +="<tr><td colspan = '3'>";
-									a += "agent : "+ i;
+									a += "host : ";
 								a +="</td></tr>";
-								
-								a +="<tr><td colspan = '3' style = 'border-bottom:1px solid black;'>";
-									a += agent_table[i][0];
-								a +="</td></tr>";
-								a +="<tr><td colspan = '3' style='align: center'>";
-									a += RENDER.center_button("notepad", i);
-								a +="</td></tr>";
-								a +="<tr><td colspan = '3' style = 'border-bottom:1px solid black;'>";
-								
-								for(var j = 0; j< agent_table[i][7].length; j++)
-								{
-									a +="<tr>";
-									a +="<td>";
-										let task_repeated = agent_table[i][7][j][14];
-										let t_name = agent_table[i][7][j][1];
-										if (task_repeated > 1) {
-											a += RENDER.stop_button('stop', i, t_name);
-										}
-									a +="</td>"
-									a +="<td>";
-										let task_name = agent_table[i][7][j][1];
-										a += task_name + ": ";
-									a +="</td>"
-									a +="<td>";
-										let state = TSTATES[agent_table[i][7][j][2]];
-										a += state;
-									a +="</td>"
-									a +="</tr>";
-								}
-
 							a +="</table>";
 						a += "</td>";
-						
-					}
-					
 					a += "</tr>";
-					a += "</table>";
-					
-					$("#"+"main_div").empty().append(a);
-					
-/*				
-0: Array(8)
-0: "launcher"
-1: "GzhN8f_G4-XEwb_PAAAB"
-2: "45d2ea0b554b0a25e2fb701ded040626"
-3: "::ffff:127.0.0.1"
-4: 9544
-5: 9656
-6: false
-7: Array(3)
-	0: Array(10)
-		0: 1
-		1: "manifest"
-		2: 3
-		3: "[["\\New Text Document.txt",4,"2020-04-14T21:46:02.321Z"]]"
-		4: null
-		5: 2
-		6: "default"
-		7: 1586902231468
-		8: 1586902232158
-		9: 1586902235161
-		length: 10
-		__proto__: Array(0)
-	1: Array(10)
-		0: 2
-		1: "same_md5_agents"
-		2: 3
-		3: "[["launcher","GzhN8f_G4-XEwb_PAAAB","45d2ea0b554b0a25e2fb701ded040626","::ffff:127.0.0.1",9544,9656]]"
-		4: null
-		5: null
-		6: "same_md5_agents"
-		7: 1586902231468
-		8: 1586902238163
-		9: 1586902241168
-		length: 10
-					
-					    TYPE:0, SID:1, MD5:2, IP:3, PID:4, PPID:5, STATE:6, TASKS:7,
-    TID:0, TNAME:1, STAGE:2, RAW:3, ANSWER:4, NEXT_TID:5, TMPL:6, TIMEPUSH:7, TIMESENT:8, TIMEEND:9,
-    FRESH:0, SENT:1, GOT:2, DONE:3, EXTREME:4, ERR:5, BLOCKED:6,
-*/
-				});
+					a += "<tr>";
+						a += "<td>";
+							a+="Vasya";
+						a += "</td>";
+					a += "</tr>";
+				a += "</table>";
+				return a;
 			}
-			
-			
-			
 		</script>
 	</body>
 </html>

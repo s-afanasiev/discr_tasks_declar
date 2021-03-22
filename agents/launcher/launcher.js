@@ -404,7 +404,7 @@ function KilledPartner(){
     }
     this.kill_by_pid=(pid)=>{
         try { 
-            process.kill(list[i].pid);
+            process.kill(pid);
         } catch(ex) {
             console.log("KilledPartner.kill_by_pid() Error: ", ex);
         }

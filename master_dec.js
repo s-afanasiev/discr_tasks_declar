@@ -180,14 +180,10 @@
             })
         }
         //@ msg from inside host cluster to outside Browser
-        this.gui_news=(msg)=>{
-            //@ from HostCluster: msg={ msg:'host_table', table: [{md5:""},{md5:""}] };
+        this.gui_news=(data)=>{
+            //@ from HostCluster: data={ msg:'host_table', table: [{md5:""},{md5:""}] };
             if(this.socket){
-                if(msg == "host_table"){
-                    this.socket.emit('host_table', msg);
-                }else{
-                    this.socket.emit('gui_news', msg);
-                }
+                this.socket.emit('gui_news', data);
             }
         }
     }
@@ -574,43 +570,49 @@
         }
     }
 
-	function HostAsPair(launcher, controller, connectedAgentsThrottle, agentUpdateChain, md5){
+	function HostAsPair(launcher, controller, connectedAgentsThrottle, agentUpdateChain, creator_ids){
         //@ HostAsPair object instantiates by one of Launcher or Controller, so on creation stage we allready know about one of agents and his states
 		this.launcher = launcher;
 		this.controller = controller;
         this.connectedAgentsThrottle = connectedAgentsThrottle;
         this.agentUpdateChain = agentUpdateChain;
-        this.hostMd5 = md5;
+        this.creator_ids = creator_ids;
         this.browserIoClients = undefined; //run()
 		this.is_host_first_time_created_flag = true;
         this.manifest_snapshot = undefined;
         this.is_init_timeout_flag = false;
         this.last_manifest_snapshot=()=>{return this.manifest_snapshot}
-        this.commonMd5=()=>{return this.hostMd5}
+        this.commonMd5=()=>{return this.creator_ids.md5}
+        this.creatorType=()=>{return this.creator_ids.ag_type}
+        this.creatorPid=()=>{return this.creator_ids.pid}
+        this.creatorApid=()=>{return this.creator_ids.apid}
 		this.instance = function(creator_ids){
             console.log("HostAsPair.instance(): creator type is ",creator_ids.ag_type);
             const ag_type = creator_ids.ag_type;
 			return new HostAsPair(
-				this.launcher.instance(ag_type==="launcher"?creator_ids:undefined),
-				this.controller.instance(ag_type==="controller"?creator_ids:undefined),
+				this.launcher.instance((ag_type==="launcher"?creator_ids:undefined), this),
+				this.controller.instance((ag_type==="controller"?creator_ids:undefined), this),
 				this.connectedAgentsThrottle.instance(),
                 this.agentUpdateChain.instance(),
-                creator_ids.md5
+                creator_ids
 			);
 		}
-        this.gui_news=(msg)=>{
-            if(this.browserIoClients){
-                msg.md5 = this.commonMd5();
-                this.browserIoClients.gui_news(msg);
-            }else{
-                console.log("HostAspair.gui_news(): No browserIoClients object ");
+        //@ param data = {msg:"", ag_type:"launcher", obj:<object of Launcher or Controller>}
+        this.gui_news=(data)=>{
+            if(!this.browserIoClients){ return console.log("HostAspair.gui_news(): No browserIoClients object "); }
+            if(data.msg == "host_born"){
+                data.creator_type = this.creatorType();
+                data.creator_pid = this.creatorPid();
+                data.creator_apid = this.creatorApid();
             }
+            data.md5 = this.commonMd5();
+            this.browserIoClients.gui_news(data);
         }
         this.run=(browserIoClients)=>{
             this.browserIoClients = browserIoClients;
-            this.gui_news({msg: "the host was born"});
-            this.launcher.gui_refund(this.browserIoClients, this);
-            this.controller.gui_refund(this.browserIoClients, this);
+            this.gui_news({msg: "host_born"});
+            this.launcher.run(this.browserIoClients, this);
+            this.controller.run(this.browserIoClients, this);
             this.start_init_timeout(3000);
             this.connectedAgentsThrottle.init(this.launcher, this.controller, this.is_init_timeout);
             return this;
@@ -774,8 +776,8 @@
         this.agentUpdateChain = undefined;
         this.agent_socket = undefined;
         this.manifest_snapshot = undefined;
-        this.browserIoClients =undefined; //gui_refund
-        this.host =undefined; //gui_refund
+        this.browserIoClients =undefined; //run
+        this.host =undefined; //run
         //@ input param 'msg' must be String type
         this.gui_news=(msg)=>{
             if(this.host){
@@ -785,7 +787,7 @@
                 this.host.gui_news(agent_msg);
             }
         }
-        this.gui_refund=function(browserIoClients, host){
+        this.run=function(browserIoClients, host){
             this.browserIoClients = browserIoClients;
             this.host = host;
         }
@@ -822,7 +824,7 @@
         this.listenForDisconnect=()=>{
             this.agent_socket.once('disconnect', ()=>{
                 this.switchOnline(false);
-                this.gui_news("agent disconnected");
+                this.gui_news("launcher disconnected");
                 this.agent_socket = undefined;
             });
         }
@@ -875,8 +877,8 @@
         this.agentUpdateChain = undefined;//init()
         this.agent_socket = undefined;
         this.manifest_snapshot = undefined;
-        this.browserIoClients = undefined; //gui_refund
-        this.host = undefined; //gui_refund
+        this.browserIoClients = undefined; //run
+        this.host = undefined; //run
         this.gui_news=(msg)=>{
             if(this.host){
                 const agent_msg = {};
@@ -885,7 +887,7 @@
                 this.host.gui_news(agent_msg);
             }
         }
-        this.gui_refund=function(browserIoClients, host){
+        this.run=function(browserIoClients, host){
             this.browserIoClients = browserIoClients;
             this.host = host;
         }
@@ -931,7 +933,7 @@
         this.listenForDisconnect=()=>{
             this.agent_socket.once('disconnect', ()=>{
                 this.switchOnline(false);
-                this.gui_news("agent disconnected");
+                this.gui_news("controller disconnected");
                 this.agent_socket = undefined;
             });
         }
@@ -1160,7 +1162,7 @@
         this.kill_partner=(socket, pid)=>{
             return new Promise((resolve,reject)=>{
                 const resolve_handler = function(res){resolve(res||{is_killed:true});}
-                socket.emit("kill_partner", {pid}).once("kill_partner", resolve_handler);
+                socket.emit("killPartner", {pid}).once("killPartner", resolve_handler);
                 setTimeout(()=>{
                     socket.removeListener("kill_partner",resolve_handler);
                     reject("KillingPartner: kill_partner timeout. ");

@@ -210,42 +210,66 @@
 					console.log("gui_news: ", data);
 					if(data.msg == 'host_table'){
 						const a = this.draw_host_table(data);
-					}else if(data.msg == "the host was born"){
+					}
+					else if(data.msg == "host_born"){
 						const a = this.draw_new_host(data);
 						$(".current").append(a);
-					}else{
+					}
+					else if(data.msg == "agent_online"){
+						
+					}
+					else if(data.msg == "agent_offline"){
+					}
+					else{
 
 					}
 				}.bind(myObj));
 			}
 			function MyObj(){
-				this.max_width = 4;
+				this.MAX_WIDTH = 4;
 				this.cur_row_index = 0;
 				this.cur_col_index = 0;
+				this.messages = {
+					"host_table": {
+						description:"full table of all the online hosts. Browser requests this on every refresh F5"
+					},
+					"host_born": {
+						description: "new host appears along with human starts launcher.js (or controller.js)",
+						data: {md5:"unique host id", msg:"string - a brief summary of the event"}
+					},
+					"agent_online": {
+						description: "launcher or controller now is online",
+						data: {ag_type: "<launcher || controller>", md5:"unique host id", msg:"a brief summary"}
+					},
+					"agent_offline":"see the same like 'agent_online' above",
+
+				}
 				this.init=()=>{
 					let a = "";
 					a += "<table>";
-					a += "<tr class='current'></tr>"
+					a += "<tr class='base'></tr>"
 					a += "</table>";
 					return a;
 				}
 				this.draw_host_table=(data)=>{
-					this.cur_row_index = 0;
+					this.cur_row = 0;
 					this.cur_col_index = 0;
 					var a = "";
 					a += "<table id='host_table' style = 'width:100%; height:100%'>";
-					a += "<tr>";
-					for(var i = 0; i<data.table.length; i++){
-						if(this.cur_col_index == this.max_width){
+					this.cur_row = this.cur_row + 1;
+					a += "<tr class='base'>";
+						for(var i = 0; i<data.table.length; i++){
+						this.cur_col_index = this.cur_col_index + 1;
+						if(this.cur_col_index == this.MAX_WIDTH){
 							this.cur_col_index = 1;
-							a += "</tr><tr>";
+							a += "</tr><tr class='base'>";
 						}
-						a += "<td valign = 'top'>";
+						a += "<td valign='top'>";
 							a +="<table style = 'border:1px solid red; width:100%;'>";
-								a +="<tr><td colspan = '3'>";
+								a +="<tr><td colspan = '2'>";
 									a += "host : "+data.table[i].md5;
 								a +="</td></tr>";
-								a +="<tr><td colspan = '3' style = 'border-bottom:1px solid black;'>";
+								a +="<tr><td colspan = '2' style = 'border-bottom:1px solid black;'>";
 									a += "info:";
 								a +="</td></tr>";
 							a +="</table>";
@@ -255,23 +279,35 @@
 					a += "</table>";
 					$("#"+"main_div").empty().append(a);
 				}
-				this.draw_new_host=(gui_news)=>{
-					//@ {msg: "the host was born", md5: "6e8bc6f1e3ef10adf9dd98617c133110"}
+				this.draw_new_host=(data)=>{
+					//@ {msg: "host_born", md5: "6e8bc6f1e3ef10adf9dd98617c133110", creator_type:"launcher", creator_pid:7742, creator_apid:0}
 					console.log("draw_new_host()...");
 					let a = "";
-					a += "<td>";
+					a += "<td valign='top'>";
 						a +="<table style = 'border:1px solid red; width:100%;'>";
-							a +="<tr><td colspan = '3'>";
-								a += "host : ";
+							a +="<tr><td colspan = '2'>";
+								a += "host : "+data.md5;
 							a +="</td></tr>";
+							a +="<tr>"
+								a += "<td colspan = '1' style = 'border-bottom:1px solid black;'>";
+									a += "<div>creator_type: "+data.creator_type+"</div>";
+									a += "<div>creator_pid: "+data.creator_pid+"</div>";
+									a += "<div>creator_apid: "+data.creator_apid+"</div>";
+								a +="</td>";
+								a += "<td colspan = '1' style = 'border-bottom:1px solid black;'>";
+									a += "<div>second agent: controller?</div>";
+								a +="</td>";
+							a +="</tr>";
 						a +="</table>";
 					a += "</td>";
-					if(this.cur_col_index == this.max_width){
-						console.log("add on the new line");
-						$('table#host_table').append("<tr>"+a+"</tr>");
+					this.cur_col_index = this.cur_col_index + 1;
+					if(this.cur_col_index >= this.MAX_WIDTH){
+						this.cur_col_index = 1;
+						console.log("move to the new line");
+						$('#host_table').append("<tr>"+a+"</tr>");
 					}else{
 						console.log("add on the current line");
-						$('table#host_table tr:last').append(a);
+						$('#host_table tr.base:last').append(a);
 					}
 				}
 			}
@@ -282,7 +318,7 @@
 			 width: 100%; 
 			}
 			TD {
-			 border: 1px solid black;
+			 /*border: 1px solid black;*/
 			 text-align: center; /* Выравнивание по центру */
 			 padding: 4px; /* Поля вокруг текста */
 			}
