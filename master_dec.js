@@ -516,8 +516,10 @@
             console.log("HostCluster.gui_ctrl() msg=",msg);
             if(msg=='host_table'){
                 const result = _hosts_list.map(host=>{
-                    const res = {};
+                    let res = {};
                     res.md5 = host.commonMd5();
+                    const add_info = host.gui_ctrl(msg);
+                    res = Object.assign(res, add_info);
                     return res;
                 });
                 this.browserIoClients.gui_news({msg:'host_table', table: result});
@@ -597,6 +599,24 @@
                 creator_ids
 			);
 		}
+        this.gui_ctrl=(data)=>{
+            if(data == 'host_table'){
+                const result = {};
+                if(this.launcher.isOnline()){
+                    result.launcher = {}
+                    result.launcher.agent_type = this.launcher.agentType();
+                    result.launcher.agent_pid = this.launcher.agentPid();
+                    result.launcher.agent_apid = this.launcher.agentApid();
+                }
+                if(this.controller.isOnline()){
+                    result.controller = {}
+                    result.controller.agent_type = this.controller.agentType();
+                    result.controller.agent_pid = this.controller.agentPid();
+                    result.controller.agent_apid = this.controller.agentApid();
+                }
+                return result;
+            } else return {};
+        }
         //@ param data = {msg:"", ag_type:"launcher", obj:<object of Launcher or Controller>}
         this.gui_news=(data)=>{
             if(!this.browserIoClients){ return console.log("HostAspair.gui_news(): No browserIoClients object "); }
@@ -783,7 +803,11 @@
             if(this.host){
                 const agent_msg = {};
                 agent_msg.msg = msg;
-                agent_msg.ag_type = this.agent_ids.ag_type;
+                agent_msg.agent_type = this.agentType();
+                if(msg == 'agent_online'){
+                    agent_msg.agent_pid = this.agentPid();
+                    agent_msg.agent_apid = this.agentApid();
+                }
                 this.host.gui_news(agent_msg);
             }
         }
@@ -792,8 +816,9 @@
             this.host = host;
         }
         //@----------------------------
-        this.agType=()=>{return this.agent_ids.ag_type}
-        this.look_agent_pid=()=>{return this.agent_ids.pid}
+        this.agentType=()=>{return (this.agent_ids) ? this.agent_ids.ag_type : "launcher"}
+        this.agentPid=()=>{return (this.agent_ids) ? this.agent_ids.pid : undefined}
+        this.agentApid=()=>{return (this.agent_ids) ? this.agent_ids.apid : undefined}
         this.socketio=()=>{return this.agent_socket}
         //@----------------------------
         this.is_online_flag = false;
@@ -818,7 +843,7 @@
             console.log("Launcher.welcomeAgent(): partner online:",partner.isOnline());
             //@------------------------------------
             this.switchOnline(true);
-            this.gui_news("agent is online!");
+            this.gui_news("agent_online");
 			this.listenForDisconnect();
 		}
         this.listenForDisconnect=()=>{
@@ -883,7 +908,11 @@
             if(this.host){
                 const agent_msg = {};
                 agent_msg.msg = msg;
-                agent_msg.ag_type = this.agent_ids.ag_type;
+                agent_msg.agent_type = this.agentType();
+                if(msg == 'agent_online'){
+                    agent_msg.agent_pid = this.agentPid();
+                    agent_msg.agent_apid = this.agentApid();
+                }
                 this.host.gui_news(agent_msg);
             }
         }
@@ -892,8 +921,9 @@
             this.host = host;
         }
         //@----------------------------
-        this.agType=()=>{return this.agent_ids.ag_type}
-        this.look_agent_pid=()=>{return this.agent_ids.pid}
+        this.agentType=()=>{return (this.agent_ids) ? this.agent_ids.ag_type : "controller"}
+        this.agentPid=()=>{return (this.agent_ids) ? this.agent_ids.pid : undefined}
+        this.agentApid=()=>{return (this.agent_ids) ? this.agent_ids.apid : undefined}
         this.socketio=()=>{return this.agent_socket}
         //@----------------------------
         this.is_online_flag = false;
@@ -927,7 +957,7 @@
 			this.manifest_snapshot = manifest_snapshot;
             this.partner = partner;
             this.switchOnline(true);
-            this.gui_news("agent is online!");
+            this.gui_news("agent_online");
             this.listenForDisconnect();
 		}
         this.listenForDisconnect=()=>{
@@ -1134,12 +1164,12 @@
                     }
                     const cond1 = compare_msg.is_changes; //changes must exist, otherwise no need to kill
                     const cond2 = (partner) ? partner.isOnline() : false; //partner must be online, otherwise nothing to kill
-                    const cond3 = (creator.agType()=="launcher") ? partner.isSpecialMode() : false; // if special mode kinda 'render' when we can't kill
+                    const cond3 = (creator.agentType()=="launcher") ? partner.isSpecialMode() : false; // if special mode kinda 'render' when we can't kill
                     console.log("KillingPartner: conditions:",cond1,cond2,!cond3);
                     if(cond1 & cond2 & !cond3){
-                        creator.gui_news("sending kill signal with pid "+partner.look_agent_pid());
-                        console.log("KillingPartner: sending kill signal, pid=",partner.look_agent_pid());
-                        this.kill_partner(socket, partner.look_agent_pid()).then(kill_msg=>{
+                        creator.gui_news("sending kill signal with pid "+partner.agentPid());
+                        console.log("KillingPartner: sending kill signal, pid=",partner.agentPid());
+                        this.kill_partner(socket, partner.agentPid()).then(kill_msg=>{
                             //@ TODO: data like 'is_error' can get lost by next chained msg
                             creator.gui_news("the partner was killed");
                             const extended_msg = Object.assign(compare_msg, kill_msg);

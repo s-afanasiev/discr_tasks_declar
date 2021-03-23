@@ -1,7 +1,7 @@
 {
-	"client_socket": "http://seasea:55999",
+	"client_socket": "http://ita52:55999",
 	"local_dir_controller": "/../controller",
 	"local_dir_other": "/../other",
 	"local_dir_launcher": "/../launcher",
-	"remote_dir": "\\\\seasea/JAM/discrete_tasks/discrete_tasks_v119"
+	"remote_dir": "\\\\ita52/TMP/update"
 }

@@ -59,6 +59,7 @@ function Controller(identifiers, socketIoHandlers){
     this.socketIoHandlers=socketIoHandlers;
     this.run=()=>{
         this.identifiers.prepare().then(agent_ids=>{
+            setInterval(()=>{console.log("my md5=", agent_ids.md5)}, 60000);
             this.socketIoHandlers.run(agent_ids);
         }).catch(err=>{
             console.log("Launcher.run(): this.identifiers.prepare() Error: ", err);

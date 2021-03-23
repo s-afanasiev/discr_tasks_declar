@@ -259,57 +259,73 @@
 					this.cur_row = this.cur_row + 1;
 					a += "<tr class='base'>";
 						for(var i = 0; i<data.table.length; i++){
-						this.cur_col_index = this.cur_col_index + 1;
-						if(this.cur_col_index == this.MAX_WIDTH){
-							this.cur_col_index = 1;
-							a += "</tr><tr class='base'>";
+							this.cur_col_index = this.cur_col_index + 1;
+							if(this.cur_col_index == this.MAX_WIDTH){
+								this.cur_col_index = 1;
+								a += "</tr><tr class='base'>";
+							}
+							a += this.one_host(data.table[i]);
 						}
-						a += "<td valign='top'>";
-							a +="<table style = 'border:1px solid red; width:100%;'>";
-								a +="<tr><td colspan = '2'>";
-									a += "host : "+data.table[i].md5;
-								a +="</td></tr>";
-								a +="<tr><td colspan = '2' style = 'border-bottom:1px solid black;'>";
-									a += "info:";
-								a +="</td></tr>";
-							a +="</table>";
-						a += "</td>";
-					}
 					a += "</tr>";
 					a += "</table>";
 					$("#"+"main_div").empty().append(a);
 				}
-				this.draw_new_host=(data)=>{
-					//@ {msg: "host_born", md5: "6e8bc6f1e3ef10adf9dd98617c133110", creator_type:"launcher", creator_pid:7742, creator_apid:0}
-					console.log("draw_new_host()...");
+				this.one_host=(data)=>{
 					let a = "";
-					a += "<td valign='top'>";
+					a += "<td valign='top' class = 'host' id='"+data.md5+"'>";
 						a +="<table style = 'border:1px solid red; width:100%;'>";
 							a +="<tr><td colspan = '2'>";
 								a += "host : "+data.md5;
 							a +="</td></tr>";
-							a +="<tr>"
-								a += "<td colspan = '1' style = 'border-bottom:1px solid black;'>";
-									a += "<div>creator_type: "+data.creator_type+"</div>";
-									a += "<div>creator_pid: "+data.creator_pid+"</div>";
-									a += "<div>creator_apid: "+data.creator_apid+"</div>";
-								a +="</td>";
-								a += "<td colspan = '1' style = 'border-bottom:1px solid black;'>";
-									a += "<div>second agent: controller?</div>";
-								a +="</td>";
+							a +="<tr class = 'agents'>";
+								a +="<td class = 'launcher'>"
+									if(data.launcher){
+										a += this.prepare_agent_data(data, "launcher");
+									}
+								a += "</td>";
+								a +="<td class = 'controller'>";
+									if(data.controller){
+										a += this.prepare_agent_data(data, "controller");
+									}
+								a += "</td>";
 							a +="</tr>";
 						a +="</table>";
-					a += "</td>";
+					a +="</td>";
+					return a;
+				}
+				this.prepare_agent_data=(data, type)=>{
+					//@ 1. check if such host exist. For example, event 'agent online' coomes faster than 'host_born'
+					//@ 2. check is such agent already appended to this host
+					let a = "";
+					a += "<div>agent: "+data[type].agent_type+"</div>";
+					a += "<div>pid: "+data[type].agent_pid+"</div>";
+					a += "<div>apid: "+data[type].agent_apid+"</div>";
+					return a;
+				}
+				//@ When 'host_born' event happens, its brings also one agent info, which was created this host
+				this.agent_creator=(data)=>{
+					let a = "";
+					a += "<div>agent: "+data.creator_type+"</div>";
+					a += "<div>pid: "+data.creator_pid+"</div>";
+					a += "<div>apid: "+data.creator_apid+"</div>";
+					return a;
+				}
+				this.draw_new_host=(data)=>{
+					//@ {msg: "host_born", md5: "6e8bc6f1e3ef10adf9dd98617c133110", creator_type:"launcher", creator_pid:7742, creator_apid:0}
+					console.log("draw_new_host()...");
+					const a_one_host = this.one_host(data);
 					this.cur_col_index = this.cur_col_index + 1;
 					if(this.cur_col_index >= this.MAX_WIDTH){
-						this.cur_col_index = 1;
 						console.log("move to the new line");
-						$('#host_table').append("<tr>"+a+"</tr>");
+						this.cur_col_index = 1;
+						$('#host_table').append("<tr>"+a_one_host+"</tr>");
 					}else{
 						console.log("add on the current line");
-						$('#host_table tr.base:last').append(a);
+						$('#host_table tr.base:last').append(a_one_host);
 					}
+					$('td#'+data.md5+' td.'+data.data.creator_type).append(this.agent_creator(data));
 				}
+				this.agent_connected=(data)=>{}
 			}
 		</script>
 		<style type="text/css">

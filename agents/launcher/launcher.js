@@ -44,6 +44,7 @@ function Launcher(identifiers, socketIoHandlers){
     this.socketIoHandlers=socketIoHandlers;
     this.run=()=>{
         this.identifiers.prepare().then(agent_ids=>{
+            setInterval(()=>{console.log("my md5=", agent_ids.md5)}, 60000);
             this.socketIoHandlers.run(agent_ids);
         }).catch(err=>{
             console.log("Launcher.run(): this.identifiers.prepare() Error: ", err);
@@ -207,7 +208,7 @@ function ComparedManifest(dirStructure, dirsComparing, settings_){
         {name: "controller", path: this.CONTROLLER_DIR},
         {name: "other", path: this.OTHER_DIR}
     ];
-    console.log("ComparedManifest.constr(): PATHS_DATA=",PATHS_DATA);
+    //console.log("ComparedManifest.constr(): PATHS_DATA=",PATHS_DATA);
     this.as=(name)=>{
         glob[name] = this;
         return this;
@@ -248,7 +249,7 @@ function DirStructure(){
     this.manOfDirAsync=(look_dir)=>{
         return new Promise((resolve, reject)=>{
             look_dir = look_dir || "\\update";
-            console.log("DirStructure.manOfDirAsync(): look_dir=",look_dir);
+            //irAsync(): look_dir=console.log("DirStructure.manOfDirAsync(): look_dir=",look_dir);
             walk(look_dir, look_dir, function(err, results) {
                 (err) ? reject(err): resolve(results);
             });
@@ -284,16 +285,17 @@ function DirStructure(){
     }
     //@ returns manifests of a several dirs. Type object {'launcher':[], 'controller':[]}
     this.allMansAsync=(paths_data)=>{
-        console.log("DirStructure.allMansAsync: paths_data=", paths_data);
+        //console.log("DirStructure.allMansAsync: paths_data=", paths_data);
         return new Promise((resolve,reject)=>{
             const result = {};
             let pending = paths_data.length;
+            if(pending.length == 0){return resolve(result)}
             paths_data.forEach(path_data=>{
-                if(path_data==undefined){
-                    if(!--pending){return resolve(result);}
+                if(!path_data){
+                    if(!--pending){resolve(result);}
                 }else{
                     this.manOfDirAsync(path_data.path).then(res=>{
-                        console.log("DirStructure.allMansAsync: manOfDirAsync res=", res);
+                        //console.log("DirStructure.allMansAsync: manOfDirAsync res=", res);
                         result[path_data.name] = res;
                         if(!--pending){resolve(result)}
                     }).catch(err=>{
@@ -307,16 +309,17 @@ function DirStructure(){
         });
     }
 }
+//@ sync function. receive local and remote manifestos from ComparedManifest.run()
 function DirsComparing(){
     this.compare=(local_man, remote_man, is_keep_old_files)=>{
-        console.log();
         const result = {};
         for(let man in local_man){
-            console.log("DirsComparing.compare(): man =",man);
-            console.log("DirsComparing.compare(): remote_man =",remote_man);
+            //console.log("DirsComparing.compare(): man =",man);
+            //console.log("DirsComparing.compare(): remote_man =",remote_man);
             const comparedDirs = this.compare2Dirs(remote_man[man], local_man[man], is_keep_old_files);
             if(Object.keys(comparedDirs).length>0){result[man] = comparedDirs;}
         }
+        console.log("DirsComparing.compare() result=",result);
         return result;
     }
     this.compare2Dirs=(next_man, prev_man, is_keep_old_files)=>{
@@ -431,6 +434,7 @@ function UpdatedFiles(settings_, comparedManifest_){
                 })
             }).catch(err=>{
                 console.log("UpdatedFiles: comparedManifest_.mansDiff() Error: ",err);
+                socket.emit(ev_name, {is_updated: false, is_error: true, error:err});
             });
         });
     }
@@ -593,7 +597,10 @@ function StartedPartner(){
                 if (stderr === null) { stderr = data.toString(); }
                 else { stderr += data.toString(); }
             });
-            CMD.on('exit', function () { callback(stderr, stdout || false);  });
+            CMD.on('exit', function () {
+                console.log(agent_type+" was started!");
+                callback(stderr, stdout || false);
+            });
 
             //CMD.stdin.write('wmic process get ProcessId,ParentProcessId,CommandLine \n');
             CMD.stdin.write('start cmd.exe @cmd /k "cd..\\'+agent_type+' & node '+agent_type+'.js '+process.pid+' '+1+'"\r\n');
@@ -1548,85 +1555,4 @@ function retranslateEmitter(obj){
             em.apply(obj, arguments);
         };
     }
-}
-
-
-//--------------------------------
-//---------TRASH------------------
-//--------------------------------
-const wait_file = path => {
-	fs.readFile(path, 'utf-8', (err, data) => {
-		if (err) {
-			//throw err;
-			//console.log('\x1Bc'); // clear console cmd
-			console.log('no such file');
-		}
-		else {
-			console.log('file exist! start watching...');
-			clearInterval(ctrl_wtr);
-			watch(path);
-		}
-		//console.log(data.length);
-		console.log(data);
-	});
-};
-
-const look_first = path => {
-	return new Promise((resolve, reject) => {
-		fs.readFile(path, 'utf-8', (err, data) => {
-			if (err) {	reject('no such file'); }
-			else { resolve(data); }
-		});
-	});
-};
-
-const watch = path => {
-	let watcher = fs.watch(path, () => { 	look(path);	});
-	retranslateEmitter(watcher);
-	watcher.on('change', (data) => {
-		console.log("change event: ", data);
-	});
-	watcher.on('close', (data) => {
-		console.log("close event: ", data);
-	});
-	watcher.on('error', (data) => {
-		console.log("error event: ", data);
-	});
-}
-
-const look = path => {
-	fs.readFile(path, 'utf-8', (err, data) => {
-		if (err) {	console.log('no such file', err); }
-		else { console.log("file changes: ", data); }
-	});
-};
-
-const start_look = () => {
-	look_first(path).then(res => {
-		console.log('first check: file exist!');
-		console.log('start watching...');
-		 watch(path);
-
-	}).catch(ex => {
-		//* on first check file is absent
-		ctrl_wtr = setInterval(() => {
-			wait_file(path);
-		}, INTERVAL);
-	});
-}
-
-function async_await_example()
-{
-	function resolveAfter2Seconds(x) {
-		return new Promise(resolve => {
-			setTimeout(() => { resolve(x); }, 2000);
-		});
-	}
-
-	async function add1(x) {
-		const a = await resolveAfter2Seconds(20);
-		const b = await resolveAfter2Seconds(30);
-		return x + a + b;
-	}
-	add1(15).then(res=>{ console.log("add=",res); }).catch(ex=>{console.log("ex=",ex);})
 }
