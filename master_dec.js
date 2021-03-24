@@ -259,7 +259,7 @@
         this.dirStructure=dirStructure;
         this.dirsComparing=dirsComparing;
         this.path = '';
-        this.timer = 60000;
+        this.timer = LOOK_UPDATE_INTERVAL || 60000;
         this.prev_mans = {};
 		//@ stumb for new connected agents, give them something not null
 		this.current = ()=>{ return this.prev_mans };
@@ -271,8 +271,9 @@
         }        
         this.nextManifest = function(){
             this.dirStructure.allMansAsync(update_paths).then(next_mans=>{
-                //console.log("Manifest.nextManifest(): next_mans=",next_mans);
+                console.log("Manifest.nextManifest(): next_mans=",next_mans);
                 const dirs_compare_diff = this.dirsComparing.compare(next_mans, this.prev_mans);
+                console.log("Manifest.nextManifest(): dirs_compare_diff=",dirs_compare_diff);
                 if(dirs_compare_diff) {
                     console.log("Manifest.nextManifest():CHANGES EXIST!");
                     this.prev_mans = next_mans;
@@ -704,9 +705,9 @@
                 //@ first host init and agents update was finished.Now its a new agents connections and new singles comparings.
                 if(this.is_init_timeout()){
                     this[ag_type].compareCurManifest(this.manifest_snapshot).then(res=>{
-                        console.log("HostAsPair.welcomeAgent(): Agent updates succesfully");
+                        console.log("HostAsPair.welcomeAgent(): is_init_timeout()",res);
                     }).catch(err=>{
-                        console.log("HostAsPair.welcomeAgent() Error2: ", err);
+                        console.log("HostAsPair.welcomeAgent() after is_init_timeout() Error2: ", err);
                     });
                 }
             }else{
@@ -721,12 +722,14 @@
             if(man_regular.controller && man_regular.launcher){
                 this.launcher.propagateManifest([man_regular.controller,man_regular.other]).then(res=>{
                     //@res = {is_cnahges:false, is_killed:false, is_updated:false, is_started:true}
-                    if(res.is_killed == false){
+                    if(!res.error){
                         this.controller.propagateManifest(man_regular.launcher).then(res=>{
                             console.log("after propagateManifest both agents has updates each other");
                         }).catch(err=>{
                             console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.controller.propagateManifest() Error 1: ",err);
                         })
+                    }else{
+                        console.log("HostAsPair.propagateManifest() after launcher propagating error:",res.error);
                     }
                 }).catch(err=>{
                     console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.launcher.propagateManifest() Error 1: ",err);
@@ -875,22 +878,27 @@
         //@ launher must check controller's work Mode (normal or special ?)
         this.propagateManifest=(man)=>{
             //@ Special Mode - E.g. COntroller Doing a Render
-            if(this.controller && this.controller.isSpecialMode()){
-                this.switchUpdateMode(true);
-                this.gui_news("update mode on");
-            man_for_controller.launcher = man.launcher;
-            new AgentUpdateWithoutCompare(this, man_for_controller).run(this.socketio(), this.partner).then(res=>{
-                resolve(res);
-            }).catch(err=>{
-                reject(err);
-            }).finally(()=>{
-                this.switchUpdateMode(false);
-                this.gui_news("update mode off");
-            })
-            }else{
-                console.log("Launcher.propagateManifest(): controller work mode is:"+this.controller.work_mode);
-                this.gui_news("can not update the Controller in Special mode");
-            }
+            return new Promise((resolve,reject)=>{
+                if(this.partner && !this.partner.isSpecialMode()){
+                    this.switchUpdateMode(true);
+                    this.gui_news("update mode on");
+                    const man_for_launcher = {};
+                    man_for_launcher.controller = man.controller;
+                    man_for_launcher.other = man.other;
+                    new AgentUpdateWithoutCompare(this, man_for_launcher).run(this.socketio(), this.partner).then(res=>{
+                        resolve({is_patched: true});
+                    }).catch(err=>{
+                        reject({is_patched: false, error: err});
+                    }).finally(()=>{
+                        this.switchUpdateMode(false);
+                        this.gui_news("update mode off");
+                    })
+                }else{
+                    console.log("Launcher.propagateManifest(): can not update the Controller in Special mode");
+                    this.gui_news("can not update the Controller in Special mode");
+                    resolve({is_patched: false, details: "special mode"});
+                }
+            });
         }
     }
     //@------------------Controller-----------------------
@@ -987,18 +995,21 @@
             });
         }
         this.propagateManifest=(man)=>{
-            this.switchUpdateMode(true);
-            this.gui_news("update mode on");
-            man_for_controller.launcher = man.launcher;
-            new AgentUpdateWithoutCompare(man_for_controller).run(this.socketio(), this.partner).then(res=>{
-                resolve(res);
-            }).catch(err=>{
-                reject(err);
-            }).finally(()=>{
-                this.switchUpdateMode(false);
-                this.gui_news("update mode off");
-                this.doNormalWork();
-            })
+            return new Promise((resolve,reject)=>{
+                this.switchUpdateMode(true);
+                this.gui_news("update mode on");
+                const man_for_controller = {};
+                man_for_controller.launcher = man.launcher;
+                new AgentUpdateWithoutCompare(this, man_for_controller).run(this.socketio(), this.partner).then(res=>{
+                    resolve(res);
+                }).catch(err=>{
+                    reject(err);
+                }).finally(()=>{
+                    this.switchUpdateMode(false);
+                    this.gui_news("update mode off");
+                    this.doNormalWork();
+                })
+            });
         }
         this.doNormalWork=()=>{
             if(this.isSpecialMode()){
@@ -1043,7 +1054,7 @@
             return new Promise((resolve,reject)=>{
                 new StartingPartner(
                     new UpdatingFiles(
-                        new KillingPartner()
+                        new KillingPartnerWithoutComparing()
                     )
                 ).run(socket, creator, partner, this.manifest).then(res=>{
                     resolve(res);
@@ -1057,23 +1068,37 @@
         this.updatingFiles=updatingFiles;
         //this.instance=()=>{return new StartingPartner(this.updatingFiles.instance())}
         this.run=(socket, creator, partner, manifest)=>{
+            console.log("StartingPartner.run()...");
             return new Promise((resolve,reject)=>{
                 this.updatingFiles.run(socket, creator, partner, manifest).then(chain_msg=>{
-                    if(partner && partner.isOnline()){
-                        const extended_msg = Object.assign(chain_msg, {updated_msg:"partner is already started"});
-                        creator.gui_news("partner is already started");
-                        resolve(extended_msg);
-                    }else{
-                        creator.gui_news("starting the partner...");
-                        this.start_partner(socket).then(start_msg=>{
-                            console.log("StartingPartner.run(): start_partner().then: res= ",start_msg);
-                            const extended_msg = Object.assign(chain_msg, start_msg);
-                            creator.gui_news("the partner is started");
+                    console.log("StartingPartner.run(): after updatingFiles chain_msg= ",chain_msg);
+                    if(chain_msg.is_updated){
+                        if(partner && partner.isOnline()){
+                            //@ TODO: May be TIMEOUT HERE on 100 ms ???
+                            const extended_msg = Object.assign(chain_msg, {updated_msg:"partner is already started"});
+                            creator.gui_news("partner is already started");
                             resolve(extended_msg);
-                        }).catch(err=>{
-                            creator.gui_news("fail to start the partner: "+err);
-                            reject("StartingPartner: cant start partner. "+err);
-                        });
+                        }else{
+                            creator.gui_news("starting the partner...");
+                            this.start_partner(socket).then(start_msg=>{
+                                console.log("StartingPartner.run(): start_partner().then: res= ",start_msg);
+                                const extended_msg = Object.assign(chain_msg, start_msg);
+                                creator.gui_news("the partner is started");
+                                resolve(extended_msg);
+                            }).catch(err=>{
+                                creator.gui_news("fail to start the partner: "+err);
+                                reject("StartingPartner: cant start partner. "+err);
+                            });
+                        }
+                    }else{
+                        if(chain_msg.is_error){
+                            console.log("StartingPartner.run(): after updatingFiles error: ", chain_msg.error);
+                        }else if(chain_msg.err_names && chain_msg.err_names.length){
+                            console.log("StartingPartner.run(): after updatingFiles AGENT CANT COPY FILES: ", chain_msg.err_names);
+                        }else{
+                            console.log("StartingPartner.run(): after updatingFiles chain_msg=", chain_msg);
+                        }
+                        reject("StartingPartner: fail after updatingFiles, chain_msg=", chain_msg);
                     }
                 }).catch(err=>{
                     reject("StartingPartner: updatingFiles throw err: "+err);
@@ -1095,21 +1120,25 @@
         this.killingPartner=killingPartner;
         //this.instance=()=>{return new UpdatingFiles(this.killingPartner.instance())}
         this.run=(socket, creator, partner, manifest)=>{
-            //console.log("UpdatingFiles.run(): manifest=",manifest);
+            console.log("UpdatingFiles.run()...");
             return new Promise((resolve,reject)=>{
                 this.killingPartner.run(socket, creator, partner, manifest).then(chain_msg=>{
                     if(chain_msg.is_changes){
                         creator.gui_news("Starting update the files");
+                        console.log("UpdatingFiles.run() before update_files() calling");
                         this.update_files(socket, manifest).then(update_msg=>{
+                            console.log("UpdatingFiles.run() after update_files update_msg=",update_msg);
                             creator.gui_news("the updating files was replaced");
                             const extended_msg = Object.assign(chain_msg, update_msg);
+                            console.log("UpdatingFiles.run() extended_msg=",extended_msg);
                             resolve(extended_msg);
                         }).catch(err=>{
                             creator.gui_news("fail to update the files: "+err);
                             reject("UpdatingFiles: "+err);
                         });
                     } else{
-                        resolve(chain_msg);
+                        const extended_msg = Object.assign(chain_msg, {is_updated:true});
+                        resolve(extended_msg);
                     }
                 }).catch(err=>{
                     reject("UpdatingFiles->killingPartner rejected: "+err);
@@ -1118,11 +1147,12 @@
         }
         this.update_files=(socket, manifest)=>{
             return new Promise((resolve,reject)=>{
+                const EV_NAME = "updateFiles";
                 const resolve_handler = function(res){resolve(res);}
-                socket.emit("updateFiles", manifest).once("updateFiles", resolve_handler);
+                socket.emit(EV_NAME, manifest).once(EV_NAME, resolve_handler);
                 setTimeout(()=>{
-                    socket.removeListener("updateFiles",resolve_handler);
-                    reject("updateFiles timeout. ");
+                    socket.removeListener(EV_NAME, resolve_handler);
+                    reject(EV_NAME+" timeout. ");
                 }, 5000);
             })
         }
@@ -1148,6 +1178,41 @@
                 if(--this.attempts>0){
                     this.attempt(man, socket, cb);
                 }
+            })
+        }
+    }
+    function KillingPartnerWithoutComparing(){
+        this.run=(socket, creator, partner, manifest)=>{
+            return new Promise((resolve,reject)=>{
+                //console.log("KillingPartnerWithoutComparing.run(): creator=", creator);
+                const cond2 = (partner) ? partner.isOnline() : false; //partner must be online, otherwise nothing to kill
+                const cond3 = (creator.agentType()=="launcher") ? partner.isSpecialMode() : false; // if special mode kinda 'render' when we can't kill
+                if(cond2 & !cond3){
+                    creator.gui_news("sending kill signal with pid "+partner.agentPid());
+                    console.log("KillingPartner: sending kill signal, pid=",partner.agentPid());
+                    this.kill_partner(socket, partner.agentPid()).then(kill_msg=>{
+                        creator.gui_news("the partner was killed");
+                        resolve(kill_msg);
+                    }).catch(err=>{
+                        creator.gui_news("fail to kill the partner: "+err);
+                        reject(err);
+                    })
+                }else{
+                    resolve({})
+                }
+            });
+        }
+        this.kill_partner=(socket, pid)=>{
+            return new Promise((resolve,reject)=>{
+                const resolve_handler = function(res){
+                    console.log("KillingPartnerWithoutComparing.kill_partner() answer=", res);
+                    resolve(res||{is_killed:true});
+                }
+                socket.emit("killPartner", {pid}).once("killPartner", resolve_handler);
+                setTimeout(()=>{
+                    socket.removeListener("kill_partner",resolve_handler);
+                    reject("KillingPartner: kill_partner timeout. ");
+                }, 5000);
             })
         }
     }
@@ -1196,27 +1261,27 @@
                 setTimeout(()=>{
                     socket.removeListener("kill_partner",resolve_handler);
                     reject("KillingPartner: kill_partner timeout. ");
-                }, 3000);
+                }, 5000);
             })
         }
     }
     function CompareManifest(){
         //this.instance=()=>{ return new CompareManifest() }
-        this.is_ok = false;
         this.run=(socket, creator, partner, manifest)=>{
-            //console.log("CompareManifest.run(): manifest=",manifest);
+            console.log("CompareManifest.run()...");
             return new Promise((resolve,reject)=>{
+                let is_ok = false;
                 const resolve_handler = function(compare_msg){
                     //@ compare_msg = {is_error: false, is_changes: true}
-                    console.log("CompareManifest.run(): is_changes=",compare_msg);
-                    this.is_ok = true;
+                    console.log("CompareManifest.run(): compare_msg=",compare_msg);
+                    is_ok = true;
                     resolve(compare_msg);
                 }
                 creator.gui_news("sending Manifest to compare...");
                 socket.emit('compareManifest', manifest).once('compareManifest', resolve_handler);
                 setTimeout(()=>{
-                    if(!this.is_ok){ 
-                        creator.gui_news("timeout while comparing the Manifest"); 
+                    if(!is_ok){ 
+                        creator.gui_news("CompareManifest: timeout while comparing the Manifest"); 
                         socket.removeListener("compareManifest",resolve_handler);
                         reject("CompareManifest timeout. ");
                     }
@@ -1224,7 +1289,7 @@
             })
         }
     }    
-    //@---------------------------------------------------
+    //@--------------------------------------
     function SpecialControllerMode(){
         this.run=(controller, agent_socket)=>{
             console.log("SpecialControllerMode.run()...");

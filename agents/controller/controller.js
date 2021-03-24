@@ -1,4 +1,4 @@
-//controller.js
+//controller.js9
 'use sctrict';
 const fs = require('fs');
 const path = require('path');
@@ -49,7 +49,7 @@ function App(){
                         "settings_", 
                         "comparedManifest_")
                 )
-                .with('startPartner', new StartedPartner())
+                .with('startPartner', new StartedPartner("settings_"))
                 .with('disk_space', new DiskSpace())
         ).run();
 	}
@@ -241,7 +241,9 @@ function ComparedManifest(dirStructure, dirsComparing, settings_){
     this.curMan = [];
     this.is_keep_old_files = true;
     this.settings = glob[settings_].read() || {}
-    const LAUNCHER_DIR = __dirname + this.settings.local_dir_launcher;
+    let loc_launcher = this.settings.local_dir_launcher;
+    loc_launcher = (loc_launcher.startsWith("/")) ? loc_launcher : "/"+loc_launcher;
+    const LAUNCHER_DIR = __dirname + loc_launcher;
     this.as=(name)=>{
         glob[name] = this;
         return this;
@@ -433,47 +435,59 @@ function KilledPartner(){
         socket.on(ev_name, (msg)=>{
             console.log("KilledPartner.run() pid =", msg.pid);
             //TODO: 1. cmd_exec(kill) 2. socket.emit(ok)
-            this.kill_by_pid(msg.pid);
-            socket.emit(ev_name, {is_killed: true});
+            this.kill_by_pid(msg.pid, err=>{
+                if(err){
+                    socket.emit(ev_name, {is_error: true, error: err});
+                }else{
+                    socket.emit(ev_name, {is_killed: true});
+                }
+            });
         });
     }
-    this.kill_by_pid=(pid)=>{
+    this.kill_by_pid=(pid, cb)=>{
         try { 
-            process.kill(list[i][pid]);
+            process.kill(pid);
+            cb(undefined);
         } catch(ex) {
             console.log("KilledPartner.kill_by_pid() Error: ", ex);
+            cb(ex);
         }
     }
 }
 function UpdatedFiles(settings_, comparedManifest_){
     this.comparedManifest = glob[comparedManifest_] || {}
     this.settings = glob[settings_].read() || {}
-    const LAUNCHER_DIR = __dirname + this.settings.local_dir_launcher;
+    let loc_launcher = this.settings.local_dir_launcher;
+    loc_launcher = loc_launcher.startsWith('/') ? loc_launcher : '/'+loc_launcher;
+    const LAUNCHER_DIR = __dirname + loc_launcher;
     const REMOTE_DIR = this.settings.remote_dir;
     //console.log("UpdatedFiles.constr(): glob=",Object.keys(glob));
     //@ this flag
     this.is_keep_old_files = true;
+    this.is_timeout = true;
     this.run=(ev_name, socket)=>{
         console.log("UpdatedFiles.run()...");
         socket.on(ev_name, (remote_manif)=>{
-            //@----Check exception----
-            if(Object.keys(this.settings).length==0){
-                console.log("UpdatedFiles.run(): ERROR NO SETTINGS");
-                return socket.emit(ev_name, {is_updated: false, is_error: true});
-            }
-            //@-------------------
             this.comparedManifest.mansDiff(remote_manif).then(diff=>{
                 console.log("UpdatedFiles.run(): diff=",diff);
-                this.sync_dirs(diff, this.is_keep_old_files).then(res=>{
+                this.sync_dirs(diff, this.is_keep_old_files).then(err_names=>{
                     console.log("UpdatedFiles: emitting success 'updateFiles' procedure");
-                    socket.emit(ev_name, {is_updated: true});
+                    if(err_names && err_names.length){
+                        socket.emit(ev_name, {is_updated: false, err_names: err_names});
+                    }else{
+                        socket.emit(ev_name, {is_updated: true});
+                    }
                 }).catch(err=>{
                     console.log("UpdatedFiles: sync_dirs() Error: ",err);
-                    socket.emit(ev_name, {is_updated: false, is_error: true, error:err});
-                })
+                    socket.emit(ev_name, {is_error: true, error:err});
+                }).finally(()=>{ this.is_timeout = false; });
             }).catch(err=>{
                 console.log("UpdatedFiles: comparedManifest_.mansDiff() Error: ",err);
-            });
+                socket.emit(ev_name, {is_error: true, error:err});
+            }).finally(()=>{ this.is_timeout = false; });
+            setTimeout(()=>{
+                if(this.is_timeout){ socket.emit(ev_name, {is_updated: false, is_error: true, error:"UpdatedFiles TIMEOUT"}); }
+            }, 5000);
         });
     }
     this.sync_dirs=(mans_diff, is_keep_old_files)=>{
@@ -485,13 +499,13 @@ function UpdatedFiles(settings_, comparedManifest_){
             if(files_to_write.length==0){ return resolve(); }
             this.createEmptyDirs(files_to_write).then(err_names=>{
                 console.log("UpdatedFiles.sync_dirs(): createEmptyDirs(): err_names=",err_names);
-                return this.copy_files(files_to_write, "launcher");
+                return this.copy_files(files_to_write, "launcher", err_names);
             }).then(err_names=>{
                 console.log("UpdatedFiles.sync_dirs(): copy_files(): err_names=",err_names);
-                resolve();
+                resolve(err_names);
             }).catch(err=>{
                 console.log("UpdatedFiles.sync_dirs(): Error:",err);
-                reject();
+                reject(err);
             })
             
         });
@@ -508,14 +522,14 @@ function UpdatedFiles(settings_, comparedManifest_){
         });
         return files_to_write;
     }
-    this.copy_files=(files_to_write, update_fold_lvl2)=>{
+    this.copy_files=(files_to_write, update_fold_lvl2, error_names)=>{
         console.log("UpdatedFiles.copy_files() files_to_write=",files_to_write);
         if(!update_fold_lvl2.startsWith("/")){ update_fold_lvl2 = "/"+update_fold_lvl2 }
         return new Promise((resolve, reject) => {
             const FNAME = 0;
             let pending = files_to_write.length;
             if(pending==0){return resolve();}
-            const err_names = [];
+            const err_names = error_names || [];
             files_to_write.forEach(file_info=>{
                 console.log("copy_files() file_info=",file_info);
                 if(file_info[FNAME].endsWith("\\")){
@@ -559,7 +573,8 @@ function UpdatedFiles(settings_, comparedManifest_){
         })
     }
 }
-function StartedPartner(){
+function StartedPartner(settings_){
+    this.settings = glob[settings_].read() || {}
     this.run=(ev_name, socket)=>{
         socket.on(ev_name, ()=>{
             console.log("StartedPartner.run()...");
@@ -573,13 +588,16 @@ function StartedPartner(){
         });
     }
     this.start=(c_location, callback)=>{
-        //TODO: CHECK IF FILE EXGST !!!
         const agent_type = "launcher";
-        let partner_path = path.normalize(GS.partner.file_path);
+        let loc_launcher = this.settings.local_dir_controller
+        loc_launcher = loc_launcher.startsWith('/') ? loc_launcher : "/"+loc_launcher;
+        let partner_path = __dirname + loc_launcher + "/launcher.js";
+        partner_path = path.normalize(partner_path);
+        console.log("partner_path normalize=",partner_path);
         fs.stat(partner_path, (err)=>{
             if (err) {
-                callback(err);
-                return;
+                console.log("StartedPartner fs.stat error:",err);
+                return callback(err);
             }
             console.log("Starting "+agent_type+"...");
             //var CMD = spawn('cmd');
@@ -588,10 +606,9 @@ function StartedPartner(){
             var stderr = null;
             CMD.stdout.on('data', function (data) { stdout += data.toString(); });
             CMD.stderr.on('data', function (data) {
-                if (stderr === null) { stderr = data.toString(); }
-                else { stderr += data.toString(); }
+                (stderr) ? stderr = data.toString() : stderr += data.toString();
             });
-            CMD.on('exit', function () { callback(stderr, stdout || false);  });
+            CMD.on('exit', function () { callback(stderr, stdout);  });
 
             //CMD.stdin.write('wmic process get ProcessId,ParentProcessId,CommandLine \n');
             CMD.stdin.write('start cmd.exe @cmd /k "cd..\\'+agent_type+' & node '+agent_type+'.js '+process.pid+' '+1+'"\r\n');
@@ -635,22 +652,16 @@ function parse_nvsmi_result(str) {
 	let counter = 0;
 	let lines = [];
 	let all_params = [];
-
 	linesTmp.forEach(function (line) {
 		if (line && line.trim()) {
 			lines.push(line);
 		}
 	});
-
 	let is_hat = false;
-
 	while (counter < lines.length) {
-		//console.log("COUNTER=", counter);
-	
 		if (is_hat) {
 			counter = parse_next_cards(counter);
-		}
-		else {	
+		}else{	
 			if (lines[counter].indexOf('NVIDIA-SMI') > -1 ) {
 				is_hat = true;
 				while (lines[counter].indexOf('=======') == -1) { counter++ }
@@ -658,8 +669,7 @@ function parse_nvsmi_result(str) {
 			}
 			else counter++;
 		}
-	}
-	
+	}	
 	return all_params;
 
 	function parse_first_card(raw_index) 
@@ -690,7 +700,6 @@ function parse_nvsmi_result(str) {
 	//console.log("parse_first_card(): returned raw =", lines[raw_index], "INDEX:", raw_index);
     return raw_index;
 	}
-	
 	function parse_next_cards(raw_index) 
 	{
 		//expecting, that incoming string is: '---------'

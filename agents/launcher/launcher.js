@@ -34,7 +34,7 @@ function App(){
                     "settings_", 
                     "comparedManifest_"
                 ))
-                .with('startPartner', new StartedPartner())
+                .with('startPartner', new StartedPartner("settings_"))
         ).run();
 	}
 }
@@ -202,31 +202,39 @@ function ComparedManifest(dirStructure, dirsComparing, settings_){
     this.curMans = [];
     this.is_keep_old_files = true;
     this.settings = glob[settings_].read() || {}
-    this.CONTROLLER_DIR =  __dirname + this.settings.local_dir_controller;
-    this.OTHER_DIR =  __dirname + this.settings.local_dir_other;
+    const loc_contr = this.settings.local_dir_controller.startsWith("/") ? this.settings.local_dir_controller : "/"+this.settings.local_dir_controller
+    const loc_other = this.settings.local_dir_other.startsWith("/") ? this.settings.local_dir_other : "/"+this.settings.local_dir_other
+    this.CONTROLLER_DIR =  __dirname + loc_contr;
+    this.OTHER_DIR =  __dirname + loc_other;
     const PATHS_DATA = [
         {name: "controller", path: this.CONTROLLER_DIR},
         {name: "other", path: this.OTHER_DIR}
     ];
+    this.is_timeout = true;
     //console.log("ComparedManifest.constr(): PATHS_DATA=",PATHS_DATA);
     this.as=(name)=>{
         glob[name] = this;
         return this;
     }
     this.run=(ev_name, socket)=>{
-        //@ ev_name = 'compareManifest'
+        console.log("ComparedManifest.run()...");
         socket.on(ev_name, (remote_mans)=>{
-            console.log("ComparedManifest: remote_mans=",remote_mans)
+            console.log("ComparedManifest.run(): ev_name=",ev_name)
             this.dirStructure.allMansAsync(PATHS_DATA).then(local_mans=>{
+                console.log("after allMansAsync() local_mans=",local_mans);
                 const mans_diff = this.dirsComparing.compare(local_mans, remote_mans, this.is_keep_old_files);
+                console.log("after allMansAsync() mans_diff=",mans_diff);
                 const is_changes_exist = Object.keys(mans_diff).length>0;
                 socket.emit(ev_name, {is_changes: is_changes_exist});
             }).catch(err=>{
-                console.log("WTF!!!",err)
+                console.log("WTF!!!",err);
                 //reject("ComparedManifest.manifestos() Error: "+JSON.stringify(err));
                 socket.emit(ev_name, {is_error: true, error: err});
-            })
-        })
+            }).finally(()=>{this.is_timeout = false;});
+            setTimeout(()=>{ if(this.is_timeout){
+                socket.emit(ev_name, {is_error: true, error: "ComparedManifest TIMEOUT"});
+            } }, 5000);
+        });
         return this;
     }
     this.current=()=>{return this.curMans}
@@ -295,7 +303,7 @@ function DirStructure(){
                     if(!--pending){resolve(result);}
                 }else{
                     this.manOfDirAsync(path_data.path).then(res=>{
-                        //console.log("DirStructure.allMansAsync: manOfDirAsync res=", res);
+                        console.log("DirStructure.allMansAsync: manOfDirAsync res=", res);
                         result[path_data.name] = res;
                         if(!--pending){resolve(result)}
                     }).catch(err=>{
@@ -398,44 +406,67 @@ function DirsComparing(){
 //@-------------------------------
 function KilledPartner(){
     this.run=(ev_name, socket)=>{
+        console.log("KilledPartner.run()...");
         socket.on(ev_name, (msg)=>{
             console.log("KilledPartner.run() pid =", msg.pid);
             //TODO: 1. cmd_exec(kill) 2. socket.emit(ok)
-            this.kill_by_pid(msg.pid);
-            socket.emit(ev_name, {is_killed: true});
+            this.kill_by_pid(msg.pid, err=>{
+                if(err){
+                    console.log("KilledPartner: emitting erorr!");
+                    socket.emit(ev_name, {is_error: true, error: err});
+                }else{
+                    console.log("KilledPartner: emitting success!");
+                    socket.emit(ev_name, {is_killed: true});
+                }
+            });
         });
     }
-    this.kill_by_pid=(pid)=>{
+    this.kill_by_pid=(pid, cb)=>{
         try { 
             process.kill(pid);
+            cb(undefined);
         } catch(ex) {
             console.log("KilledPartner.kill_by_pid() Error: ", ex);
+            cb(ex);
         }
     }
 }
 function UpdatedFiles(settings_, comparedManifest_){
     this.comparedManifest = glob[comparedManifest_] || {}
     this.settings = glob[settings_].read() || {}
-    const CONTROLLER_DIR = __dirname + this.settings.local_dir_controller;
-    const OTHER_DIR = __dirname + this.settings.local_dir_other;
+    let loc_contr = this.settings.local_dir_controller;
+    loc_contr = loc_contr.startsWith('/') ? loc_contr : '/'+loc_contr;
+    let loc_other = this.settings.local_dir_other;
+    loc_other = loc_other.startsWith('/') ? loc_other : '/'+loc_other;
+    const CONTROLLER_DIR = __dirname + loc_contr;
+    const OTHER_DIR = __dirname + loc_other;
     const REMOTE_DIR = this.settings.remote_dir;
     this.is_keep_old_files = true;
+    this.is_timeout = true;
     this.run=(ev_name, socket)=>{
         console.log("UpdatedFiles.run()...");
         socket.on(ev_name, (remote_mans)=>{
+            console.log("UpdatedFiles.run() event: ", ev_name);
             this.comparedManifest.mansDiff(remote_mans).then(diff=>{
                 console.log("UpdatedFiles.run(): diff=",diff);
-                this.sync_dirs(diff, this.is_keep_old_files).then(res=>{
+                this.sync_dirs(diff, this.is_keep_old_files).then(err_names=>{
                     console.log("UpdatedFiles: emitting success 'updateFiles' procedure");
-                    socket.emit(ev_name, {is_updated: true});
+                    if(err_names && err_names.length){
+                        socket.emit(ev_name, {is_updated: false, err_names: err_names});
+                    }else{
+                        socket.emit(ev_name, {is_updated: true});
+                    }
                 }).catch(err=>{
                     console.log("UpdatedFiles: sync_dirs() Error: ",err);
-                    socket.emit(ev_name, {is_updated: false, is_error: true, error:err});
-                })
+                    socket.emit(ev_name, {is_error: true, error:err});
+                }).finally(()=>{ this.is_timeout = false; });
             }).catch(err=>{
                 console.log("UpdatedFiles: comparedManifest_.mansDiff() Error: ",err);
-                socket.emit(ev_name, {is_updated: false, is_error: true, error:err});
-            });
+                socket.emit(ev_name, {is_error: true, error:err});
+            }).finally(()=>{ this.is_timeout = false; });
+            setTimeout(()=>{
+                if(this.is_timeout){ socket.emit(ev_name, {is_updated: false, is_error: true, error:"UpdatedFiles TIMEOUT"}); }
+            }, 5000);
         });
     }
     this.sync_dirs=(mans_diff, is_keep_old_files)=>{
@@ -444,9 +475,10 @@ function UpdatedFiles(settings_, comparedManifest_){
             //@ dont touch The Old Files!
             let struct_to_write = concat_filelist_to_update(mans_diff, is_keep_old_files);
             console.log("UpdatedFiles.sync_dirs(): copy_files(): files_to_write=",struct_to_write);
+            if(struct_to_write.length==0){ return resolve(); }
             this.createEmptyDirsByStruct(struct_to_write).then(err_names=>{
                 console.log("UpdatedFiles.sync_dirs(): createEmptyDirs(): err_names=",err_names);
-                return this.copy_files_by_struct(struct_to_write);
+                return this.copy_files_by_struct(struct_to_write, err_names);
             }).then(err_names=>{
                 console.log("UpdatedFiles.sync_dirs(): copy_files(): err_names=",err_names);
                 resolve(err_names);
@@ -474,9 +506,9 @@ function UpdatedFiles(settings_, comparedManifest_){
         });
         return struct;
     }
-    this.copy_files_by_struct=(struct_to_write)=>{
+    this.copy_files_by_struct=(struct_to_write, err_names)=>{
         return new Promise((resolve, reject) => {
-            let error_names = [];
+            let error_names = err_names || [];
             const mans_names = Object.keys(struct_to_write);
             let pending = mans_names.length;
             if(pending==0){ return resolve(); }
@@ -565,10 +597,12 @@ function UpdatedFiles(settings_, comparedManifest_){
         })
     }
 }
-function StartedPartner(){
+function StartedPartner(settings_){
+    this.settings = glob[settings_].read() || {}
     this.run=(ev_name, socket)=>{
+        console.log("StartedPartner.run()...");
         socket.on(ev_name, ()=>{
-            console.log("StartedPartner.run()...");
+            console.log("StartedPartner.run() event: ", ev_name);
             //TODO: 1. cmd_exec(kill) 2. socket.emit(ok)
             this.start("", (err, res)=>{
                 const start_msg = {};
@@ -579,32 +613,36 @@ function StartedPartner(){
         });
     }
     this.start=(c_location, callback)=>{
-        //TODO: CHECK IF FILE EXGST !!!
         const agent_type = "controller";
-        let partner_path = path.normalize(GS.partner.file_path);
+        let loc_contr = this.settings.local_dir_controller;
+        loc_contr = loc_contr.startsWith('/') ? loc_contr : "/"+loc_contr;
+        let partner_path = __dirname + loc_contr + "/controller.js";
+        console.log("partner_path=",partner_path);
+        partner_path = path.normalize(partner_path);
+        console.log("partner_path normalize=",partner_path);
         fs.stat(partner_path, (err)=>{
             if (err) {
-                callback(err);
-                return;
+                console.log("StartedPartner fs.stat error:",err);
+                return callback(err);
             }
-            console.log("Starting "+agent_type+"...");
-            //var CMD = spawn('cmd');
-            var CMD = exec('cmd');
-            var stdout = '';
-            var stderr = null;
-            CMD.stdout.on('data', function (data) { stdout += data.toString(); });
-            CMD.stderr.on('data', function (data) {
-                if (stderr === null) { stderr = data.toString(); }
-                else { stderr += data.toString(); }
-            });
-            CMD.on('exit', function () {
-                console.log(agent_type+" was started!");
-                callback(stderr, stdout || false);
-            });
-
-            //CMD.stdin.write('wmic process get ProcessId,ParentProcessId,CommandLine \n');
-            CMD.stdin.write('start cmd.exe @cmd /k "cd..\\'+agent_type+' & node '+agent_type+'.js '+process.pid+' '+1+'"\r\n');
-            CMD.stdin.end();
+            else{
+                console.log("Starting "+agent_type+"...");
+                //var CMD = spawn('cmd');
+                var CMD = exec('cmd');
+                var stdout = '';
+                var stderr = null;
+                CMD.stdout.on('data', function (data) { stdout += data.toString(); });
+                CMD.stderr.on('data', function (data) {
+                    (stderr) ? stderr = data.toString() : stderr += data.toString();
+                });
+                CMD.on('exit', function () {
+                    console.log(agent_type+" was started!");
+                    callback(stderr, stdout);
+                });
+                //CMD.stdin.write('wmic process get ProcessId,ParentProcessId,CommandLine \n');
+                CMD.stdin.write('start cmd.exe @cmd /k "cd..\\'+agent_type+' & node '+agent_type+'.js '+process.pid+' '+1+'"\r\n');
+                CMD.stdin.end();
+            }
         });
     }
 }
