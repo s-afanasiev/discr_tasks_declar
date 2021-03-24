@@ -849,7 +849,7 @@
         this.listenForDisconnect=()=>{
             this.agent_socket.once('disconnect', ()=>{
                 this.switchOnline(false);
-                this.gui_news("launcher disconnected");
+                this.gui_news("agent_offline");
                 this.agent_socket = undefined;
             });
         }
@@ -963,7 +963,7 @@
         this.listenForDisconnect=()=>{
             this.agent_socket.once('disconnect', ()=>{
                 this.switchOnline(false);
-                this.gui_news("controller disconnected");
+                this.gui_news("agent_offline");
                 this.agent_socket = undefined;
             });
         }

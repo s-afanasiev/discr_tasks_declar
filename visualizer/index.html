@@ -129,22 +129,20 @@
 			var my_socket_id = "";
 			function connect_to_server()
 			{
-				const myObj = new MyObj();
-				$("#"+"main_div").append(myObj.init());
+				const hostTable = new HostTable();
+				$("#"+"main_div").append(hostTable.init());
 				server_ = io.connect(endvr_server_address, {query:{browser_or_agent:"browser"}});
 				server_.on('connect', function()
 				{
 					console.log("connected");
 					server_.emit('get_socket_id',"");
 				});
-				
 				server_.on('id_assigned', function(msg)
 				{
 					// this is going to be an array buffer 
 					//alert("got_socket_id: " + msg);
 					my_socket_id = msg;
 				});
-
 				server_.on('agent_table', function(agent_table){
 					global_agent_table = agent_table;
 					var max_width = 4;
@@ -207,25 +205,26 @@
 				});
 				server_.emit('gui_ctrl', 'host_table');
 				server_.on('gui_news', function(data){
-					console.log("gui_news: ", data);
 					if(data.msg == 'host_table'){
-						const a = this.draw_host_table(data);
+						const a = this.host_table(data);
 					}
 					else if(data.msg == "host_born"){
-						const a = this.draw_new_host(data);
+						const a = this.host_born(data);
 						$(".current").append(a);
 					}
 					else if(data.msg == "agent_online"){
-						
+						this.agent_online(data);
 					}
 					else if(data.msg == "agent_offline"){
+						this.agent_offline(data);
 					}
 					else{
-
+						//console.log("gui_news: ", data);
+						this.agent_work(data);
 					}
-				}.bind(myObj));
+				}.bind(hostTable));
 			}
-			function MyObj(){
+			function HostTable(){
 				this.MAX_WIDTH = 4;
 				this.cur_row_index = 0;
 				this.cur_col_index = 0;
@@ -251,7 +250,8 @@
 					a += "</table>";
 					return a;
 				}
-				this.draw_host_table=(data)=>{
+				//@ this is answer for browser request, which brings all current hosts info
+				this.host_table=(data)=>{
 					this.cur_row = 0;
 					this.cur_col_index = 0;
 					var a = "";
@@ -264,13 +264,31 @@
 								this.cur_col_index = 1;
 								a += "</tr><tr class='base'>";
 							}
-							a += this.one_host(data.table[i]);
+							a += one_host(data.table[i]);
 						}
 					a += "</tr>";
 					a += "</table>";
 					$("#"+"main_div").empty().append(a);
 				}
-				this.one_host=(data)=>{
+				//@ event 'host_born' because new launcher or controller has connected
+				this.host_born=(data)=>{
+					//@ data={msg: "host_born", md5: "6e8bc6f1e3ef10adf9dd98617c133110", creator_type:"launcher", creator_pid:7742, creator_apid:0}
+					console.log("host_born()...");
+					const a_host = one_host(data);
+					//@-----Add TD with Host info to Current or New Line of Table----------
+					this.cur_col_index = this.cur_col_index + 1;
+					if(this.cur_col_index >= this.MAX_WIDTH){
+						console.log("move to the new line");
+						this.cur_col_index = 1;
+						$('#host_table').append("<tr class='base'>"+a_host+"</tr>");
+					}else{
+						console.log("add on the current line");
+						$('#host_table tr.base:last').append(a_host);
+					}
+					//@-----Append Agent info to The Host info--------------------------------------------------------
+					$('td#'+data.md5+' td.'+data.creator_type).append(host_agent_creator(data));
+				}
+				const one_host=(data)=>{
 					let a = "";
 					a += "<td valign='top' class = 'host' id='"+data.md5+"'>";
 						a +="<table style = 'border:1px solid red; width:100%;'>";
@@ -280,12 +298,12 @@
 							a +="<tr class = 'agents'>";
 								a +="<td class = 'launcher'>"
 									if(data.launcher){
-										a += this.prepare_agent_data(data, "launcher");
+										a += agent_data(data.launcher);
 									}
 								a += "</td>";
 								a +="<td class = 'controller'>";
 									if(data.controller){
-										a += this.prepare_agent_data(data, "controller");
+										a += agent_data(data.controller);
 									}
 								a += "</td>";
 							a +="</tr>";
@@ -293,39 +311,52 @@
 					a +="</td>";
 					return a;
 				}
-				this.prepare_agent_data=(data, type)=>{
+				const agent_data=(agent_data, status)=>{
 					//@ 1. check if such host exist. For example, event 'agent online' coomes faster than 'host_born'
 					//@ 2. check is such agent already appended to this host
+					status = status || "online";
 					let a = "";
-					a += "<div>agent: "+data[type].agent_type+"</div>";
-					a += "<div>pid: "+data[type].agent_pid+"</div>";
-					a += "<div>apid: "+data[type].agent_apid+"</div>";
-					return a;
-				}
-				//@ When 'host_born' event happens, its brings also one agent info, which was created this host
-				this.agent_creator=(data)=>{
-					let a = "";
-					a += "<div>agent: "+data.creator_type+"</div>";
-					a += "<div>pid: "+data.creator_pid+"</div>";
-					a += "<div>apid: "+data.creator_apid+"</div>";
-					return a;
-				}
-				this.draw_new_host=(data)=>{
-					//@ {msg: "host_born", md5: "6e8bc6f1e3ef10adf9dd98617c133110", creator_type:"launcher", creator_pid:7742, creator_apid:0}
-					console.log("draw_new_host()...");
-					const a_one_host = this.one_host(data);
-					this.cur_col_index = this.cur_col_index + 1;
-					if(this.cur_col_index >= this.MAX_WIDTH){
-						console.log("move to the new line");
-						this.cur_col_index = 1;
-						$('#host_table').append("<tr>"+a_one_host+"</tr>");
-					}else{
-						console.log("add on the current line");
-						$('#host_table tr.base:last').append(a_one_host);
+					a += "<div>agent: "+agent_data.agent_type+"</div>";
+					a += "<div>status: "+status+"</div>";
+					if(status == "online"){
+						a += "<div>pid: "+agent_data.agent_pid+"</div>";
+						a += "<div>apid: "+agent_data.agent_apid+"</div>";
+						a += "<div class='work' style='background-color:#ccddee; width:100%;'>"
+							//a += "work";
+						a += "</div>";
 					}
-					$('td#'+data.md5+' td.'+data.data.creator_type).append(this.agent_creator(data));
+					return a;
 				}
-				this.agent_connected=(data)=>{}
+				//@ Additional action to 'host_born' event, which append the agent, which was created this host
+				const host_agent_creator=(data)=>{
+					const data2 = {}
+					data2.agent_type = data.creator_type;
+					data2.agent_pid = data.creator_pid;
+					data2.agent_apid = data.creator_apid;
+					return agent_data(data2);
+				}				
+				//@ input param data = {md5:"d432...", agent_type:"launcher", agent_pid:2543, agent_apid:-1}
+				this.agent_online=(data)=>{
+					console.log("HostTable.agent_online() data=",data);
+					//@ 1. check if such host exist. For example, event 'agent online' coomes faster than 'host_born'
+					//@ 2. check is such agent already appended to this host
+					let a = agent_data(data, "online");
+					const $agent_td = $('td#'+data.md5+' td.'+data.agent_type);
+					if($agent_td.children().length){ $agent_td.empty(); }
+					$agent_td.append(a);
+				}
+				this.agent_offline=(data)=>{
+					console.log("HostTable.agent_offline() data=",data);
+					let a = agent_data(data, "offline");
+					const $agent_td = $('td#'+data.md5+' td.'+data.agent_type);
+					$agent_td.empty().append(a);
+				}
+				this.agent_work=(data)=>{
+					console.log("working data=", data)
+					const $agent_work_div = $('td#'+data.md5+' td.'+data.agent_type+' div.work');
+					//const $agent_md5_td = $('td#'+data.md5+' td.'+data.agent_type+' div.work');
+					$agent_work_div.append("<div>"+data.msg+"</div>");
+				}
 			}
 		</script>
 		<style type="text/css">
