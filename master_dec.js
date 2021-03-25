@@ -266,12 +266,13 @@
         this.run = function(hostCluster){
             this.hostCluster=hostCluster;
             this.prev_mans = this.dirStructure.allMansSync(update_paths); //sync
+            console.log("Manifest.run(): this.prev_mans=",this.prev_mans);
             setTimeout(()=>{this.nextManifest()}, this.timer);
             return this;       
         }        
         this.nextManifest = function(){
             this.dirStructure.allMansAsync(update_paths).then(next_mans=>{
-                //console.log("Manifest.nextManifest(): next_mans=",next_mans);
+                console.log("Manifest.nextManifest(): next_mans=",next_mans);
                 const dirs_compare_diff = this.dirsComparing.compare(next_mans, this.prev_mans);
                 console.log("Manifest.nextManifest(): dirs_compare_diff=",dirs_compare_diff);
                 //@ e.g.: dirs_compare_diff = { launcher: { new_files: [], files_to_change: [ [Array] ], old_files: [] } }
@@ -1013,9 +1014,9 @@
                 const man_for_controller = {};
                 man_for_controller.launcher = man_regular.launcher;
                 new AgentUpdateWithoutCompare(this, man_for_controller).run(this.socketio(), this.partner).then(res=>{
-                    resolve(res);
+                    resolve({is_patched: true});
                 }).catch(err=>{
-                    reject(err);
+                    reject({is_patched: false, error: err});
                 }).finally(()=>{
                     this.switchUpdateMode(false);
                     this.gui_news("update mode off");
@@ -1206,6 +1207,7 @@
                     this.kill_partner(socket, partner.agentPid(), partner.agentPpid()).then(kill_msg=>{
                         creator.gui_news("the partner was killed");
                         resolve(kill_msg);
+                        //resolve(Object.assign(kill_msg, {is_changes: true}));
                     }).catch(err=>{
                         creator.gui_news("fail to kill the partner: "+err);
                         reject(err);

@@ -1,4 +1,4 @@
-//controller.js5
+//controller.js1
 'use sctrict';
 const fs = require('fs');
 const path = require('path');
@@ -213,26 +213,6 @@ function SocketIoHandlers(ioWrap){
 	};
 	this.tech_events = ['connect', 'disconnect', 'compareManifest', 'same_md5_agents', 'updateFiles', 'startPartner', 'killPartner', 'identifiers', 'update_folder', 'partner_leaved', 'partner_appeared'];
 	this.user_events = ['diskSpace', 'gpu_info', 'housekeeping', 'proc_count', 'exec_cmd', 'nvidia_smi', 'wetransfer'];
-
-    this.user_evt_handlers = {
-        disk_space: function(){
-			console.log("'disk_space' event");
-			$checkDiskSpace("C:/").then((diskSpace) => {
-                // { free: 12345678, size: 98756432 }
-                console.log("diskSpace =",diskSpace);
-                _socket.emit('disk_space', {done:true, res:diskSpace});
-            }).catch((ex)=>{
-                console.log("diskSpace error=",ex);
-                _socket.emit('disk_space', {done:false, details:ex});
-            }); 
-		},
-		gpu_info: function(){},
-		housekeeping: function(){},
-		proc_count: function(){},
-		exec_cmd: function(){},
-		nvidia_smi: function(){},
-		wetransfer: function(){}
-	}
 }
 //@-------Comparing the Manifest-------------
 function ComparedManifest(dirStructure, dirsComparing, settings_){
@@ -244,6 +224,7 @@ function ComparedManifest(dirStructure, dirsComparing, settings_){
     let loc_launcher = this.settings.local_dir_launcher;
     loc_launcher = (loc_launcher.startsWith("/")) ? loc_launcher : "/"+loc_launcher;
     const LAUNCHER_DIR = __dirname + loc_launcher;
+    this.is_timeout = true;
     this.as=(name)=>{
         glob[name] = this;
         return this;
@@ -262,7 +243,10 @@ function ComparedManifest(dirStructure, dirsComparing, settings_){
             }).catch(err=>{
                 console.log("ComparedManifest: on socket event Error: ", err);
                 socket.emit({is_error: true, error: err});
-            })
+            }).finally(()=>{this.is_timeout = false;});
+            setTimeout(()=>{ if(this.is_timeout){
+                socket.emit(ev_name, {is_error: true, error: "ComparedManifest TIMEOUT"});
+            } }, 5000);
         })
         return this;
     }
@@ -432,6 +416,7 @@ function DirsComparing(){
 //@-------Update chain----------
 function KilledPartner(){
     this.run=(ev_name, socket)=>{
+        console.log("KilledPartner.run() ");
         socket.on(ev_name, (msg)=>{
             console.log("KilledPartner.run() msg =", msg);
             //TODO: 1. cmd_exec(kill) 2. socket.emit(ok)
@@ -440,8 +425,10 @@ function KilledPartner(){
                     console.log("KilledPartner: emitting erorr!");
                     socket.emit(ev_name, {is_error: true, error: err});
                 }else{
-                    console.log("KilledPartner: emitting success!");
-                    socket.emit(ev_name, {is_killed: true});
+                    console.log("KilledPartner: emitting success after 500 ms!");
+                    setTimeout(()=>{
+                        socket.emit(ev_name, {is_killed: true});
+                    },500)
                 }
             });
         });
@@ -535,7 +522,9 @@ function UpdatedFiles(settings_, comparedManifest_){
             const err_names = error_names || [];
             files_to_write.forEach(file_info=>{
                 console.log("copy_files() file_info=",file_info);
-                if(file_info[FNAME].endsWith("\\")){
+                const is_end1 = file_info[FNAME].endsWith("\\");
+                const is_end2 = file_info[FNAME].endsWith("/");
+                if(is_end1 || is_end2){
                     //@ Ignore Empty Dirs
                     if (!--pending) { resolve(err_names); }
                 }else{
@@ -592,7 +581,7 @@ function StartedPartner(settings_){
     }
     this.start=(c_location, callback)=>{
         const agent_type = "launcher";
-        let loc_launcher = this.settings.local_dir_controller
+        let loc_launcher = this.settings.local_dir_launcher
         loc_launcher = loc_launcher.startsWith('/') ? loc_launcher : "/"+loc_launcher;
         let partner_path = __dirname + loc_launcher + "/launcher.js";
         partner_path = path.normalize(partner_path);

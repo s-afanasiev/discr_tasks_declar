@@ -1,4 +1,4 @@
-//launcher.js v1
+//launcher.js v88
 'use sctrict';
 const fs = require('fs');
 const path = require('path');
@@ -39,7 +39,6 @@ function App(){
         ).run();
 	}
 }
-
 function Launcher(identifiers, socketIoHandlers){
     this.identifiers=identifiers;
     this.socketIoHandlers=socketIoHandlers;
@@ -52,7 +51,6 @@ function Launcher(identifiers, socketIoHandlers){
         })
     }
 }
-
 function Identifiers(){
     this.prepare=()=>{
         console.log("preparing identifiers for master...");
@@ -132,7 +130,6 @@ function Identifiers(){
         });
     }
 }
-
 function IoWrap(ioSettings, stringifiedJson){
     this.socket = undefined;
     this.ioSettings= ioSettings;
@@ -162,17 +159,21 @@ function StringifiedJson(){
 }
 function IoSettings(settingsPath){
 	this.settingsPath = settingsPath;
+    this.settingsCash =undefined;
 	this.read=()=>{
+        if(this.settingsCash){
+            console.log("IoSettings.read() cashed file!");
+            return this.settingsCash;
+        }
         const normalized_path = path.normalize(this.settingsPath);
-        let settings;
 		try{
 			const json_file = fs.readFileSync(normalized_path, "utf8");
-			settings = JSON.parse(json_file);
+			this.settingsCash = JSON.parse(json_file);
 		}catch(err){
             console.log("IoSettings.read() Error: ", err);
             return {error: err};
         }
-        return settings;
+        return this.settingsCash;
 	}
     this.as=(name)=>{
         glob[name]=this;
@@ -203,8 +204,10 @@ function ComparedManifest(dirStructure, dirsComparing, settings_){
     this.curMans = [];
     this.is_keep_old_files = true;
     this.settings = glob[settings_].read() || {}
-    const loc_contr = this.settings.local_dir_controller.startsWith("/") ? this.settings.local_dir_controller : "/"+this.settings.local_dir_controller
-    const loc_other = this.settings.local_dir_other.startsWith("/") ? this.settings.local_dir_other : "/"+this.settings.local_dir_other
+    let loc_contr = this.settings.local_dir_controller
+    loc_contr = (loc_contr.startsWith("/")) ? loc_contr : "/"+loc_contr;
+    let loc_other = this.settings.local_dir_other
+    loc_other = (loc_other.startsWith("/")) ? loc_other : "/"+loc_other;
     this.CONTROLLER_DIR =  __dirname + loc_contr;
     this.OTHER_DIR =  __dirname + loc_other;
     const PATHS_DATA = [
@@ -416,8 +419,10 @@ function KilledPartner(){
                     console.log("KilledPartner: emitting erorr!");
                     socket.emit(ev_name, {is_error: true, error: err});
                 }else{
-                    console.log("KilledPartner: emitting success!");
-                    socket.emit(ev_name, {is_killed: true});
+                    console.log("KilledPartner: emitting successafter 500 ms!");
+                    setTimeout(()=>{
+                        socket.emit(ev_name, {is_killed: true});
+                    },500)
                 }
             });
         });
