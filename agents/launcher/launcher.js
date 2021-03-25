@@ -1,3 +1,4 @@
+//launcher.js v1
 'use sctrict';
 const fs = require('fs');
 const path = require('path');
@@ -408,9 +409,9 @@ function KilledPartner(){
     this.run=(ev_name, socket)=>{
         console.log("KilledPartner.run()...");
         socket.on(ev_name, (msg)=>{
-            console.log("KilledPartner.run() pid =", msg.pid);
+            console.log("KilledPartner.run() msg =", msg);
             //TODO: 1. cmd_exec(kill) 2. socket.emit(ok)
-            this.kill_by_pid(msg.pid, err=>{
+            this.kill_by_pid(msg.pid, msg.ppid, err=>{
                 if(err){
                     console.log("KilledPartner: emitting erorr!");
                     socket.emit(ev_name, {is_error: true, error: err});
@@ -421,9 +422,10 @@ function KilledPartner(){
             });
         });
     }
-    this.kill_by_pid=(pid, cb)=>{
+    this.kill_by_pid=(pid, ppid, cb)=>{
         try { 
             process.kill(pid);
+            process.kill(ppid);
             cb(undefined);
         } catch(ex) {
             console.log("KilledPartner.kill_by_pid() Error: ", ex);

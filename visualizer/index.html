@@ -16,7 +16,7 @@
 	
 	<body style = 'margin:0px;' >
 		
-		<div class="nav_main" id = "nav_wrapper" style = "position:relative; overflow:hidden; ">
+		<div class="nav_main" id = "nav_wrap" style = "position:relative; overflow:hidden; ">
 			<div class="nav_jumper" id = "nav_transition" style = "position:absolute; overflow:hidden;">
 				nav menu
 			</div>
@@ -28,64 +28,50 @@
 		<script>
 			//document.body.onselectstart = function(){return false;}
 			//document.body.ondragstart = function(){return false;}			
-			
 			var endvr_server_address = "http://192.168.15.240:55999";
 			var global_agent_table;
-			
 			var server_;
 			//FRESH:0, SENT:1, GOT:2, DONE:3, EXTRA:4, ERR:5, BLOCKED:6, T_OUT:7,
 			var TSTATES = ["FRESH", "SENT", "GOT", "DONE", "EXTRA", "ERR", "BLOCKED", "T_OUT", "T_OUT2", "DROPPED"];
-			
 			onload = function()
 			{
 				console.log("onload");
 				//- syncronous function that connect to the web server by HTTP where it is running, for example localhost:55999
 				//-  and ask him about his socket.io address throw ajax and then assign it to endvr_server_address
 				get_socket_io_address()
-
 				//- define user browser
 				BrowserDetect.init();
-
 				//- function in core.js file, which bind mouse events 'mousedown', 'mouseup' for document
 				page_constructor();
-				
 				//- connect to server by socket.io and listen 'agent_table' event to receive info about agents and their tasks
 				connect_to_server();
-				
 				//- place 2 DIV blocks:
-				//-		'nav_wrapper' - navigation panel occupying the 5% part from the top
+				//-		'nav_wrap' - navigation panel occupying the 5% part from the top
 				//-		'main_div' - to display Agents table
 				var ww = $(window).width();
 				var wh = $(window).height();
-				
-				$("#"+"nav_wrapper").width(ww).height(wh*.1).css("left", 0+"px").css("top", 0+"px");
+				$("#"+"nav_wrap").width(ww).height(wh*.1).css("left", 0+"px").css("top", 0+"px");
 				//.css("border","1px solid orange")
-				ui_fill_nav_menu({id:"nav_wrapper", hang_listeners_on_inputs: true});
-
+				ui_fill_nav_menu({id:"nav_wrap", hang_listeners_on_inputs: true});
 				$("#"+"main_div").width(parseInt(ww)).height(parseInt(wh*.9)).css("left", parseInt(0)+"px").css("top", parseInt(0)+"px");
-				
 				$("#"+"main_div").bind({
-						click: function() {},
-						mouseenter: function() 
-						{
-							$("#"+"main_div").css("backgroundColor", "#fafafa");
-						},
-						mouseleave: function() 
-						{
-							$("#"+"main_div").css("backgroundColor", "#ffffff");
-						}
-					});
+					click: function() {},
+					mouseenter: function() 
+					{
+						$("#"+"main_div").css("backgroundColor", "#fafafa");
+					},
+					mouseleave: function() 
+					{
+						$("#"+"main_div").css("backgroundColor", "#ffffff");
+					}
+				});
 			}
-			
-			window.onresize = function()
-			{
+			window.onresize = function(){
 				var ww = $(window).width();
 				var wh = $(window).height();
-				$("#"+"nav_wrapper").width(ww).height(wh*.1).css("left", 0+"px").css("top", 0+"px");
+				$("#"+"nav_wrap").width(ww).height(wh*.1).css("left", 0+"px").css("top", 0+"px");
 				$("#"+"main_div").width(parseInt(ww)).height(parseInt(wh*.9)).css("left", parseInt(0)+"px").css("top", parseInt(0)+"px");
 			};
-			
-			
 			function get_socket_io_address(){
 				// 1. Create new XMLHttpRequest object
 				var xhr = new XMLHttpRequest();
@@ -101,8 +87,7 @@
 					endvr_server_address = xhr.responseText;
 				}
 			}
-			function get_socket_io_address_async()
-			{
+			function get_socket_io_address_async(){
 				return new Promise((resolve, reject)=>{
 					// 1. Создаём новый объект XMLHttpRequest
 					var xhr = new XMLHttpRequest();
@@ -125,7 +110,6 @@
 					}
 				});
 			}
-			
 			var my_socket_id = "";
 			function connect_to_server()
 			{
