@@ -1,4 +1,4 @@
-//controller.js1
+//controller.js55
 'use sctrict';
 const fs = require('fs');
 const path = require('path');
@@ -49,8 +49,11 @@ function App(){
                         "settings_", 
                         "comparedManifest_")
                 )
+                .with('updateDiffFiles', new UpdatedDiffFiles("settings_"))
                 .with('startPartner', new StartedPartner("settings_"))
                 .with('disk_space', new DiskSpace())
+                .with('nvidia_smi', new NvidiaSmi())
+                .with('exec_cmd', new ExecuteCommand())
         ).run();
 	}
 }
@@ -195,7 +198,6 @@ function IoSettings(settingsPath){
         return this;
     }
 }
-
 function SocketIoHandlers(ioWrap){
     this.ioWrap= ioWrap;
 	this.socket = undefined;
@@ -565,6 +567,119 @@ function UpdatedFiles(settings_, comparedManifest_){
         })
     }
 }
+function UpdatedDiffFiles(settings_){
+    this.settings = glob[settings_].read() || {}
+    let loc_launcher = this.settings.local_dir_launcher;
+    loc_launcher = loc_launcher.startsWith('/') ? loc_launcher : '/'+loc_launcher;
+    const LAUNCHER_DIR = __dirname + loc_launcher;
+    const REMOTE_DIR = this.settings.remote_dir;
+    //console.log("UpdatedDiffFiles.constr(): glob=",Object.keys(glob));
+    //@ this flag
+    this.is_keep_old_files = true;
+    this.is_timeout = true;
+    this.run=(ev_name, socket)=>{
+        console.log("UpdatedDiffFiles.run()...");
+        socket.on(ev_name, (remote_mans_diff)=>{
+            sync_dirs(remote_mans_diff, this.is_keep_old_files).then(err_names=>{
+                console.log("UpdatedDiffFiles: emitting success 'updateFiles' procedure");
+                if(err_names && err_names.length){
+                    socket.emit(ev_name, {is_updated: false, err_names: err_names});
+                }else{
+                    socket.emit(ev_name, {is_updated: true});
+                }
+            }).catch(err=>{
+                console.log("UpdatedDiffFiles: sync_dirs() Error: ",err);
+                socket.emit(ev_name, {is_error: true, error:err});
+            }).finally(()=>{ this.is_timeout = false; });
+            setTimeout(()=>{
+                if(this.is_timeout){ socket.emit(ev_name, {is_updated: false, is_error: true, error:"UpdatedDiffFiles TIMEOUT"}); }
+            }, 5000);
+        });
+    }
+    const sync_dirs=(mans_diff, is_keep_old_files)=>{
+        //@ mans_diff can be undefined
+        return new Promise((resolve, reject) => {
+            //@ dont touch The Old Files!
+            let files_to_write = concat_filelist_to_update(mans_diff, is_keep_old_files);
+            console.log("UpdatedDiffFiles.sync_dirs(): copy_files(): files_to_write=",files_to_write);
+            if(files_to_write.length==0){ return resolve(); }
+            createEmptyDirs(files_to_write).then(err_names=>{
+                console.log("UpdatedDiffFiles.sync_dirs(): createEmptyDirs(): err_names=",err_names);
+                return copy_files(files_to_write, "launcher", err_names);
+            }).then(err_names=>{
+                console.log("UpdatedDiffFiles.sync_dirs(): copy_files(): err_names=",err_names);
+                resolve(err_names);
+            }).catch(err=>{
+                console.log("UpdatedDiffFiles.sync_dirs(): Error:",err);
+                reject(err);
+            }); 
+        });
+    }
+    const concat_filelist_to_update=(mans_diff, is_keep_old_files)=>{
+        const fold_name = "launcher";
+        let files_to_write = [];
+        //@ mans_diff = {launcher: { new_files: [ [Array], [Array] ], old_files: [ [Array] ] } }
+        Object.keys(mans_diff[fold_name]).forEach(subtype=>{
+            if(is_keep_old_files && subtype=="old_files"){}
+            else{
+                files_to_write = files_to_write.concat(mans_diff[fold_name][subtype]);        
+            }
+        });
+        return files_to_write;
+    }
+    const copy_files=(files_to_write, update_fold_lvl2, error_names)=>{
+        console.log("UpdatedDiffFiles.copy_files() files_to_write=",files_to_write);
+        if(!update_fold_lvl2.startsWith("/")){ update_fold_lvl2 = "/"+update_fold_lvl2 }
+        return new Promise((resolve, reject) => {
+            const FNAME = 0;
+            let pending = files_to_write.length;
+            if(pending==0){return resolve();}
+            const err_names = error_names || [];
+            files_to_write.forEach(file_info=>{
+                console.log("copy_files() file_info=",file_info);
+                const is_end1 = file_info[FNAME].endsWith("\\");
+                const is_end2 = file_info[FNAME].endsWith("/");
+                if(is_end1 || is_end2){
+                    //@ Ignore Empty Dirs
+                    if (!--pending) { resolve(err_names); }
+                }else{
+                    const loc_file = LAUNCHER_DIR+file_info[FNAME] ;
+                    const rem_file = REMOTE_DIR+update_fold_lvl2+file_info[FNAME] ;
+                    console.log("copy_files() loc_file=",loc_file);
+                    console.log("copy_files() rem_file=",rem_file);
+                    fs.copyFile(rem_file, loc_file, (err)=>{
+                        if (err) {
+                            console.log("copy_files() Error=",err);
+                            err_names.push(file_info);
+                            if (!--pending) { resolve(err_names); }
+                        }   
+                        else {
+                            if (!--pending) { resolve(err_names); }
+                        }
+                    });
+                }
+            });
+        });
+    }
+    const createEmptyDirs=(files_to_write)=>{
+        return new Promise((resolve) => {
+            const FNAME = 0;
+            let pending = files_to_write.length;
+            if(pending==0){return resolve();}
+            const err_names = [];
+            files_to_write.forEach(file_info=>{
+                if(file_info[FNAME].endsWith("\\")){
+                    const loc_dir = LAUNCHER_DIR+file_info[FNAME] ;
+                    console.log("createEmptyDirs() loc_dir=",loc_dir);
+                    fs.mkdir(loc_dir, { recursive: true }, (err) => {
+                        if(err) {err_names.push(file_info);}
+                        if (!--pending) {resolve(err_names)}
+                    })
+                }else if(!--pending){resolve(err_names)}
+            });
+        })
+    }
+}
 function StartedPartner(settings_){
     this.settings = glob[settings_].read() || {}
     this.run=(ev_name, socket)=>{
@@ -634,10 +749,60 @@ function DiskSpace(){
         });
     }
 }
-
-//==================================================
-//==================================================
-
+function NvidiaSmi(){
+    this.run=(ev_name, socket)=>{
+        socket.on(ev_name, function(data){
+            console.log("NvidiaSmi.run() data=", data);
+            const NVIDIA_PATH = '"C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvidia-smi.exe"';
+            console.log("NvidiaSmi.run() checking NVIDIA_PATH:", NVIDIA_PATH);
+            fs.stat(NVIDIA_PATH, function(err) {
+                if(err){
+                    console.log("NvidiaSmi.run() err=", err);
+                    socket.emit(ev_name, {error:"no nvidia gpu on host"});
+                }else{
+                    execute_command(NVIDIA_PATH + '\r\n').then(cmd_out=>{
+                        let nvidia_info = parse_nvsmi_result(cmd_out);
+                        socket.emit(ev_name, {info:nvidia_info});
+                    }).catch(ex=>{
+                        console.log("ERR: NVSMI: fail to execute_command !");
+                        socket.emit(ev_name, {error:ex});
+                    });
+                }
+            });
+        })
+    }
+}
+function ExecuteCommand(){
+    this.wmic_commands_examples=[
+        "wmic process call create 'cmd.exe /c ping 10.30.10.101'" //arbitrary cmd
+    ]
+    this.run=(ev_name, socket)=>{
+        socket.on(ev_name, function(data){
+            console.log("ExecuteCommand.run(): socket data=",data);
+            //@ data = {name:"exec_cmd", cmd:"notepad.exe", condition: "exec_done", action:"write data: hi"}
+            if(data.cmd=="notepad.exe" || data.cmd=="notepad"){
+                data.cmd = "wmic process call create notepad.exe";
+            }
+            execute_command(data.cmd + '\r\n').then(cmd_out=>{
+                const process_id = parse_process_pid(cmd_out);
+                console.log("ExecuteCommand.run(): process id of ",data.cmd,"=",process_id);
+                socket.emit(ev_name, {info:cmd_out});
+            }).catch(ex=>{
+                console.log("ExecuteCommand.run(): fail to execute_command:",ex);
+                socket.emit(ev_name, {error:ex});
+            });
+        });
+    }
+    const parse_process_pid=(cmd_out)=>{
+        let res = false;
+        cmd_out.split(os.EOL).forEach(line=>{
+            if(line.trim().indexOf("ProcessId")>-1){
+                res = line.trim().split("=")[1].trim();
+            }
+        })
+        return res;
+    }
+}
 //----------PARSE NVIDIA GPU FUNCTIONS--------------
 function parse_nvsmi_result(str) {
 	let linesTmp = str.split(os.EOL);
@@ -767,120 +932,63 @@ function parse_nvsmi_result(str) {
 		else { console.log("unknown order:", order); return; }
 	}
 }
+function execute_command(command){
+    return new Promise((resolve,reject)=>{
+        if(typeof command != 'string'){return reject()}
+        var CMD = exec(command);
+        var stdout = '';
+        var stderr = false;
+        CMD.stdout.on('data', function (data) {
+            stdout += data.toString();
+        });
+        CMD.stderr.on('data', function (data) {
+            if (!stderr) { stderr = data.toString(); }
+            else { stderr += data.toString(); }
+        });
+        CMD.on('exit', function () {
+            resolve(stdout);
+        });
+        setTimeout(()=>{resolve({})},1000)
+        //CMD.stdin.write('wmic process get ProcessId,ParentProcessId,CommandLine \n');
+        //CMD.stdin.write(command+'\r\n');
+        //CMD.stdin.end();
+    });
+}
 
 //----------EXTERNAL FUNCTIONS--------------
-function sync_dirs_test(){
-    const loc_root = "../launcher/";
-    const rem_root = "\\ita52\\TMP";
-    const changes = []
-}
 //@ wrapping of copy_files() function with input array of full names param 
-function sync_dirs(changes, mcb, loc_root, rem_root){
-    //* changes = {copy_names:[[],[]], empty_dirs:[]}
-    loc_root = loc_root || "../launcher/";
-    rem_root = rem_root || GS.master.update_folder || SETT.update_folder;
-    let err_names = [];
-    let str_res;
-    console.log("============= changes =", changes);
-    if (changes instanceof Object){
-        copy_files(loc_root, rem_root, changes.copy_names).then(res=>{ 
-            //console.log("FILES COPIED: ERR FILES =", res);
-            err_names = err_names.concat(res);
-            //** even if emtpy folder copy will ended with error
-            create_empty_dirs(loc_root, changes.empty_dirs)
-            .then(res=>{ 
-                //console.log("EMPTY DIRS CREATED: ERROR DIRS =", res);
-                err_names = err_names.concat(res);
-                str_res = (err_names.length > 0) ? "defected" : "flawless"
-                mcb(err_names, str_res);
-            }).catch(ex=>{ 
-                console.log("ERR: sync_dirs(): create_empty_dirs():", ex); 
-                str_res = (err_names.length > 0) ? "defected" : "flawless"
-                mcb(err_names, str_res);
-            });
-        }).catch(ex=>{ 
-            console.log("ERR: sync_dirs(): copy_files():", ex);
-            mcb(copy_names, "useless");
-        });  
-    }else{
-        console.log("ERR sync_dirs(): changes param is not an Object:", changes);
-        mcb([], "useless");
-    }
-}
+// function sync_dirs(changes, mcb, loc_root, rem_root){
+//     loc_root = loc_root || "../launcher/";
+//     rem_root = rem_root || GS.master.update_folder || SETT.update_folder;
+//     let err_names = [];
+//     let str_res;
+//     console.log("============= changes =", changes);
+//     if (changes instanceof Object){
+//         copy_files(loc_root, rem_root, changes.copy_names).then(res=>{ 
+//             //console.log("FILES COPIED: ERR FILES =", res);
+//             err_names = err_names.concat(res);
+//             //** even if emtpy folder copy will ended with error
+//             create_empty_dirs(loc_root, changes.empty_dirs)
+//             .then(res=>{ 
+//                 //console.log("EMPTY DIRS CREATED: ERROR DIRS =", res);
+//                 err_names = err_names.concat(res);
+//                 str_res = (err_names.length > 0) ? "defected" : "flawless"
+//                 mcb(err_names, str_res);
+//             }).catch(ex=>{ 
+//                 console.log("ERR: sync_dirs(): create_empty_dirs():", ex); 
+//                 str_res = (err_names.length > 0) ? "defected" : "flawless"
+//                 mcb(err_names, str_res);
+//             });
+//         }).catch(ex=>{ 
+//             console.log("ERR: sync_dirs(): copy_files():", ex);
+//             mcb(copy_names, "useless");
+//         });  
+//     }else{
+//         console.log("ERR sync_dirs(): changes param is not an Object:", changes);
+//         mcb([], "useless");
+//     }
+// }
 //@ copy files from remote to local dir including creating missing dirs if not exist
-function copy_files(loc_root, rem_root, copy_names){
-    return new Promise((resolve, reject) => {
-        if (!Array.isArray(copy_names)){ copy_names = []; }
-        let pending = copy_names.length;
-        let err_names = [];
-        if (pending > 0){
-            copy_names.forEach((item, ind) => {
-                console.log("copying from:", rem_root+item, " to:", loc_root+item);
-                let loc_file = loc_root+item;
-                create_dir_if_need(loc_file, (err, path_dir) => {
-                    if (err) {
-                        err_names.push(path_dir);
-                        if (!--pending) { resolve(err_names); }
-                    }else{
-                        fs.copyFile(rem_root+item, loc_root+item, (err)=>{
-                            if(err){
-                                console.log("copy err=", err);
-                                err_names.push(item);
-                                if (!--pending) { resolve(err_names); }
-                            }else{
-                                if (!--pending) { resolve(err_names); }
-                            }
-                        });
-                    }
-                });
-            });
-        }
-        else { resolve(err_names); }
-    });
-}
-//* same code as in launcher.js
-function create_empty_dirs(loc_root, empty_dirs) 
-{
-    return new Promise((resolve, reject) => {
-        let pending = empty_dirs.length;
-        let err_names = [];
-        //console.log("__________________empty_dirs=", empty_dirs.length);
-        if (empty_dirs.length > 0) {    
-            empty_dirs.forEach((item, ind) => {
-                let loc_dir = loc_root+item;
-                fs.mkdir(loc_dir, { recursive: true }, (err) => {
-                    if(err) {
-                        console.log("ERR LOC DIR=", loc_dir);
-                        err_names.push(loc_dir);
-                        if (!--pending) { resolve(err_names); }
-                    }
-                    else {
-                        //console.log("CREATED LOC DIR=", loc_dir);
-                        if (!--pending) { resolve(err_names); }
-                    }
-                });
-            });
-        }
-        else { resolve(err_names); }
-    });
-}
-
-function create_dir_if_need(path_, cb)
-{
-    fs.stat(path_, (err, stats) => {
-        if ((err)&&(err.code == "ENOENT")) {
-            let file_index = path_.lastIndexOf("\\");
-            let path_dir = path_.slice(0, file_index);
-            //console.log("path_dir=", path_dir);
-            fs.mkdir(path_dir, { recursive: true }, (err) => {
-                if(err) { cb(err, path_dir) }
-                else { cb(null) }
-            });
-        }
-        else { cb(null); }
-
-    });
-}
 
 function exec_cmd_getmac(command_)
 {
@@ -923,32 +1031,7 @@ function exec_cmd_getmac(command_)
     });
 }
 
-function execute_command(command_)
-{
-    let command = command_ || "tasklist";
-    return new Promise((resolve,reject)=>{
-        var CMD = exec(command);
-        var stdout = '';
-        var stdoutres = '';
-        var stderr = null;
-        CMD.stdout.on('data', function (data) {
-            //console.log('---execute_command stdout chunk:', data);
-            stdout += data.toString();
-        });
-        CMD.stderr.on('data', function (data) {
-            //console.log('---execute_command stderr chunk:', data);
-            if (stderr === null) { stderr = data.toString(); }
-            else { stderr += data.toString(); }
-        });
-        CMD.on('exit', function () {
-            //console.log('---execute_command EXIT:', stdout);
-            resolve(stdout);
-        });
-        //CMD.stdin.write('wmic process get ProcessId,ParentProcessId,CommandLine \n');
-        //CMD.stdin.write(command+'\r\n');
-        //CMD.stdin.end();
-    });
-}
+
 
 // "./", "controller"
 function Manifest(){

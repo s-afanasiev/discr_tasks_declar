@@ -21,7 +21,9 @@
 	const jobs_schedule = 
     [
 		{name:"disk_space", condition: "lte 1 gb", action:"clean_space", interval:5000},
-		{name:"disk_space", condition: "gte 100 gb", action:"increase_traffic"}
+		{name:"disk_space", condition: "gte 100 gb", action:"increase_traffic"},
+		{name:"nvidia_smi", condition: "nvidia_exist", action:"do_render"},
+		{name:"exec_cmd", cmd:"notepad.exe", condition: "exec_done", action:"write data: hi"}
 	];
     //@ -----I-M-P-L-E-M-E-N-T-A-T-I-O-N-----
 	main();
@@ -166,7 +168,7 @@
         //@ browser connected by socket io
         this.welcomeAgent=(io_srv_msg)=>{
             //@ io_srv_msg = {agent_socket, browser_or_agent}
-            console.log("BrowserIoClients.welcomeAgent(): socket id =", io_srv_msg.agent_socket.id);
+            //console.log("BrowserIoClients.welcomeAgent(): socket id =", io_srv_msg.agent_socket.id);
             this.socket = io_srv_msg.agent_socket;
             this.socket.on('connect', ()=>{
                 console.log("BrowserIoClients connection: "+this.socket.id);
@@ -175,7 +177,7 @@
                 console.log("BrowserIoClients disconnection: "+this.socket.id);
             })
             this.socket.on('gui_ctrl', (msg)=>{
-                console.log("BrowserIoClients control_msg: ",msg);
+                //console.log("BrowserIoClients control_msg: ",msg);
                 this.updatableHostCluster.gui_ctrl(msg);
             })
         }
@@ -196,7 +198,6 @@
             this.updatableHostCluster = updatableHostCluster;
             this.browserIoClients = browserIoClients;
             require('socket.io')(this.httpServer.run().http).on('connection', (socket) => {
-                console.log("IoServer2.run() connection:"+socket.id);
                 console.log("IoServer2.run() query=", Object.values(socket.handshake.query).join("|"));
                 const io_srv_msg = { 
                     agent_socket: socket,
@@ -204,13 +205,13 @@
                     agent_identifiers: new ParsedJSON(socket.handshake.query.agent_identifiers).run()
                 }
                 if(io_srv_msg.browser_or_agent == "agent"){
-                    console.log("UpdatableHostCluster.socketConnected() Agent connected!");
+                    //console.log("UpdatableHostCluster.socketConnected() Agent connected!");
                     this.updatableHostCluster.welcomeAgent(io_srv_msg);
                 }else if(io_srv_msg.browser_or_agent == "browser"){
-                    console.log("UpdatableHostCluster.socketConnected() Browser connected!");
+                    //console.log("UpdatableHostCluster.socketConnected() Browser connected!");
                     this.browserIoClients.welcomeAgent(io_srv_msg);
                 }else{
-                    console.log("UpdatableHostCluster.socketConnected() error: nor browser or agent!");
+                    console.error("UpdatableHostCluster.socketConnected() error: nor browser or agent!");
                 }
             });
         }
@@ -236,11 +237,11 @@
             );
         }
         //@ new manifest, means there was changes in update folder
-        this.propagateManifest=(manifest_regular)=>{
-            this.hostCluster.propagateManifest(manifest_regular);
+        this.propagateManifestDiff=(mans_diff)=>{
+            this.hostCluster.propagateManifestDiff(mans_diff);
         }
         this.gui_ctrl=(msg)=>{
-            console.log("UpdatableHostCluster.gui_ctrl() msg=",msg);
+            //console.log("UpdatableHostCluster.gui_ctrl() msg=",msg);
             this.hostCluster.gui_ctrl(msg);
         }
     }
@@ -266,23 +267,25 @@
         this.run = function(hostCluster){
             this.hostCluster=hostCluster;
             this.prev_mans = this.dirStructure.allMansSync(update_paths); //sync
-            console.log("Manifest.run(): this.prev_mans=",this.prev_mans);
+            //console.log("Manifest.run(): this.prev_mans=",this.prev_mans);
             setTimeout(()=>{this.nextManifest()}, this.timer);
             return this;       
         }        
         this.nextManifest = function(){
             this.dirStructure.allMansAsync(update_paths).then(next_mans=>{
-                console.log("Manifest.nextManifest(): next_mans=",next_mans);
+                //console.log("Manifest.nextManifest(): next_mans=",next_mans);
                 const dirs_compare_diff = this.dirsComparing.compare(next_mans, this.prev_mans);
-                console.log("Manifest.nextManifest(): dirs_compare_diff=",dirs_compare_diff);
+                //console.log("Manifest.nextManifest(): dirs_compare_diff=",dirs_compare_diff);
                 //@ e.g.: dirs_compare_diff = { launcher: { new_files: [], files_to_change: [ [Array] ], old_files: [] } }
                 if(dirs_compare_diff) {
-                    console.log("Manifest.nextManifest():CHANGES EXIST!");
+                    //console.log("Manifest.nextManifest():CHANGES EXIST!");
                     this.prev_mans = next_mans;
-                    this.hostCluster.propagateManifest(dirs_compare_diff);
-                }else{console.log("Manifest.nextManifest(): No changes!");}
+                    this.hostCluster.propagateManifestDiff(dirs_compare_diff);
+                }else{
+                    //console.log("Manifest.nextManifest(): No changes!");
+                }
             }).catch(err=>{
-                console.log("Manifest: nextManifest() Error:"+err);
+                console.error("Manifest: nextManifest() Error:"+err);
             }).finally(()=>{
                 //console.log("Manifes.tnextManifest(): finally: new manifest check will after "+this.timer+ " ms...");
                 setTimeout(()=>{this.nextManifest()}, this.timer);
@@ -300,7 +303,9 @@
                 const cur_path_without_root = (cur_path.length > root_path.length) ? cur_path.slice(root_path.length) : "";
                 var list;
                 try{list = fs.readdirSync(cur_path);}
-                catch(err){console.log("ERROR: ",err);}
+                catch(err){
+                    console.error("DirStructure.manOfDirSync() ERROR: ",err);
+                }
                 list.forEach(function(file){
                     const file_path_without_root = cur_path_without_root + "\\" + file;
                     const file_path = cur_path + "\\" + file;
@@ -335,7 +340,10 @@
                             let file_path_without_root = cur_path_without_root + "\\" + file;
                             file = cur_path + "\\" + file;
                             fs.stat(file, function(err, stat) {
-                                if (stat && stat.isDirectory()) {
+                                if(err){
+                                    console.error("DirStructure.manOfDirAsync() fs.stat Error: ",err);
+                                    if (!--pending) cbDone(err);
+                                }else if (stat && stat.isDirectory()) {
                                     walk(file, root_path, function(err, list2) {
                                         if(err) return cbDone(err);
                                         if(list2.length==0){
@@ -363,7 +371,7 @@
                     result[path_data.name] = this.manOfDirSync(path_data.path);
                     //console.log("DirStructure.allMansSync(): result=", result[path_data.name]);
                 }catch(err){
-                    console.log("DirStructure.allMansSync(): ERROR: ", err);
+                    console.error("DirStructure.allMansSync(): ERROR: ", err);
                 }
             });
             return result;
@@ -379,7 +387,7 @@
                         result[path_data.name] = res;
                         if(!--pending){resolve(result)}
                     }).catch(err=>{
-                        console.log("ERROR: ", err);
+                        console.error("DirStructure.allMansAsync() ERROR: ", err);
                         if(!--pending){resolve(result)}
                     })
                 });
@@ -464,7 +472,7 @@
                 if (typeof date == "object") return date.getTime();
                 else if(typeof date == "string") return Date.parse(date);
                 else{
-                    console.log("Converting Date to Ms ERROR: Unknown type of input date: ", date);
+                    console.error("Converting Date to Ms ERROR: Unknown type of input date: ", date);
                     return 0;
                 }
             }
@@ -483,22 +491,22 @@
 		this.welcomeAgent = (io_conn, manifest_snapshot)=>{
 			//@ conn = {agent_socket: socket, browser_or_agent: "agent" || "browser", agent_identifiers: {agent_identifiers}
             const ag_present = Object.values(io_conn.agent_identifiers).join("|");
-            console.log("HostCluster.welcomeAgent(): agent: ",ag_present);
+            //console.log("HostCluster.welcomeAgent(): agent: ",ag_present);
 			agentRecognizing.instance(io_conn.agent_identifiers).run(io_conn.agent_socket).then(agent_ids=>{
                 this.hostByMd5(agent_ids).welcomeAgent(io_conn.agent_socket, agent_ids, manifest_snapshot)
             }).catch(err=>{
-                console.log("HostCluster.welcomeAgent() agent recognizing Error:",err);
+                console.error("HostCluster.welcomeAgent() agent recognizing Error:",err);
             })
             return this;
 		}
-		this.propagateManifest = (manifest_regular)=>{
+		this.propagateManifestDiff = (mans_diff)=>{
             _hosts_list.forEach(host=>{
-                host.propagateManifest(manifest_regular);
+                host.propagateManifestDiff(mans_diff);
             });
 		}
 		this.hostByMd5 = (agent_ids)=>{
 			let host_index = -1;
-			console.log("_hosts_list length="+_hosts_list.length);
+			//console.log("_hosts_list length="+_hosts_list.length);
 			//console.log("_hosts_list ="+JSON.stringify(_hosts_list));
 			for(let i=0; i<_hosts_list.length; i++){
 				if(_hosts_list[i].commonMd5() == agent_ids.md5){
@@ -516,7 +524,10 @@
             return agentObj;
         }
         this.gui_ctrl=(msg)=>{
-            console.log("HostCluster.gui_ctrl() msg=",msg);
+            //console.log("HostCluster.gui_ctrl() msg=",msg);
+            if(!msg){
+                console.error("HostCluster.gui_ctrl() No msg: ",msg);
+            }
             if(msg=='host_table'){
                 const result = _hosts_list.map(host=>{
                     let res = {};
@@ -543,7 +554,7 @@
                     //console.log("AgentRecognizing.identifiers(): emit 'identifiers' event");
                     const socket_handler=function(identifiers){
                         //@ identifiers = {agent_type, sid, md5, ip, pid, ppid, apid}
-                        console.log("AgentRecognizing.identifiers() as is",identifiers);
+                        //console.log("AgentRecognizing.identifiers() as is",identifiers);
                         resolve(identifiers?identifiers:{});
                     }
                     socket.emit('identifiers').once('identifiers',socket_handler);
@@ -590,9 +601,10 @@
         this.commonMd5=()=>{return this.creator_ids.md5}
         this.creatorType=()=>{return this.creator_ids.ag_type}
         this.creatorPid=()=>{return this.creator_ids.pid}
+        this.creatorPpid=()=>{return this.creator_ids.ppid}
         this.creatorApid=()=>{return this.creator_ids.apid}
 		this.instance = function(creator_ids){
-            console.log("HostAsPair.instance(): creator type is ",creator_ids.ag_type);
+            //console.log("HostAsPair.instance(): creator type is ",creator_ids.ag_type);
             const ag_type = creator_ids.ag_type;
 			return new HostAsPair(
 				this.launcher.instance((ag_type==="launcher"?creator_ids:undefined), this),
@@ -609,14 +621,14 @@
                     result.launcher = {}
                     result.launcher.agent_type = this.launcher.agentType();
                     result.launcher.agent_pid = this.launcher.agentPid();
-                    result.launcher.agent_pid = this.launcher.agentPpid();
+                    result.launcher.agent_ppid = this.launcher.agentPpid();
                     result.launcher.agent_apid = this.launcher.agentApid();
                 }
                 if(this.controller.isOnline()){
                     result.controller = {}
                     result.controller.agent_type = this.controller.agentType();
                     result.controller.agent_pid = this.controller.agentPid();
-                    result.controller.agent_pid = this.controller.agentPpid();
+                    result.controller.agent_ppid = this.controller.agentPpid();
                     result.controller.agent_apid = this.controller.agentApid();
                 }
                 return result;
@@ -624,7 +636,7 @@
         }
         //@ param data = {msg:"", ag_type:"launcher", obj:<object of Launcher or Controller>}
         this.gui_news=(data)=>{
-            if(!this.browserIoClients){ return console.log("HostAspair.gui_news(): No browserIoClients object "); }
+            if(!this.browserIoClients){ return console.error("HostAspair.gui_news(): No browserIoClients object "); }
             if(data.msg == "host_born"){
                 data.creator_type = this.creatorType();
                 data.creator_pid = this.creatorPid();
@@ -656,42 +668,41 @@
             const l_on = this.launcher.isOnline();
             const c_on = this.controller.isOnline();
             if(l_on && !c_on){
-                console.log("HostAsPair: only launcher is online...");
+                //console.log("HostAsPair: only launcher is online...");
                 this.launcher.compareCurManifest(this.last_manifest_snapshot()).then(res=>{
                     //@res = {compare:false, kill:false, update:false, start:true}
                 }).catch(err=>{
-                    console.log("HostAsPair: this.launcher.compareCurManifest() Error 1: ",err);
+                    console.error("HostAsPair: this.launcher.compareCurManifest() Error 1: ",err);
                 })
             //@ this situation can occur, when both agents was continued to work, but server was restarted.
             }else if(!l_on && c_on){
-                console.log("HostAsPair: only controller is online...");
+                //console.log("HostAsPair: only controller is online...");
                 this.controller.compareCurManifest(this.last_manifest_snapshot()).then(res=>{
 
                 }).catch(err=>{
-                    console.log("HostAsPair: this.controller.compareCurManifest() Error 1: ",err);
+                    console.error("HostAsPair: this.controller.compareCurManifest() Error 1: ",err);
                 })
             }
             else if(l_on && c_on){
-                console.log("HostAsPair: Launcher and Controller are online...");
+                //console.log("HostAsPair: Launcher and Controller are online...");
                 this.launcher.compareCurManifest(this.last_manifest_snapshot()).then(msg=>{
-                    console.log("HostAsPair: after Launcher's comparing result=",msg);
+                    //console.log("HostAsPair: after Launcher's comparing result=",msg);
                     //@res = {compare:false, kill:false, update:false, start:true}
                     if(!msg.is_killed){
                         this.controller.compareCurManifest(this.last_manifest_snapshot()).then(res=>{
-                            console.log("run_agents_after_first_host_init_timeout(): both agents has updates each other");
+                            //console.log("run_agents_after_first_host_init_timeout(): both agents has updates each other");
                         }).catch(err=>{
-                            console.log("HostAsPair: this.controller.compareCurManifest() Error: ",err);
+                            console.error("HostAsPair: this.controller.compareCurManifest() Error: ",err);
                         })
                     }else{
-                        console.log("HostAsPair: l and cwas online, then l compared and killed c")
+                        console.error("HostAsPair: l and cwas online, then l compared and killed c")
                     }
                 }).catch(err=>{
-                    console.log("HostAsPair: this.launcher.compareCurManifest() Error 2: ",err);
+                    console.error("HostAsPair: this.launcher.compareCurManifest() Error 2: ",err);
                 })
             //@-----------------------------------------------------------
             }else{
-                console.log("HostAsPair: Unhandled situation!");
-                console.log("launcher state:", this.launcher.isOnline(), ", controller state:", this.controller.isOnline());
+                console.error("HostAsPair: Unhandled situation! launcher state:", this.launcher.isOnline(), ", controller state:", this.controller.isOnline());
             }
         }
         //@ when first time calling this method
@@ -700,7 +711,7 @@
             //console.log("HostAsPair.welcomeAgent(): manifest_snapshot=",manifest_snapshot)
             if(this.connectedAgentsThrottle.adaptConnectedAgent(agent_ids).isAllowed()){
                 const ag_type = agent_ids.ag_type;
-                console.log("HostAsPair.welcomeAgent() agent",ag_type,"passed!");
+                //console.log("HostAsPair.welcomeAgent() agent",ag_type,"passed!");
                 if(ag_type=="launcher"){
                     this[ag_type].welcomeAgent(agent_socket, agent_ids, manifest_snapshot, this.controller);
                 }else if(ag_type=="controller"){
@@ -709,54 +720,54 @@
                 //@ first host init and agents update was finished.Now its a new agents connections and new singles comparings.
                 if(this.is_init_timeout()){
                     this[ag_type].compareCurManifest(this.manifest_snapshot).then(res=>{
-                        console.log("HostAsPair.welcomeAgent(): is_init_timeout()",res);
+                        //console.log("HostAsPair.welcomeAgent(): is_init_timeout()",res);
                     }).catch(err=>{
-                        console.log("HostAsPair.welcomeAgent() after is_init_timeout() Error2: ", err);
+                        console.error("HostAsPair.welcomeAgent() after is_init_timeout() Error2: ", err);
                     });
                 }
             }else{
-                console.log("HostAsPair.welcomeAgent(): Throttle blocked the agent! ", Object.values(agent_ids).join("|"));
+                console.error("HostAsPair.welcomeAgent(): Throttle blocked the agent! ", Object.values(agent_ids).join("|"));
             }
 		}
-        this.propagateManifest = (man_regular)=>{
-            this.manifest_regular = man_regular;
+        this.propagateManifestDiff = (mans_diff)=>{
+            this.manifest_regular = mans_diff;
             //@ 1) Look For WHom updates intended: manifest looks for 3 dirs: [controller, launcher, other]
             //@ 2.1)  Either for both agents updates
             //@ 2.2)  Or a somebody one
-            if(man_regular.controller && man_regular.launcher){
-                console.log("HostAsPair.propagateManifest() new files in LAUNCHER and CONTROLLER folders");
-                this.launcher.propagateManifest([man_regular.controller,man_regular.other]).then(res=>{
+            if(mans_diff.controller && mans_diff.launcher){
+                //console.log("HostAsPair.propagateManifestDiff() new files in LAUNCHER and CONTROLLER folders");
+                this.launcher.propagateManifestDiff(mans_diff).then(res=>{
                     //@res = {is_cnahges:false, is_killed:false, is_updated:false, is_started:true}
                     if(!res.error){
-                        this.controller.propagateManifest(man_regular.launcher).then(res=>{
-                            console.log("after propagateManifest both agents has updates each other");
+                        this.controller.propagateManifestDiff(mans_diff).then(res=>{
+                            //console.log("after propagateManifest both agents has updates each other");
                         }).catch(err=>{
-                            console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.controller.propagateManifest() Error 1: ",err);
+                            console.error("HostAsPair: run_agents_after_first_host_init_timeout(): this.controller.propagateManifestDiff() Error 1: ",err);
                         })
                     }else{
-                        console.log("HostAsPair.propagateManifest() after launcher propagating error:",res.error);
+                        console.error("HostAsPair.propagateManifestDiff() after launcher propagating error:",res.error);
                     }
                 }).catch(err=>{
-                    console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.launcher.propagateManifest() Error 1: ",err);
+                    console.error("HostAsPair: run_agents_after_first_host_init_timeout(): this.launcher.propagateManifestDiff() Error 1: ",err);
                 })
-            }else if(man_regular.controller || man_regular.other){
-                console.log("HostAsPair.propagateManifest() new files in CONTROLLER or OTHER folders");
+            }else if(mans_diff.controller || mans_diff.other){
+                //console.log("HostAsPair.propagateManifestDiff() new files in CONTROLLER or OTHER folders");
                 //@ 2.2)  launcher must update controller
-                this.launcher.propagateManifest([man_regular.controller,man_regular.other]).then(res=>{
-                    console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.launcher.propagateManifest() OK: ",res);
+                this.launcher.propagateManifestDiff(mans_diff).then(res=>{
+                    //console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.launcher.propagateManifestDiff() OK: ",res);
                 }).catch(err=>{
-                    console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.launcher.propagateManifest() Error 2: ",err);
+                    console.error("HostAsPair: run_agents_after_first_host_init_timeout(): this.launcher.propagateManifestDiff() Error 2: ",err);
                 });
-            }else if(man_regular.launcher){
-                console.log("HostAsPair.propagateManifest() new files in LAUNCHER folder");
+            }else if(mans_diff.launcher){
+                //console.log("HostAsPair.propagateManifestDiff() new files in LAUNCHER folder");
                 //@ 2.3)  controller must update launcher
-                this.controller.propagateManifest(man_regular.launcher).then(res=>{
-                    console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.controller.propagateManifest() OK: ",res);
+                this.controller.propagateManifestDiff(mans_diff).then(res=>{
+                    //console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.controller.propagateManifestDiff() OK: ",res);
                 }).catch(err=>{
-                    console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.controller.propagateManifest() Error 2: ",err);
+                    console.error("HostAsPair: run_agents_after_first_host_init_timeout(): this.controller.propagateManifestDiff() Error 2: ",err);
                 });
             }else{
-                console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.propagateManifest() Unknown Error!");
+                console.error("HostAsPair: run_agents_after_first_host_init_timeout(): this.propagateManifestDiff() Unknown Error!");
             }
             
         }
@@ -785,13 +796,13 @@
                 this.switchCurrentAgentAllowed(true);
             }else{
                 this.switchCurrentAgentAllowed(false);
-                console.log("ConnectedAgentsThrottle: Unknow Agent type: ",agent_ids);
+                console.error("ConnectedAgentsThrottle: Unknow Agent type: ",agent_ids);
                 return this;
             }
             //@ so if one Agent already exist and there is coming one more the same Agent, In fact, we prohibit duplicates.
             if(this[ag_type].isOnline()){
                 this.switchCurrentAgentAllowed(false);
-                console.log("ConnectedAgentsThrottle: Agent dublicated: ", Object.values(agent_ids).join("|"));
+                console.error("ConnectedAgentsThrottle: Agent dublicated: ", Object.values(agent_ids).join("|"));
             }else{
                 this.switchCurrentAgentAllowed(true);
             }
@@ -852,7 +863,7 @@
             this.agent_ids = agent_ids;//{ag_type, md5, ip, pid, ppid, apid} 
             this.manifest_snapshot = manifest_snapshot;
             this.partner = partner;
-            console.log("Launcher.welcomeAgent(): partner online:",partner.isOnline());
+            //console.log("Launcher.welcomeAgent(): partner online:",partner.isOnline());
             //@------------------------------------
             this.switchOnline(true);
             this.gui_news("agent_online");
@@ -861,7 +872,7 @@
         this.listenForDisconnect=()=>{
             this.agent_socket.once('disconnect', ()=>{
                 this.switchOnline(false);
-                console.log("LAUNCHER DISCONNECTED");
+                //console.log("LAUNCHER DISCONNECTED");
                 this.gui_news("agent_offline");
                 this.agent_socket = undefined;
             });
@@ -874,7 +885,7 @@
                 const man_for_launcher = {};
                 man_for_launcher.controller = man.controller;
                 man_for_launcher.other = man.other;
-                console.log("Launcher.compareCurManifest(): man_for_launcher=", man_for_launcher);
+                //console.log("Launcher.compareCurManifest(): man_for_launcher=", man_for_launcher);
                 this.agentUpdateChain.instance(this, man_for_launcher).run(this.socketio(), this.partner).then(res=>{
                     resolve(res);
                 }).catch(err=>{
@@ -886,16 +897,17 @@
             });
         }
         //@ launher must check controller's work Mode (normal or special ?)
-        this.propagateManifest=(man)=>{
+        this.propagateManifestDiff=(mans_diff)=>{
             //@ Special Mode - E.g. COntroller Doing a Render
             return new Promise((resolve,reject)=>{
                 if(this.partner && !this.partner.isSpecialMode()){
                     this.switchUpdateMode(true);
                     this.gui_news("update mode on");
-                    const man_for_launcher = {};
-                    man_for_launcher.controller = man.controller;
-                    man_for_launcher.other = man.other;
-                    new AgentUpdateWithoutCompare(this, man_for_launcher).run(this.socketio(), this.partner).then(res=>{
+                    const mans_diff_for_launcher = {};
+                    mans_diff_for_launcher.controller = mans_diff.controller;
+                    mans_diff_for_launcher.other = mans_diff.other;
+                    //console.log("-----Launcher.propagateManifestDiff() mans_diff_for_launcher=",mans_diff_for_launcher);
+                    new AgentUpdateWithoutCompare(this, mans_diff_for_launcher).run(this.socketio(), this.partner).then(res=>{
                         resolve({is_patched: true});
                     }).catch(err=>{
                         reject({is_patched: false, error: err});
@@ -904,7 +916,7 @@
                         this.gui_news("update mode off");
                     })
                 }else{
-                    console.log("Launcher.propagateManifest(): can not update the Controller in Special mode");
+                    //console.log("Launcher.propagateManifestDiff(): can not update the Controller in Special mode");
                     this.gui_news("can not update the Controller in Special mode");
                     resolve({is_patched: false, details: "special mode"});
                 }
@@ -971,7 +983,7 @@
             return this;
         }
 		this.welcomeAgent = (agent_socket, agent_ids, manifest_snapshot, partner)=>{
-            console.log("Controller.welcomeAgent(): partner online:",partner.isOnline());
+            //console.log("Controller.welcomeAgent(): partner online:",partner.isOnline());
 			this.agent_socket = agent_socket;
 			this.agent_ids = agent_ids;//{ag_type, md5, ip, pid, ppid, apid} 
 			this.manifest_snapshot = manifest_snapshot;
@@ -983,7 +995,7 @@
         this.listenForDisconnect=()=>{
             this.agent_socket.once('disconnect', ()=>{
                 this.switchOnline(false);
-                console.log("CONTROLLER DISCONNECTED");
+                //console.log("CONTROLLER DISCONNECTED");
                 this.gui_news("agent_offline");
                 this.agent_socket = undefined;
             });
@@ -1007,13 +1019,13 @@
                 })
             });
         }
-        this.propagateManifest=(man_regular)=>{
+        this.propagateManifestDiff=(mans_diff)=>{
             return new Promise((resolve,reject)=>{
                 this.switchUpdateMode(true);
                 this.gui_news("update mode on");
-                const man_for_controller = {};
-                man_for_controller.launcher = man_regular.launcher;
-                new AgentUpdateWithoutCompare(this, man_for_controller).run(this.socketio(), this.partner).then(res=>{
+                const mans_diff_for_controller = {};
+                mans_diff_for_controller.launcher = mans_diff.launcher;
+                new AgentUpdateWithoutCompare(this, mans_diff_for_controller).run(this.socketio(), this.partner).then(res=>{
                     resolve({is_patched: true});
                 }).catch(err=>{
                     reject({is_patched: false, error: err});
@@ -1060,16 +1072,16 @@
             });
         }
     }
-    function AgentUpdateWithoutCompare(creator, manifest){
-        this.manifest=manifest;
-        this.instance=(manifest)=>{return new AgentUpdateWithoutCompare(creator, manifest)}
+    function AgentUpdateWithoutCompare(creator, mans_diff){
+        this.mans_diff=mans_diff;
+        this.instance=(mans_diff)=>{return new AgentUpdateWithoutCompare(creator, mans_diff)}
         this.run=(socket, partner)=>{
             return new Promise((resolve,reject)=>{
                 new StartingPartner(
-                    new UpdatingFiles(
+                    new UpdatingDiffFiles(
                         new KillingPartnerWithoutComparing()
                     )
-                ).run(socket, creator, partner, this.manifest).then(res=>{
+                ).run(socket, creator, partner, this.mans_diff).then(res=>{
                     resolve(res);
                 }).catch(err=>{
                     reject(err);
@@ -1080,11 +1092,11 @@
     function StartingPartner(updatingFiles){
         this.updatingFiles=updatingFiles;
         //this.instance=()=>{return new StartingPartner(this.updatingFiles.instance())}
-        this.run=(socket, creator, partner, manifest)=>{
-            console.log("StartingPartner.run() creator is ", creator.agentType());
+        this.run=(socket, creator, partner, man_or_mans_diff)=>{
+            //console.log("StartingPartner.run() creator is ", creator.agentType());
             return new Promise((resolve,reject)=>{
-                this.updatingFiles.run(socket, creator, partner, manifest).then(chain_msg=>{
-                    console.log("StartingPartner.run(): after updatingFiles chain_msg= ",chain_msg);
+                this.updatingFiles.run(socket, creator, partner, man_or_mans_diff).then(chain_msg=>{
+                    //console.log("StartingPartner.run(): after updatingFiles chain_msg= ",chain_msg);
                     if(chain_msg.is_updated){
                         if(partner && partner.isOnline()){
                             //@ TODO: May be TIMEOUT HERE on 100 ms ???
@@ -1094,7 +1106,7 @@
                         }else{
                             creator.gui_news("starting the partner...");
                             this.start_partner(socket).then(start_msg=>{
-                                console.log("StartingPartner.run(): start_partner().then: res= ",start_msg);
+                                //console.log("StartingPartner.run(): start_partner().then: res= ",start_msg);
                                 const extended_msg = Object.assign(chain_msg, start_msg);
                                 creator.gui_news("the partner is started");
                                 resolve(extended_msg);
@@ -1105,11 +1117,11 @@
                         }
                     }else{
                         if(chain_msg.is_error){
-                            console.log("StartingPartner.run(): after updatingFiles error: ", chain_msg.error);
+                            console.error("StartingPartner.run(): after updatingFiles error: ", chain_msg.error);
                         }else if(chain_msg.err_names && chain_msg.err_names.length){
-                            console.log("StartingPartner.run(): after updatingFiles AGENT CANT COPY FILES: ", chain_msg.err_names);
+                            console.error("StartingPartner.run(): after updatingFiles AGENT CANT COPY FILES: ", chain_msg.err_names);
                         }else{
-                            console.log("StartingPartner.run(): after updatingFiles chain_msg=", chain_msg);
+                            //console.log("StartingPartner.run(): after updatingFiles chain_msg=", chain_msg);
                         }
                         reject("StartingPartner: fail after updatingFiles, chain_msg=", chain_msg);
                     }
@@ -1129,21 +1141,58 @@
             })
         }
     }
+    function UpdatingDiffFiles(killingPartner){
+        this.killingPartner=killingPartner;
+        //this.instance=()=>{return new UpdatedDiffFiles(this.killingPartner.instance())}
+        this.run=(socket, creator, partner, mans_diff)=>{
+            //console.log("UpdatedDiffFiles.run() creator is ", creator.agentType());
+            return new Promise((resolve,reject)=>{
+                this.killingPartner.run(socket, creator, partner, mans_diff).then(chain_msg=>{
+                    creator.gui_news("Starting update the files");
+                    //console.log("UpdatedDiffFiles.run() before update_files() calling");
+                    this.update_diff_files(socket, mans_diff).then(update_msg=>{
+                        //console.log("UpdatedDiffFiles.run() after update_files update_msg=",update_msg);
+                        creator.gui_news("the updating files was replaced");
+                        //@ expect that update_msg will be equals {is_updated:true}
+                        const extended_msg = Object.assign(chain_msg, update_msg);
+                        //console.log("UpdatedDiffFiles.run() extended_msg=",extended_msg);
+                        resolve(extended_msg);
+                    }).catch(err=>{
+                        creator.gui_news("fail to update the files: "+err);
+                        reject("UpdatedDiffFiles: "+err);
+                    });
+                }).catch(err=>{
+                    reject("UpdatedDiffFiles->killingPartner rejected: "+err);
+                })
+            });
+        }
+        this.update_diff_files=(socket, mans_diff)=>{
+            return new Promise((resolve,reject)=>{
+                const EV_NAME = "updateDiffFiles";
+                const resolve_handler = function(res){resolve(res);}
+                socket.emit(EV_NAME, mans_diff).once(EV_NAME, resolve_handler);
+                setTimeout(()=>{
+                    socket.removeListener(EV_NAME, resolve_handler);
+                    reject(EV_NAME+" timeout. ");
+                }, 5000);
+            })
+        }
+    }
     function UpdatingFiles(killingPartner){
         this.killingPartner=killingPartner;
         //this.instance=()=>{return new UpdatingFiles(this.killingPartner.instance())}
         this.run=(socket, creator, partner, manifest)=>{
-            console.log("UpdatingFiles.run() creator is ", creator.agentType());
+            //console.log("UpdatingFiles.run() creator is ", creator.agentType());
             return new Promise((resolve,reject)=>{
                 this.killingPartner.run(socket, creator, partner, manifest).then(chain_msg=>{
                     if(chain_msg.is_changes){
                         creator.gui_news("Starting update the files");
-                        console.log("UpdatingFiles.run() before update_files() calling");
+                        //console.log("UpdatingFiles.run() before update_files() calling");
                         this.update_files(socket, manifest).then(update_msg=>{
-                            console.log("UpdatingFiles.run() after update_files update_msg=",update_msg);
+                            //console.log("UpdatingFiles.run() after update_files update_msg=",update_msg);
                             creator.gui_news("the updating files was replaced");
                             const extended_msg = Object.assign(chain_msg, update_msg);
-                            console.log("UpdatingFiles.run() extended_msg=",extended_msg);
+                            //console.log("UpdatingFiles.run() extended_msg=",extended_msg);
                             resolve(extended_msg);
                         }).catch(err=>{
                             creator.gui_news("fail to update the files: "+err);
@@ -1196,14 +1245,14 @@
     }
     function KillingPartnerWithoutComparing(){
         this.run=(socket, creator, partner, manifest)=>{
-            console.log("KillingPartnerWithoutComparing.run() creator is ", creator.agentType());
+            //console.log("KillingPartnerWithoutComparing.run() creator is ", creator.agentType());
             return new Promise((resolve,reject)=>{
                 //console.log("KillingPartnerWithoutComparing.run(): creator=", creator);
                 const cond2 = (partner) ? partner.isOnline() : false; //partner must be online, otherwise nothing to kill
                 const cond3 = (creator.agentType()=="launcher") ? partner.isSpecialMode() : false; // if special mode kinda 'render' when we can't kill
                 if(cond2 & !cond3){
                     creator.gui_news("sending kill signal with pid "+partner.agentPid());
-                    console.log("KillingPartner: sending kill signal, pid=",partner.agentPid());
+                    //console.log("KillingPartner: sending kill signal, pid=",partner.agentPid());
                     this.kill_partner(socket, partner.agentPid(), partner.agentPpid()).then(kill_msg=>{
                         creator.gui_news("the partner was killed");
                         resolve(kill_msg);
@@ -1220,7 +1269,7 @@
         this.kill_partner=(socket, pid, ppid)=>{
             return new Promise((resolve,reject)=>{
                 const resolve_handler = function(res){
-                    console.log("KillingPartnerWithoutComparing.kill_partner() answer=", res);
+                    //console.log("KillingPartnerWithoutComparing.kill_partner() answer=", res);
                     resolve(res||{is_killed:true});
                 }
                 socket.emit("killPartner", {pid, ppid}).once("killPartner", resolve_handler);
@@ -1245,10 +1294,10 @@
                     const cond1 = compare_msg.is_changes; //changes must exist, otherwise no need to kill
                     const cond2 = (partner) ? partner.isOnline() : false; //partner must be online, otherwise nothing to kill
                     const cond3 = (creator.agentType()=="launcher") ? partner.isSpecialMode() : false; // if special mode kinda 'render' when we can't kill
-                    console.log("KillingPartner: conditions:",cond1,cond2,!cond3);
+                    //console.log("KillingPartner: conditions:",cond1,cond2,!cond3);
                     if(cond1 & cond2 & !cond3){
                         creator.gui_news("sending kill signal with pid "+partner.agentPid());
-                        console.log("KillingPartner: sending kill signal, pid=",partner.agentPid());
+                        //console.log("KillingPartner: sending kill signal, pid=",partner.agentPid());
                         this.kill_partner(socket, partner.agentPid(), partner.agentPpid()).then(kill_msg=>{
                             //@ TODO: data like 'is_error' can get lost by next chained msg
                             creator.gui_news("the partner was killed");
@@ -1259,7 +1308,7 @@
                             reject(err);
                         })
                     }else{
-                        console.log("KillingPartner: No nedd to Kill");
+                        //console.log("KillingPartner: No nedd to Kill");
                         resolve(compare_msg);
                     }
                 }).catch(err=>{
@@ -1283,12 +1332,12 @@
     function CompareManifest(){
         //this.instance=()=>{ return new CompareManifest() }
         this.run=(socket, creator, partner, manifest)=>{
-            console.log("CompareManifest.run()...");
+            //console.log("CompareManifest.run()...");
             return new Promise((resolve,reject)=>{
                 let is_ok = false;
                 const resolve_handler = function(compare_msg){
                     //@ compare_msg = {is_error: false, is_changes: true}
-                    console.log("CompareManifest.run(): compare_msg=",compare_msg);
+                    //console.log("CompareManifest.run(): compare_msg=",compare_msg);
                     is_ok = true;
                     resolve(compare_msg);
                 }
@@ -1307,7 +1356,7 @@
     //@--------------------------------------
     function SpecialControllerMode(){
         this.run=(controller, agent_socket)=>{
-            console.log("SpecialControllerMode.run()...");
+            //console.log("SpecialControllerMode.run()...");
         }
     }
     function NormalControllerMode(jobs){
@@ -1315,7 +1364,7 @@
         this.agent_socket=undefined; //run()
         this.run=(controller, agent_socket)=>{
             this.agent_socket =agent_socket;
-            console.log("NormalControllerMode.run()...");
+            //console.log("NormalControllerMode.run()...");
             this.jobs.run(controller, this.agent_socket);
         }
     }
@@ -1325,19 +1374,40 @@
 		this.run=(controller, agent_socket)=>{
             this.agent_socket = agent_socket;
 			if(!this.schedule){
-                console.log("No global var 'jobs_schedule' !");
+                console.error("No global var 'jobs_schedule' !");
                 return [];
             }else{
                 this.schedule.forEach(job=>{
-                    console.log("Jobs.run(): one job ="+JSON.stringify(job))
+                    //console.log("Jobs.run(): one job ="+JSON.stringify(job))
                     controller.gui_news("doing '"+job.name+"' job");
                     this.agent_socket.emit(job.name, job).once(job.name, res=>{
                         controller.gui_news("'"+job.name+"' job done");
-                        console.log("Jobs.run(): socketio answer: "+JSON.stringify(res));
+                        console.log("Jobs.run(): socketio answer: ",res);
+                        if(check_condition(job, res)){
+                            console.log("Jobs checking condition = true");
+                        }else{
+                            console.log("Jobs checking condition = false");
+                        }
                     });
                 });
             }
 		}
+        const check_condition=(job, res)=>{
+            if(job.name=='disk_space'){
+                const GB = 1000000000;
+                if(job.condition == 'lte 1 gb'){
+                    if(res.free < GB) return true;
+                    else return false;
+                }
+                else if(job.condition == 'gte 100 gb'){
+                    if(res.free > GB*100) return true;
+                    else return false;
+                }
+            }
+            else if(job.name=='nvidia_smi'){
+                return true;
+            }
+        }
 		this.sort_jobs=()=>{
 			//@ coupling jobs with same names
 		}
@@ -1401,7 +1471,7 @@
         }
     }
     function Page(page_type, data){   
-        console.log("new Page '"+page_type+"'");
+        //console.log("new Page '"+page_type+"'");
         const file_html = new FileFromFs();
         this.asText=async function(response){
             response.statusCode = 200;
@@ -1410,7 +1480,7 @@
             let html;
             if(page_type === '/'){
                 html = await file_html.file(__dirname+ "/visualizer/index.html").catch(er=>{
-                    console.log("ERR: Page.asHtml(): cant read file:"+er);
+                    console.error("ERR: Page.asHtml(): cant read file:"+er);
                     response.statusCode = 404;
                 });   
             }
@@ -1420,7 +1490,7 @@
             else if (page_type.endsWith(".js")){
                 response.setHeader("Content-Type", "application/json");
                 html = await file_html.file(__dirname+ "/visualizer"+page_type).catch(er=>{
-                    console.log("ERR: Page.asHtml(): cant read file:"+er);
+                    console.error("ERR: Page.asHtml(): cant read file:"+er);
                     response.statusCode = 404;
                 });  
 			}
@@ -1474,7 +1544,7 @@
             
         }
         logger.log = function(msg){
-            console.log(">>>" + msg);
+            //console.log(">>>" + msg);
         }
         return logger;
     }
@@ -4223,7 +4293,7 @@ function read_settings(json_path)
 
 		if (settings) return settings;
 		else {
-			console.log("wrong settings data")
+			console.error("wrong settings data")
 			return {error: "wrong settings data"};
 		}
 	}

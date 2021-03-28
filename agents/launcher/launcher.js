@@ -1,4 +1,4 @@
-//launcher.js v88
+//launcher.js v55
 'use sctrict';
 const fs = require('fs');
 const path = require('path');
@@ -35,6 +35,7 @@ function App(){
                     "settings_", 
                     "comparedManifest_"
                 ))
+                .with('updateDiffFiles', new UpdatedDiffFiles("settings_"))
                 .with('startPartner', new StartedPartner("settings_"))
         ).run();
 	}
@@ -586,6 +587,165 @@ function UpdatedFiles(settings_, comparedManifest_){
         });
     }
     this.createEmptyDirs=(files_to_write)=>{
+        return new Promise((resolve, reject) => {
+            const FNAME = 0;
+            const err_names = [];
+            let pending = files_to_write.length;
+            if(pending==0){ return resolve(); }
+            files_to_write.forEach(file_info=>{
+                if(file_info[FNAME].endsWith("\\")){
+                    const loc_dir = CONTROLLER_DIR+file_info[FNAME] ;
+                    console.log("createEmptyDirs() loc_dir=",loc_dir);
+                    fs.mkdir(loc_dir, { recursive: true }, (err) => {
+                        if(err) {err_names.push(file_info);}
+                        if (!--pending) {resolve(err_names)}
+                    })
+                }else if(!--pending){resolve(err_names)}
+            });
+        })
+    }
+}
+function UpdatedDiffFiles(settings_){
+    this.settings = glob[settings_].read() || {}
+    let loc_contr = this.settings.local_dir_controller;
+    loc_contr = loc_contr.startsWith('/') ? loc_contr : '/'+loc_contr;
+    let loc_other = this.settings.local_dir_other;
+    loc_other = loc_other.startsWith('/') ? loc_other : '/'+loc_other;
+    const CONTROLLER_DIR = __dirname + loc_contr;
+    const OTHER_DIR = __dirname + loc_other;
+    const REMOTE_DIR = this.settings.remote_dir;
+    this.is_keep_old_files = true;
+    this.is_timeout = true;
+    this.run=(ev_name, socket)=>{
+        console.log("UpdatedDiffFiles.run(): ev_name=",ev_name);
+        socket.on(ev_name, (remote_mans_diff)=>{
+            console.log("UpdatedDiffFiles.run() remote_mans_diff: ", remote_mans_diff);
+            sync_dirs(remote_mans_diff, this.is_keep_old_files).then(err_names=>{
+                console.log("UpdatedDiffFiles: emitting success 'updateFiles' procedure");
+                if(err_names && err_names.length){
+                    socket.emit(ev_name, {is_updated: false, err_names: err_names});
+                }else{
+                    socket.emit(ev_name, {is_updated: true});
+                }
+            }).catch(err=>{
+                console.log("UpdatedDiffFiles: sync_dirs() Error: ",err);
+                socket.emit(ev_name, {is_error: true, error:err});
+            }).finally(()=>{ this.is_timeout = false; });
+            setTimeout(()=>{
+                if(this.is_timeout){ socket.emit(ev_name, {is_updated: false, is_error: true, error:"UpdatedDiffFiles TIMEOUT"}); }
+            }, 5000);
+        });
+    }
+    const sync_dirs=(mans_diff, is_keep_old_files)=>{
+        //@ mans_diff can be undefined
+        return new Promise((resolve, reject) => {
+            //@ dont touch The Old Files!
+            let struct_to_write = concat_filelist_to_update(mans_diff, is_keep_old_files);
+            console.log("UpdatedFiles.sync_dirs(): copy_files(): files_to_write=",struct_to_write);
+            if(struct_to_write.length==0){ return resolve(); }
+            createEmptyDirsByStruct(struct_to_write).then(err_names=>{
+                console.log("UpdatedFiles.sync_dirs(): createEmptyDirs(): err_names=",err_names);
+                return copy_files_by_struct(struct_to_write, err_names);
+            }).then(err_names=>{
+                console.log("UpdatedFiles.sync_dirs(): copy_files(): err_names=",err_names);
+                resolve(err_names);
+            }).catch(err=>{
+                console.log("UpdatedFiles.sync_dirs(): Error:",err);
+                reject(err);
+            })
+            
+        });
+    }
+    //@ mans_diff must be at least = {}, NOT undefined
+    const concat_filelist_to_update=(mans_diff, is_keep_old_files)=>{
+        //@ mans_diff = {} || {controller: {new_files: [[Array],[Array]], old_files: [[Array]] }, other: {new_files:[[]], ...} }
+        const struct = {};
+        const mans_names = Object.keys(mans_diff);
+        mans_names.forEach(man_name=>{
+            let files_to_write = [];
+            Object.keys(mans_diff[man_name]).forEach(subtype=>{
+                if(is_keep_old_files && subtype=="old_files"){}
+                else{
+                    files_to_write = files_to_write.concat(mans_diff[man_name][subtype]);        
+                }
+            });
+            struct[man_name] = files_to_write;
+        });
+        return struct;
+    }
+    const copy_files_by_struct=(struct_to_write, err_names)=>{
+        return new Promise((resolve, reject) => {
+            let error_names = err_names || [];
+            const mans_names = Object.keys(struct_to_write);
+            let pending = mans_names.length;
+            if(pending==0){ return resolve(); }
+            mans_names.forEach(man_name=>{
+                copy_files(struct_to_write[man_name], man_name).then(err_names=>{
+                    if (!--pending) {
+                        error_names = error_names.concat(err_names);
+                        resolve(error_names);
+                    }
+                }).catch(err=>{
+                    console.log("UpdatedFiles.copy_files_by_struct() Error:",err);
+                    reject(err);
+                });
+            });
+        });
+    }
+    const copy_files=(files_to_write, update_fold_lvl2)=>{
+        console.log("UpdatedFiles.copy_files() files_to_write=",files_to_write);
+        if(!update_fold_lvl2.startsWith("/")){ update_fold_lvl2 = "/"+update_fold_lvl2 }
+        return new Promise((resolve, reject) => {
+            const FNAME = 0;
+            let pending = files_to_write.length;
+            if(pending==0){ return resolve(); }
+            const err_names = [];
+            files_to_write.forEach(file_info=>{
+                console.log("copy_files() file_info=",file_info);
+                const is_end1 = file_info[FNAME].endsWith("\\");
+                const is_end2 = file_info[FNAME].endsWith("/");
+                if(is_end1 || is_end2){
+                    //@ Ignore Empty Dirs
+                    if (!--pending) { resolve(err_names); }
+                }else{
+                    const loc_file = (update_fold_lvl2.endsWith("controller")) ? CONTROLLER_DIR+file_info[FNAME] : OTHER_DIR+file_info[FNAME];
+                    const rem_file = REMOTE_DIR+update_fold_lvl2+file_info[FNAME] ;
+                    console.log("copy_files() loc_file=",loc_file);
+                    console.log("copy_files() rem_file=",rem_file);
+                    fs.copyFile(rem_file, loc_file, (err)=>{
+                        if (err) {
+                            console.log("copy_files() Error=",err);
+                            err_names.push(file_info);
+                            if (!--pending) { resolve(err_names); }
+                        }   
+                        else {
+                            if (!--pending) { resolve(err_names); }
+                        }
+                    });
+                }
+            });
+        });
+    }
+    const createEmptyDirsByStruct=(struct_to_write)=>{
+        return new Promise((resolve, reject) => {
+            let error_names = [];
+            const mans_names = Object.keys(struct_to_write);
+            let pending = mans_names.length;
+            if(pending==0){ return resolve(); }
+            mans_names.forEach(man_name=>{
+                createEmptyDirs(struct_to_write[man_name]).then(err_names=>{
+                    if (!--pending) {
+                        error_names = error_names.concat(err_names);
+                        resolve(error_names);
+                    }
+                }).catch(err=>{
+                    console.log("UpdatedFiles.createEmptyDirsByStruct() Error:",err);
+                    reject(err);
+                });
+            });
+        });
+    }
+    const createEmptyDirs=(files_to_write)=>{
         return new Promise((resolve, reject) => {
             const FNAME = 0;
             const err_names = [];
