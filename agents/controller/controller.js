@@ -753,22 +753,28 @@ function NvidiaSmi(){
     this.run=(ev_name, socket)=>{
         socket.on(ev_name, function(data){
             console.log("NvidiaSmi.run() data=", data);
-            const NVIDIA_PATH = '"C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvidia-smi.exe"';
+            let NVIDIA_PATH = '"C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvidia-smi.exe"';
+            let NVIDIA_PATH_NORMALIZED = "C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvidia-smi.exe";
             console.log("NvidiaSmi.run() checking NVIDIA_PATH:", NVIDIA_PATH);
-            fs.stat(NVIDIA_PATH, function(err) {
+            let is_path_exist = true;
+            fs.stat(NVIDIA_PATH_NORMALIZED, function(err) {
                 if(err){
-                    console.log("NvidiaSmi.run() err=", err);
-                    socket.emit(ev_name, {error:"no nvidia gpu on host"});
-                }else{
-                    execute_command(NVIDIA_PATH + '\r\n').then(cmd_out=>{
-                        let nvidia_info = parse_nvsmi_result(cmd_out);
-                        socket.emit(ev_name, {info:nvidia_info});
-                    }).catch(ex=>{
-                        console.log("ERR: NVSMI: fail to execute_command !");
-                        socket.emit(ev_name, {error:ex});
-                    });
+                    console.log("NvidiaSmi.run() err=", err);                            
+                    is_path_exist = false;
                 }
             });
+            if(is_path_exist){
+                execute_command(NVIDIA_PATH + '\r\n').then(cmd_out=>{
+                    let nvidia_info = parse_nvsmi_result(cmd_out);
+                    console.log("NvidiaSmi.run(): nvidia_info=",nvidia_info);
+                    socket.emit(ev_name, {info:nvidia_info});
+                }).catch(ex=>{
+                    console.log("ERR: NVSMI: fail to execute_command !");
+                    socket.emit(ev_name, {error:ex});
+                });
+            }else{
+                socket.emit(ev_name, {error:"no nvidia gpu on host"});
+            }
         })
     }
 }
@@ -934,6 +940,7 @@ function parse_nvsmi_result(str) {
 }
 function execute_command(command){
     return new Promise((resolve,reject)=>{
+        console.log("execute_command(): command=",command);
         if(typeof command != 'string'){return reject()}
         var CMD = exec(command);
         var stdout = '';

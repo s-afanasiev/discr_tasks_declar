@@ -17,14 +17,33 @@
 
 
     const JOBS_DICTIONARY = ['gpu_info', 'housekeeping', 'disk_space', 'proc_count', 'exec_cmd', 'nvidia_smi', 'wetransfer'];
-    
-	const jobs_schedule = 
+    const PATH_MAPPING = 
+    {
+        "x": "C:/windows/system32/x",
+        "y": "C:/Temp/"
+    }
+	const jobs_schedule =
     [
-		{name:"disk_space", condition: "lte 1 gb", action:"clean_space", interval:5000},
-		{name:"disk_space", condition: "gte 100 gb", action:"increase_traffic"},
-		{name:"nvidia_smi", condition: "nvidia_exist", action:"do_render"},
-		{name:"exec_cmd", cmd:"notepad.exe", condition: "exec_done", action:"write data: hi"}
-	];
+        {name:"disk_space", condition: "lte 1 gb", action:"clean_space", interval:5000},
+        {name:"disk_space", condition: "gte 100 gb", action:"increase_traffic"},
+        {name:"nvidia_smi", condition: "nvidia_exist", action:"do_render"},
+        {name:"exec_cmd", cmd:"notepad.exe", condition: "exec_done", action:"write data: hi"}
+    ]
+    const jobs_schedule_2 = 
+    {
+        throw_right_away: [
+            {name:"disk_space", condition: "lte 1 gb", action:"clean_space", interval:5000},
+            {name:"disk_space", condition: "gte 100 gb", action:"increase_traffic"},
+            {name:"nvidia_smi", condition: "nvidia_exist", action:"do_render"},
+            {name:"exec_cmd", cmd:"notepad.exe", condition: "exec_done", action:"write data: hi"}
+        ],
+        reaction_on_response:[
+            {name:"clean_space", condition: "is_done", action:"restart_render_counter"},
+            {name:"increase_traffic", condition: "is_done"},
+            {name:"do_render", condition: "is_started_render", action:"say_when_finish_render"},
+            {name:"say_when_finish_render", condition: "is_done", action:"say_when_finish_render"},
+        ]
+    }
     //@ -----I-M-P-L-E-M-E-N-T-A-T-I-O-N-----
 	main();
 	//mainTest();
@@ -124,7 +143,7 @@
                 ),
                 new BrowserIoClients(),
                 new UpdatableHostCluster(
-                    new Manifest(new DirStructure(), new DirsComparing()),
+                    new Manifest(new DirStructure(), new DirsComparing(), PATH_MAPPING),
                     new HostCluster(
                         new HostAsPair(
                             new Launcher({}),
@@ -247,7 +266,7 @@
     }
 
     //@ ready=1
-	function Manifest(dirStructure, dirsComparing){
+	function Manifest(dirStructure, dirsComparing, PATH_MAPPING){
         this.glob_update_path = (UPDATE_FOLD) ? UPDATE_FOLD : "\\update";
         const launcher_update_path = this.glob_update_path + "\\launcher";
         const controller_update_path = this.glob_update_path + "\\controller";
@@ -256,6 +275,7 @@
             {name:"launcher", path:launcher_update_path},
             {name:"controller", path:controller_update_path},
             {name:"other", path:other_update_path}];
+        PATH_MAPPING = PATH_MAPPING || [];
         this.hostCluster=undefined;
         this.dirStructure=dirStructure;
         this.dirsComparing=dirsComparing;
@@ -264,12 +284,13 @@
         this.prev_mans = {};
 		//@ stumb for new connected agents, give them something not null
 		this.current = ()=>{ return this.prev_mans };
+		this.mapped_mans = ()=>{ return PATH_MAPPING };
         this.run = function(hostCluster){
             this.hostCluster=hostCluster;
             this.prev_mans = this.dirStructure.allMansSync(update_paths); //sync
             //console.log("Manifest.run(): this.prev_mans=",this.prev_mans);
             setTimeout(()=>{this.nextManifest()}, this.timer);
-            return this;       
+            return this;
         }        
         this.nextManifest = function(){
             this.dirStructure.allMansAsync(update_paths).then(next_mans=>{
@@ -291,7 +312,7 @@
                 setTimeout(()=>{this.nextManifest()}, this.timer);
             })
         }
-        return this;
+        //return this;
     }
     function DirStructure(){
         //@ returns manifest of one directory. Type Array ['f1', 'f2']

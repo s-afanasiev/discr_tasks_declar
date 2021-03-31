@@ -270,22 +270,22 @@
 						$('#host_table tr.base:last').append(a_host);
 					}
 					//@-----Append Agent info to The Host info--------------------------------------------------------
-					$('td#'+data.md5+' td.'+data.creator_type).append(host_agent_creator(data));
+					$('td#md5__'+data.md5+' td.'+data.creator_type).append(host_agent_creator(data));
 				}
 				const one_host=(data)=>{
 					let a = "";
-					a += "<td valign='top' class = 'host' id='"+data.md5+"'>";
+					a += "<td valign='top' class = 'host' id='md5__"+data.md5+"'>";
 						a +="<table style = 'border:1px solid red; width:100%;'>";
 							a +="<tr><td colspan = '2'>";
-								a += "host : "+data.md5;
+								a += "host : <b>"+data.md5+"</b>";
 							a +="</td></tr>";
 							a +="<tr class = 'agents'>";
-								a +="<td class = 'launcher'>"
+								a +="<td class = 'agent_type__launcher'>"
 									if(data.launcher){
 										a += agent_data(data.launcher);
 									}
 								a += "</td>";
-								a +="<td class = 'controller'>";
+								a +="<td class = 'agent_type__controller'>";
 									if(data.controller){
 										a += agent_data(data.controller);
 									}
@@ -299,13 +299,15 @@
 					//@ 1. check if such host exist. For example, event 'agent online' coomes faster than 'host_born'
 					//@ 2. check is such agent already appended to this host
 					status = status || "online";
+					const status_color = (status=="online") ? "#2d3" : "#f67";
 					let a = "";
 					a += "<div>agent: "+agent_data.agent_type+"</div>";
-					a += "<div>status: "+status+"</div>";
+					//a += "<div>status: <span style='background-color:"+status_color+";'>"+status+"</span></div>";
+					a += "<div>status: <span style='background-color:"+status_color+";'>&emsp;</span> "+status+"</div>";
 					if(status == "online"){
 						a += "<div>pid: "+agent_data.agent_pid+"</div>";
 						a += "<div>apid: "+agent_data.agent_apid+"</div>";
-						a += "<div class='work' style='background-color:#ccddee; width:100%;'>"
+						a += "<div class='agent_work' style='background-color:#ccddee; width:100%;'>"
 							//a += "work";
 						a += "</div>";
 					}
@@ -326,22 +328,25 @@
 					//@ 1. check if such host exist. For example, event 'agent online' coomes faster than 'host_born'
 					//@ 2. check is such agent already appended to this host
 					let a = agent_data(data, "online");
-					const $agent_td = $('td#'+data.md5+' td.'+data.agent_type);
+					const $agent_td = $('td#md5__'+data.md5+' td.agent_type__'+data.agent_type);
 					if($agent_td.children().length){ $agent_td.empty(); }
 					$agent_td.append(a);
 				}
 				this.agent_offline=(data)=>{
 					console.log("HostTable.agent_offline() data=",data);
 					let a = agent_data(data, "offline");
-					const $agent_td = $('td#'+data.md5+' td.'+data.agent_type);
+					const $agent_td = $('td#md5__'+data.md5+' td.agent_type__'+data.agent_type);
 					$agent_td.empty().append(a);
 				}
 				this.agent_work=(data)=>{
 					console.log("working data=", data)
-					const $agent_work_div = $('td#'+data.md5+' td.'+data.agent_type+' div.work');
+					const $agent_work_div = $('td#md5__'+data.md5+' td.agent_type__'+data.agent_type+' div.agent_work');
 					//const $agent_md5_td = $('td#'+data.md5+' td.'+data.agent_type+' div.work');
 					$agent_work_div.append("<div>"+data.msg+"</div>");
 				}
+			}
+			function ControllerOps(){
+				//@ this is new window caused by click on controller <TD> in GUI
 			}
 		</script>
 		<style type="text/css">
