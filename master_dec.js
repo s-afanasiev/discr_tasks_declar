@@ -5,52 +5,16 @@
     const url = require('url');
     const fs = require('fs');
     const EventEmitter = require('events');
-    const SETT	= read_settings(path.normalize("./m_settings.json"));
-
     //const http = require('http');
     //const io = require('socket.io');
-    
-    const UPDATE_FOLD = SETT.update_folder;
-    console.log("UPDATE_FOLD=",UPDATE_FOLD);
-    const LOOK_UPDATE_INTERVAL = SETT.update_folder_watch_timer || 60000; // 1 min
-    const VISUALIZER_PATH = __dirname + "/visualizer/index.html"
-
-
-    const JOBS_DICTIONARY = ['gpu_info', 'housekeeping', 'disk_space', 'proc_count', 'exec_cmd', 'nvidia_smi', 'wetransfer'];
-    const PATH_MAPPING = 
-    {
-        "x": "C:/windows/system32/x",
-        "y": "C:/Temp/"
-    }
-	const jobs_schedule =
-    [
-        {name:"disk_space", condition: "lte 1 gb", action:"clean_space", interval:5000},
-        {name:"disk_space", condition: "gte 100 gb", action:"increase_traffic"},
-        {name:"nvidia_smi", condition: "nvidia_exist", action:"do_render"},
-        {name:"exec_cmd", cmd:"notepad.exe", condition: "exec_done", action:"write data: hi"}
-    ]
-    const jobs_schedule_2 = 
-    {
-        throw_right_away: [
-            {name:"disk_space", condition: "lte 1 gb", action:"clean_space", interval:5000},
-            {name:"disk_space", condition: "gte 100 gb", action:"increase_traffic"},
-            {name:"nvidia_smi", condition: "nvidia_exist", action:"do_render"},
-            {name:"exec_cmd", cmd:"notepad.exe", condition: "exec_done", action:"write data: hi"}
-        ],
-        reaction_on_response:[
-            {name:"clean_space", condition: "is_done", action:"restart_render_counter"},
-            {name:"increase_traffic", condition: "is_done"},
-            {name:"do_render", condition: "is_started_render", action:"say_when_finish_render"},
-            {name:"say_when_finish_render", condition: "is_done", action:"say_when_finish_render"},
-        ]
-    }
+    //const VISUALIZER_PATH = __dirname + "/visualizer/index.html"
+    const SETT	= read_json_sync("./m_settings.json");
+    const JOBS_CONFIG = read_json_sync("jobs_config.json");
+    if (SETT.error || JOBS_CONFIG.error){return console.log("Application not started")}
     //@ -----I-M-P-L-E-M-E-N-T-A-T-I-O-N-----
 	main();
-	//mainTest();
 	function main(){
 		new App().run();
-        //dirsComparingTest();
-        //dirStructureSyncTest();
 	}
     function mainTest(){
 		const http = require('http').createServer(webRequest).listen(55999);
@@ -59,14 +23,13 @@
 			console.log("io.connection event: agent="+Object.keys(agent));
 		});
 	}
-
     function dirStructureSyncTest(){
         const dirStructure = new DirStructure();
         const res = dirStructure.manOfDirSync("./update");
         console.log(res);
     }
     function dirsComparingTest(){
-        const glob_update_path = (UPDATE_FOLD) ? UPDATE_FOLD : "./update";
+        const glob_update_path = SETT.update_folder || "./update";
         const launcher_update_path = glob_update_path + "\\launcher";
         const controller_update_path = glob_update_path + "\\controller";
         const other_update_path = glob_update_path + "\\other";
@@ -143,16 +106,16 @@
                 ),
                 new BrowserIoClients(),
                 new UpdatableHostCluster(
-                    new Manifest(new DirStructure(), new DirsComparing(), PATH_MAPPING),
+                    new Manifest(new DirStructure(), new DirsComparing(), SETT.mapped_paths),
                     new HostCluster(
                         new HostAsPair(
                             new Launcher({}),
                             new Controller(
                                 new SpecialControllerMode(),
                                 new NormalControllerMode(
-                                    new Jobs(jobs_schedule)
+                                    new Jobs(JOBS_CONFIG.throw_right_away)
                                 ),
-                                {}
+                                undefined
                             ),
                             new ConnectedAgentsThrottle(
                                 new RedundantAgentsReservation()
@@ -266,8 +229,8 @@
     }
 
     //@ ready=1
-	function Manifest(dirStructure, dirsComparing, PATH_MAPPING){
-        this.glob_update_path = (UPDATE_FOLD) ? UPDATE_FOLD : "\\update";
+	function Manifest(dirStructure, dirsComparing, MAPPED_PATHS){
+        this.glob_update_path = SETT.update_folder || "\\update";
         const launcher_update_path = this.glob_update_path + "\\launcher";
         const controller_update_path = this.glob_update_path + "\\controller";
         const other_update_path = this.glob_update_path + "\\other";
@@ -275,16 +238,16 @@
             {name:"launcher", path:launcher_update_path},
             {name:"controller", path:controller_update_path},
             {name:"other", path:other_update_path}];
-        PATH_MAPPING = PATH_MAPPING || [];
+        MAPPED_PATHS = MAPPED_PATHS || [];
         this.hostCluster=undefined;
         this.dirStructure=dirStructure;
         this.dirsComparing=dirsComparing;
         this.path = '';
-        this.timer = LOOK_UPDATE_INTERVAL || 60000;
+        this.timer = SETT.update_folder_watch_timer || 60000;
         this.prev_mans = {};
 		//@ stumb for new connected agents, give them something not null
 		this.current = ()=>{ return this.prev_mans };
-		this.mapped_mans = ()=>{ return PATH_MAPPING };
+		this.mapped_mans = ()=>{ return MAPPED_PATHS };
         this.run = function(hostCluster){
             this.hostCluster=hostCluster;
             this.prev_mans = this.dirStructure.allMansSync(update_paths); //sync
@@ -312,6 +275,7 @@
                 setTimeout(()=>{this.nextManifest()}, this.timer);
             })
         }
+        const read_mapped_dir=()=>{}
         //return this;
     }
     function DirStructure(){
@@ -1389,17 +1353,21 @@
             this.jobs.run(controller, this.agent_socket);
         }
     }
-    function Jobs(schedule = jobs_schedule){
-        this.schedule = schedule;
+    function Jobs(jobs_schedule){
+        this.schedule = jobs_schedule;
         agent_socket=undefined; //run()
 		this.run=(controller, agent_socket)=>{
+            new JobsMon(
+                new JobsOnResponce(
+                    new JobsRightAway()
+                )
+            )
             this.agent_socket = agent_socket;
 			if(!this.schedule){
-                console.error("No global var 'jobs_schedule' !");
+                console.error("No global var 'jobs_schedule_temp' !");
                 return [];
             }else{
                 this.schedule.forEach(job=>{
-                    //console.log("Jobs.run(): one job ="+JSON.stringify(job))
                     controller.gui_news("doing '"+job.name+"' job");
                     this.agent_socket.emit(job.name, job).once(job.name, res=>{
                         controller.gui_news("'"+job.name+"' job done");
@@ -1433,6 +1401,9 @@
 			//@ coupling jobs with same names
 		}
 	}
+    function Job(name){
+
+    }
 
     function Microtask(name){
         this.name = name;
@@ -3066,19 +3037,19 @@ function initialize_main_glob_struct(){
 
         MGS.set_io_lisners(io);
 
-        MGS.manifest.start_monitor_changes_2(UPDATE_FOLD);
+        MGS.manifest.start_monitor_changes_2(SETT.update_folder);
 
         MGS.call_runner(RUNNER_SPEED);
         //-----------------------------------------
 
-        // get_dir_manifest_async(UPDATE_FOLD).then(res => {
+        // get_dir_manifest_async(SETT.update_folder).then(res => {
         //     console.log("got update manifest:", res);
         //     //MGS.manifest.mark_init_ready(res);
         //     this.manifest.is_ready_on_init = true;
         //     this.manifest.self = res;
         //     MGS.set_io_lisners(io);
         //     //* look for changes in update folder
-        //     MGS.manifest.start_monitor_changes_2(UPDATE_FOLD);
+        //     MGS.manifest.start_monitor_changes_2(SETT.update_folder);
         // }).catch(ex => { console.log("fail getting manifest: ex:", ex); });
     },
     set_io_lisners: function(io, dashboard_){
@@ -3907,7 +3878,7 @@ function initialize_main_glob_struct(){
                         MGS.task_board({t_names: ["manifest"], stage: MGS.FRESH, sid: "all", bundle_next:'same_md5_agents', who_call:"changes in update directory" });
                     }
                 }).catch(ex => { console.log("ERR:", ex); });
-            }, LOOK_UPDATE_INTERVAL);
+            }, SETT.update_folder_watch_timer);
         },
         start_monitor_changes_2: function(upd_fold)
         { 
@@ -3927,13 +3898,13 @@ function initialize_main_glob_struct(){
                 }
                 setTimeout(()=>{ 
                     this.start_monitor_changes_2(upd_fold); 
-                }, LOOK_UPDATE_INTERVAL);
+                }, SETT.update_folder_watch_timer);
 
             }).catch(ex => { 
                 console.log("ERR:", ex); 
                 setTimeout(()=>{ 
                     this.start_monitor_changes_2(upd_fold); 
-                }, LOOK_UPDATE_INTERVAL);
+                }, SETT.update_folder_watch_timer);
             });
           }, FIRST_DELAY);   
         },
@@ -4306,21 +4277,22 @@ function config_app(app)
 	});
 }
 
-function read_settings(json_path)
+function read_json_sync(json_path)
 {
 	try	{
+        json_path = path.normalize(json_path);
 		//const json = fs.readFileSync(json_path, "utf8");
 		let settings = JSON.parse(fs.readFileSync(json_path, "utf8"));
-
 		if (settings) return settings;
 		else {
-			console.error("wrong settings data")
+			console.error("read_json_sync(): wrong settings data in ", json_path)
 			return {error: "wrong settings data"};
 		}
 	}
 	catch (e) {
-		console.error("JSON PARSE ERROR: ", e);
+		console.error("read_json_sync(): JSON PARSE ERROR: ", e);
 		return {error: e};
 	}
 }
+
 

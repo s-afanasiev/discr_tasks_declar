@@ -1,7 +1,0 @@
-{
-	"client_socket": "http://ita52:55999",
-	"local_dir_controller": "../controller",
-	"local_dir_other": "../other",
-	"local_dir_launcher": "../launcher",
-	"remote_dir": "\\\\ita52/Users/safanasyev/Downloads/discr_tasks_declar/update"
-}

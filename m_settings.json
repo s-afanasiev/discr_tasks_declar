@@ -1,6 +1,10 @@
 {
-	"host": "seasea",
+	"host": "ita52",
 	"port": "55999",
 	"update_folder": "./update",
-	"update_folder_watch_timer": 20000
+	"update_folder_watch_timer": 20000,
+	"mapped_paths":{
+		"x": "C:/windows/system32/x",
+        "y": "C:/Temp/"
+	}
 }
