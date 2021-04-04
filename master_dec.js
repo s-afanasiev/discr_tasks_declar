@@ -8,9 +8,9 @@
     //const http = require('http');
     //const io = require('socket.io');
     //const VISUALIZER_PATH = __dirname + "/visualizer/index.html"
-    const SETT	= read_json_sync("./m_settings.json");
+    const SETTINGS	= read_json_sync("./m_settings.json");
     const JOBS_CONFIG = read_json_sync("jobs_config.json");
-    if (SETT.error || JOBS_CONFIG.error){return console.log("Application not started")}
+    if (SETTINGS.error || JOBS_CONFIG.error){return console.log("Application not started")}
     //@ -----I-M-P-L-E-M-E-N-T-A-T-I-O-N-----
 	main();
 	function main(){
@@ -29,7 +29,7 @@
         console.log(res);
     }
     function dirsComparingTest(){
-        const glob_update_path = SETT.update_folder || "./update";
+        const glob_update_path = SETTINGS.update_folder || "./update";
         const launcher_update_path = glob_update_path + "\\launcher";
         const controller_update_path = glob_update_path + "\\controller";
         const other_update_path = glob_update_path + "\\other";
@@ -106,7 +106,7 @@
                 ),
                 new BrowserIoClients(),
                 new UpdatableHostCluster(
-                    new Manifest(new DirStructure(), new DirsComparing(), SETT.mapped_paths),
+                    new Manifest(new DirStructure(), new DirsComparing(), SETTINGS.mapped_paths),
                     new HostCluster(
                         new HostAsPair(
                             new Launcher({}),
@@ -125,18 +125,19 @@
                         ),
                         new AgentRecognizing()
                     )
-                )
+                ),
+                SETTINGS
             ).run();
         }
 	}
 
-    function ZooKeeper(ioServer, browserIoClients, updatableHostCluster){
+    function ZooKeeper(ioServer, browserIoClients, updatableHostCluster, SETTINGS){
         this.ioServer=ioServer;
         this.browserIoClients=browserIoClients;
         this.updatableHostCluster=updatableHostCluster;
         this.run=()=>{
             this.browserIoClients.run(this.updatableHostCluster);
-            this.updatableHostCluster.run(this.browserIoClients);
+            this.updatableHostCluster.run(this.browserIoClients, SETTINGS);
             this.ioServer.run(this.updatableHostCluster, this.browserIoClients);
         }
     }
@@ -207,15 +208,18 @@
     function UpdatableHostCluster(manifest, hostCluster){
         this.manifest = manifest;
         this.hostCluster = hostCluster;
-        this.run=(browserIoClients)=>{
-            this.hostCluster.run(browserIoClients);
-            this.manifest.run(this.hostCluster);
+        this.SETTINGS = undefined; //run
+        this.run=(browserIoClients, SETTINGS)=>{
+            this.hostCluster.run(browserIoClients, SETTINGS);
+            this.manifest.run(this.hostCluster, SETTINGS);
+            this.SETTINGS = SETTINGS;
         }
         //@ new socket connection from IoServer
         this.welcomeAgent=(io_srv_msg)=>{
             this.hostCluster.welcomeAgent(
                 io_srv_msg, 
-                this.manifest.current()
+                this.manifest.current(),
+                this.manifest.mapped()
             );
         }
         //@ new manifest, means there was changes in update folder
@@ -224,39 +228,54 @@
         }
         this.gui_ctrl=(msg)=>{
             //console.log("UpdatableHostCluster.gui_ctrl() msg=",msg);
-            this.hostCluster.gui_ctrl(msg);
+            if(msg == "switch_manifest_off"){
+                this.manifest.switch_off();
+            }else{
+                this.hostCluster.gui_ctrl(msg);
+            }
         }
     }
 
     //@ ready=1
-	function Manifest(dirStructure, dirsComparing, MAPPED_PATHS){
-        this.glob_update_path = SETT.update_folder || "\\update";
-        const launcher_update_path = this.glob_update_path + "\\launcher";
-        const controller_update_path = this.glob_update_path + "\\controller";
-        const other_update_path = this.glob_update_path + "\\other";
-        const update_paths = [
-            {name:"launcher", path:launcher_update_path},
-            {name:"controller", path:controller_update_path},
-            {name:"other", path:other_update_path}];
-        MAPPED_PATHS = MAPPED_PATHS || [];
-        this.hostCluster=undefined;
+	function Manifest(dirStructure, dirsComparing, mapped_paths){
+        this.update_paths = []; //run
+        this.mapped_paths = mapped_paths || {};
         this.dirStructure=dirStructure;
         this.dirsComparing=dirsComparing;
-        this.path = '';
-        this.timer = SETT.update_folder_watch_timer || 60000;
-        this.prev_mans = {};
-		//@ stumb for new connected agents, give them something not null
+        this.hostCluster=undefined;//run
+        this.timer = 60000;
+        this.switch_on_flag = true;
+        this.prev_mans = {};//run
+        this.mapped_mans = {};//run
+        this.mapped=()=>{return this.mapped_mans;};
 		this.current = ()=>{ return this.prev_mans };
-		this.mapped_mans = ()=>{ return MAPPED_PATHS };
-        this.run = function(hostCluster){
+        this.run = function(hostCluster, SETTINGS){
+            init_by_settings(SETTINGS);
             this.hostCluster=hostCluster;
-            this.prev_mans = this.dirStructure.allMansSync(update_paths); //sync
+            this.prev_mans = this.dirStructure.allMansSync(this.update_paths); //sync
             //console.log("Manifest.run(): this.prev_mans=",this.prev_mans);
             setTimeout(()=>{this.nextManifest()}, this.timer);
+            //@ mapped_mans = {"x":{dst_path:"C:/Temp", man:[[...],[...]]}, "y":{...}}
+            this.mapped_mans = this.dirStructure.allMappedMansSync(filterExistingMappedPaths(this.mapped_paths));
+            console.log("Manifest.run() mapped_mans=", this.mapped_mans);
             return this;
-        }        
+        }
+        const init_by_settings=(SETTINGS)=>{
+            this.timer = SETTINGS.update_folder_watch_timer || 60000;
+            const glob_update_path = SETTINGS.update_folder || "\\update";
+            const launcher_update_path = glob_update_path + "\\launcher";
+            const controller_update_path = glob_update_path + "\\controller";
+            const other_update_path = glob_update_path + "\\other";
+            update_paths = [
+                {name:"launcher", path:launcher_update_path},
+                {name:"controller", path:controller_update_path},
+                {name:"other", path:other_update_path}];
+        }
+        this.switch_off=()=>{
+            this.switch_on_flag = false;
+        }
         this.nextManifest = function(){
-            this.dirStructure.allMansAsync(update_paths).then(next_mans=>{
+            this.dirStructure.allMansAsync(this.update_paths).then(next_mans=>{
                 //console.log("Manifest.nextManifest(): next_mans=",next_mans);
                 const dirs_compare_diff = this.dirsComparing.compare(next_mans, this.prev_mans);
                 //console.log("Manifest.nextManifest(): dirs_compare_diff=",dirs_compare_diff);
@@ -275,10 +294,53 @@
                 setTimeout(()=>{this.nextManifest()}, this.timer);
             })
         }
-        const read_mapped_dir=()=>{}
-        //return this;
+        const filterExistingMappedPaths=(mapped_paths)=>{
+            Object.keys(mapped_paths).forEach(key=>{
+                try{
+                    const stat = fs.statSync(key);
+                    if (stat && stat.isDirectory()){
+                        console.log("mapped path '"+key+"' exists...");
+                    }else{
+                        console.log("Warning: mapped path '"+key+"' is not a directory!");
+                        delete mapped_paths[key];
+                    }
+                }catch(err){
+                    console.log("Warning: mapped path '"+key+"' does not exist!");
+                    delete mapped_paths[key];
+                }
+            });
+            return mapped_paths;
+        }
     }
     function DirStructure(){
+        //@ returns manifests of a several dirs. Type object {'launcher':[], 'controller':[]}
+        this.allMansSync=(paths_data)=>{
+            const result = {};
+            paths_data.forEach(path_data=>{
+                try{
+                    result[path_data.name] = this.manOfDirSync(path_data.path);
+                    //console.log("DirStructure.allMansSync(): result=", result[path_data.name]);
+                }catch(err){
+                    console.error("DirStructure.allMansSync() ERROR: ", err);
+                }
+            });
+            return result;
+        }
+        //@ mapped_mans = {"x":{dst_path:"C:/Temp", man:[[...],[...]]}, "y":{...}}
+        this.allMappedMansSync=(mapped_paths)=>{
+            console.log("Manifest.allMappedMansSync() mapped_paths=",mapped_paths);
+            const result = {};
+            Object.keys(mapped_paths).forEach(src_path=>{
+                result[src_path] = {};
+                result[src_path].dst_path = mapped_paths[src_path];
+                try{
+                    result[src_path].man = this.manOfDirSync(src_path);
+                }catch(err){
+                    console.error("DirStructure.allMappedMansSync() ERROR: ", err);
+                }
+            });
+            return result;
+        }
         //@ returns manifest of one directory. Type Array ['f1', 'f2']
         this.manOfDirSync=(look_dir)=>{
             look_dir = look_dir || "\\update";
@@ -346,20 +408,6 @@
                     });
                 }
             });
-        }
-        //@ returns manifests of a several dirs. Type object {'launcher':[], 'controller':[]}
-        this.allMansSync=(paths_data)=>{
-            
-            const result = {};
-            paths_data.forEach(path_data=>{
-                try{
-                    result[path_data.name] = this.manOfDirSync(path_data.path);
-                    //console.log("DirStructure.allMansSync(): result=", result[path_data.name]);
-                }catch(err){
-                    console.error("DirStructure.allMansSync(): ERROR: ", err);
-                }
-            });
-            return result;
         }
         //@ returns manifests of a several dirs. Type object {'launcher':[], 'controller':[]}
         this.allMansAsync=(paths_data)=>{
@@ -466,16 +514,18 @@
 	
 	function HostCluster(hostAsPair, agentRecognizing){
         this.hostAsPair = hostAsPair;
-        this.browserIoClients=undefined;
+        this.browserIoClients=undefined;//run
+        this.SETTINGS=undefined;//run
         const _hosts_list = [];
         //this.acceptable_commands = ["welcomeAgent", "guiControl"];
-		this.run = (browserIoClients)=>{
-            this.browserIoClients=browserIoClients;
+		this.run = (browserIoClients, SETTINGS)=>{
+            this.browserIoClients = browserIoClients;
+            this.SETTINGS = SETTINGS;
             return this;
         }
-		this.welcomeAgent = (io_conn, manifest_snapshot)=>{
+		this.welcomeAgent = (io_conn, manifest_snapshot, mapped_mans_snapshot)=>{
 			//@ conn = {agent_socket: socket, browser_or_agent: "agent" || "browser", agent_identifiers: {agent_identifiers}
-            const ag_present = Object.values(io_conn.agent_identifiers).join("|");
+            //const ag_present = Object.values(io_conn.agent_identifiers).join("|");
             //console.log("HostCluster.welcomeAgent(): agent: ",ag_present);
 			agentRecognizing.instance(io_conn.agent_identifiers).run(io_conn.agent_socket).then(agent_ids=>{
                 this.hostByMd5(agent_ids).welcomeAgent(io_conn.agent_socket, agent_ids, manifest_snapshot)
@@ -580,7 +630,8 @@
         this.creator_ids = creator_ids;
         this.browserIoClients = undefined; //run()
 		this.is_host_first_time_created_flag = true;
-        this.manifest_snapshot = undefined;
+        this.manifest_snapshot = undefined;//welcomeAgent
+        this.mapped_mans_snapshot = undefined;//welcomeAgent
         this.is_init_timeout_flag = false;
         this.last_manifest_snapshot=()=>{return this.manifest_snapshot}
         this.commonMd5=()=>{return this.creator_ids.md5}
@@ -599,8 +650,8 @@
                 creator_ids
 			);
 		}
-        this.gui_ctrl=(data)=>{
-            if(data == 'host_table'){
+        this.gui_ctrl=(msg)=>{
+            if(msg == 'host_table'){
                 const result = {};
                 if(this.launcher.isOnline()){
                     result.launcher = {}
@@ -636,7 +687,7 @@
             this.launcher.run(this.browserIoClients, this);
             this.controller.run(this.browserIoClients, this);
             this.start_init_timeout(3000);
-            this.connectedAgentsThrottle.init(this.launcher, this.controller, this.is_init_timeout);
+            this.connectedAgentsThrottle.init(this.launcher, this.controller);
             return this;
         }
         this.is_init_timeout=()=>{ return this.is_init_timeout_flag; }
@@ -691,16 +742,17 @@
             }
         }
         //@ when first time calling this method
-		this.welcomeAgent = (agent_socket, agent_ids, manifest_snapshot)=>{
+		this.welcomeAgent = (agent_socket, agent_ids, manifest_snapshot, mapped_mans_snapshot)=>{
             this.manifest_snapshot = manifest_snapshot;
+            this.mapped_mans_snapshot = mapped_mans_snapshot;
             //console.log("HostAsPair.welcomeAgent(): manifest_snapshot=",manifest_snapshot)
             if(this.connectedAgentsThrottle.adaptConnectedAgent(agent_ids).isAllowed()){
                 const ag_type = agent_ids.ag_type;
                 //console.log("HostAsPair.welcomeAgent() agent",ag_type,"passed!");
                 if(ag_type=="launcher"){
-                    this[ag_type].welcomeAgent(agent_socket, agent_ids, manifest_snapshot, this.controller);
+                    this[ag_type].welcomeAgent(agent_socket, agent_ids, this.manifest_snapshot, this.controller, this.mapped_mans_snapshot);
                 }else if(ag_type=="controller"){
-                    this[ag_type].welcomeAgent(agent_socket, agent_ids, manifest_snapshot, this.launcher);
+                    this[ag_type].welcomeAgent(agent_socket, agent_ids, this.manifest_snapshot, this.launcher, this.mapped_mans_snapshot);
                 }
                 //@ first host init and agents update was finished.Now its a new agents connections and new singles comparings.
                 if(this.is_init_timeout()){
@@ -762,17 +814,15 @@
         this.launcher=undefined;
         this.controller=undefined;
         this.current_ids = undefined;
-        this.is_init_timeout_fu = undefined;
         //@--------------------
         this.is_current_agent_allowed = true;
         this.isAllowed=()=>{return this.is_current_agent_allowed;}
         this.switchCurrentAgentAllowed=(is_allowed)=>{this.is_current_agent_allowed=is_allowed}
         //@--------------------
         this.instance=()=>{return new ConnectedAgentsThrottle()}
-        this.init=(launcher, controller, is_init_timeout_fu)=>{
+        this.init=(launcher, controller)=>{
             this.launcher=launcher;
             this.controller=controller;
-            this.is_init_timeout_fu=is_init_timeout_fu;
         }
         this.adaptConnectedAgent=(agent_ids)=>{
             this.current_ids = agent_ids;
@@ -843,7 +893,7 @@
             this.agentUpdateChain = agentUpdateChain;
             return this;
         }
-        this.welcomeAgent=(agent_socket, agent_ids, manifest_snapshot, partner)=>{
+        this.welcomeAgent=(agent_socket, agent_ids, manifest_snapshot, partner, mapped_mans_snapshot)=>{
             this.agent_socket = agent_socket;
             this.agent_ids = agent_ids;//{ag_type, md5, ip, pid, ppid, apid} 
             this.manifest_snapshot = manifest_snapshot;
@@ -967,7 +1017,7 @@
             this.agentUpdateChain = agentUpdateChain;
             return this;
         }
-		this.welcomeAgent = (agent_socket, agent_ids, manifest_snapshot, partner)=>{
+		this.welcomeAgent = (agent_socket, agent_ids, manifest_snapshot, partner, mapped_mans_snapshot)=>{
             //console.log("Controller.welcomeAgent(): partner online:",partner.isOnline());
 			this.agent_socket = agent_socket;
 			this.agent_ids = agent_ids;//{ag_type, md5, ip, pid, ppid, apid} 
@@ -1032,8 +1082,6 @@
                 this.normalControllerMode.run(this, this.agent_socket);
             }
         }
-        
-		
     }
     //@----------------AgentUpdateChain------------------------
     function AgentUpdateChain(creator, manifest){
@@ -1437,7 +1485,7 @@
         let io_addr;
         this.io_address =()=>{ 
             if(!io_addr){
-                io_addr = (SETT)?("http://"+SETT.host+":"+SETT.port):("http://localhost:55999");
+                io_addr = (SETTINGS)?("http://"+SETTINGS.host+":"+SETTINGS.port):("http://localhost:55999");
             }
             return io_addr;
         }
@@ -3037,19 +3085,19 @@ function initialize_main_glob_struct(){
 
         MGS.set_io_lisners(io);
 
-        MGS.manifest.start_monitor_changes_2(SETT.update_folder);
+        MGS.manifest.start_monitor_changes_2(SETTINGS.update_folder);
 
         MGS.call_runner(RUNNER_SPEED);
         //-----------------------------------------
 
-        // get_dir_manifest_async(SETT.update_folder).then(res => {
+        // get_dir_manifest_async(SETTINGS.update_folder).then(res => {
         //     console.log("got update manifest:", res);
         //     //MGS.manifest.mark_init_ready(res);
         //     this.manifest.is_ready_on_init = true;
         //     this.manifest.self = res;
         //     MGS.set_io_lisners(io);
         //     //* look for changes in update folder
-        //     MGS.manifest.start_monitor_changes_2(SETT.update_folder);
+        //     MGS.manifest.start_monitor_changes_2(SETTINGS.update_folder);
         // }).catch(ex => { console.log("fail getting manifest: ex:", ex); });
     },
     set_io_lisners: function(io, dashboard_){
@@ -3062,7 +3110,7 @@ function initialize_main_glob_struct(){
             MGS.unknown_agents.push(client.id);
 
             //just in case - if  recipient can't read the settings file
-            MGS.io_outbox({event:'update_folder', client: client, payload: SETT.update_folder});
+            MGS.io_outbox({event:'update_folder', client: client, payload: SETTINGS.update_folder});
             //SENDING REQUEST FOR IDS
 
             client.on('disconnect', info => 
@@ -3325,7 +3373,7 @@ function initialize_main_glob_struct(){
                 // From: MGS.manifest.start_monitor_changes()
                 case 'identifiers':
                 case 'manifest':
-                //* em.data: {update_folder: SETT.update_folder}
+                //* em.data: {update_folder: SETTINGS.update_folder}
                 case "update_folder":
                 case "update_agent":
                 case "same_md5_agents":
@@ -3878,7 +3926,7 @@ function initialize_main_glob_struct(){
                         MGS.task_board({t_names: ["manifest"], stage: MGS.FRESH, sid: "all", bundle_next:'same_md5_agents', who_call:"changes in update directory" });
                     }
                 }).catch(ex => { console.log("ERR:", ex); });
-            }, SETT.update_folder_watch_timer);
+            }, SETTINGS.update_folder_watch_timer);
         },
         start_monitor_changes_2: function(upd_fold)
         { 
@@ -3898,13 +3946,13 @@ function initialize_main_glob_struct(){
                 }
                 setTimeout(()=>{ 
                     this.start_monitor_changes_2(upd_fold); 
-                }, SETT.update_folder_watch_timer);
+                }, SETTINGS.update_folder_watch_timer);
 
             }).catch(ex => { 
                 console.log("ERR:", ex); 
                 setTimeout(()=>{ 
                     this.start_monitor_changes_2(upd_fold); 
-                }, SETT.update_folder_watch_timer);
+                }, SETTINGS.update_folder_watch_timer);
             });
           }, FIRST_DELAY);   
         },
