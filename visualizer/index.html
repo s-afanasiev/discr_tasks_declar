@@ -16,14 +16,14 @@
 	
 	<body style = 'margin:0px;' >
 		
-		<div class="nav_main" id = "nav_wrap" style = "position:relative; overflow:hidden; ">
-			<div class="nav_jumper" id = "nav_transition" style = "position:absolute; overflow:hidden;">
-				nav menu
+		<div id = "nav_main" style = "position:relative; overflow:hidden; border:1px solid blue;">
+			<div id = "nav_transition" style = "position:relative; overflow:hidden; border:1px solid red;">
+				nav_transition
 			</div>
-			<div id = "nav_board" style = "position:absolute; overflow:hidden;">
+			<div id = "nav_board" style = "position:relative; overflow:hidden; ">
 			</div>
 		</div>
-		<div id = "main_div" style = "position:relative;overflow:hidden; text-align: center; display: table-cell; vertical-align: middle; "></div>
+		<div id = "main_div" style = "position:relative; overflow:hidden; text-align: center; display: table-cell; vertical-align: middle;"></div>
 		
 		<script>
 			//document.body.onselectstart = function(){return false;}
@@ -46,13 +46,14 @@
 				//- connect to server by socket.io and listen 'agent_table' event to receive info about agents and their tasks
 				connect_to_server();
 				//- place 2 DIV blocks:
-				//-		'nav_wrap' - navigation panel occupying the 5% part from the top
+				//-		'nav_main' - navigation panel occupying the 5% part from the top
 				//-		'main_div' - to display Agents table
 				var ww = $(window).width();
 				var wh = $(window).height();
-				$("#"+"nav_wrap").width(ww).height(wh*.1).css("left", 0+"px").css("top", 0+"px");
+				$("#"+"nav_main").width(ww).height(wh*.1).css("left", 0+"px").css("top", 0+"px");
+
 				//.css("border","1px solid orange")
-				ui_fill_nav_menu({id:"nav_wrap", hang_listeners_on_inputs: true});
+				//ui_fill_nav_menu({id:"nav_main", hang_listeners_on_inputs: true});
 				$("#"+"main_div").width(parseInt(ww)).height(parseInt(wh*.9)).css("left", parseInt(0)+"px").css("top", parseInt(0)+"px");
 				$("#"+"main_div").bind({
 					click: function() {},
@@ -69,7 +70,7 @@
 			window.onresize = function(){
 				var ww = $(window).width();
 				var wh = $(window).height();
-				$("#"+"nav_wrap").width(ww).height(wh*.1).css("left", 0+"px").css("top", 0+"px");
+				$("#"+"nav_main").width(ww).height(wh*.1).css("left", 0+"px").css("top", 0+"px");
 				$("#"+"main_div").width(parseInt(ww)).height(parseInt(wh*.9)).css("left", parseInt(0)+"px").css("top", parseInt(0)+"px");
 			};
 			function get_socket_io_address(){
@@ -114,6 +115,7 @@
 			function connect_to_server()
 			{
 				const hostTable = new HostTable();
+				const mainMenu = new MainMenu().draw("#nav_board");
 				$("#"+"main_div").append(hostTable.init());
 				server_ = io.connect(endvr_server_address, {query:{browser_or_agent:"browser"}});
 				server_.on('connect', function()
@@ -202,11 +204,74 @@
 					else if(data.msg == "agent_offline"){
 						this.agent_offline(data);
 					}
-					else{
+					else if(data.msg == "apply_updates"){
+						mainMenu.apply_updates(data);
+					}else{
 						//console.log("gui_news: ", data);
 						this.agent_work(data);
 					}
 				}.bind(hostTable));
+			}
+			function MainMenu(){
+				this.apply_updates_flag = true;
+				this.apply_updates_status_color = "lightgreen";
+				this.ww = $(window).width();
+				this.draw=(div_id)=>{
+					$(div_id).width(400);
+					//draw_indicators_table(div_id);
+					const mainMenuTable = new MainMenuTable(
+						new ApplyUpdates(
+							new ApplyUpdatesIndicator(),
+							new ApplyUpdatesLabel(),
+							new ApplyUpdatesButton()
+						)
+					).draw();
+					$(div_id).append(mainMenuTable);
+					return this;
+				}
+				this.apply_updates=(data)=>{
+					if(data.value == true){}
+					const status_color = (status=="online") ? "#1e4" : "#f26";
+					const a = "<span style='background-color:"+status_color+";'>&emsp;</span>"
+					$("#apply_updates_main_indicator").empty().append(a);
+				}
+				const draw_indicators_table=(div_id)=>{
+					let a = "";
+					a += "<table cellspacing='1' border='1' cellpadding='1' style='border-collapse:collapse; border: 1px solid lightgrey'>";
+						a += "<tr>";
+							a += "<td id='apply_updates_main_indicator'>";
+								a += "<span style='background-color:"+this.apply_updates_status_color+";'>&emsp;</span>";
+							a += "</td>";
+							a += "<td>apply updates</td>";
+							a += "<td>";
+								apply_updates_btn()
+							a += "</td>";
+						a += "</tr>";
+					a += "</table>";
+					$(div_id).append(a);
+					return a;
+				}
+				const apply_updates_btn=(div_id)=>{
+
+				}
+			}
+			function MainMenuTable(applyUpdates){
+				this.draw=(parent_div_id)=>{
+					$(parent_div_id).append(wrap(applyUpdates.draw()))
+				}
+				const wrap=(child_res)=>{
+					let a = "";
+					const table_id = 'main_menu_table';
+					a += "<div>"
+						a += "<table id='"+table_id+"' cellspacing='1' border='1' cellpadding='1' style='border-collapse:collapse; border: 1px solid lightgrey'>";
+							a += child_res;
+						a += "</table>";
+					a += "</div>"
+					return $(a);
+				}
+			}
+			function ApplyUpdates(applyUpdatesIndicator, applyUpdatesLabel, applyUpdatesButton){
+
 			}
 			function HostTable(){
 				this.MAX_WIDTH = 4;

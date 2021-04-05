@@ -1,14 +1,14 @@
 {
-	"host": "ita52",
-	"port": "55999",
-	"update_folder": "./update",
-	"update_folder_watch_timer": 20000,
-	"mapped_paths":{
-		"x": "C:/windows/system32/x",
+    "host": "seasea",
+    "port": "55999",
+    "update_folder": "./update",
+    "update_folder_watch_timer": 20000,
+    "mapped_paths": {
+        "x": "C:/windows/system32/x",
         "y": "C:/Temp/"
-	},
-	"is_apply_updates": true,
-	"comments":{
-		"mapped_paths": "it is assumed that all these source paths start in the 'update' folder"
-	}
+    },
+    "apply_updates": false,
+    "comments": {
+        "mapped_paths": "it is assumed that all these source paths start in the 'update' folder"
+    }
 }

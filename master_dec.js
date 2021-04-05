@@ -15,7 +15,17 @@
 	main();
 	function main(){
 		new App().run();
+        //rewrite_config_test();
 	}
+    function rewrite_config_test(){
+        SETTINGS.a = 5;
+        SETTINGS.apply_updates = !SETTINGS.apply_updates;
+        fs.writeFile('m_settings.json', JSON.stringify(SETTINGS, null, '    '), function (err) {
+            if (err){
+                console.log("HostCluster.gui_ctrl(): fail to rewrite settings file:",err);
+            }
+        });
+    }
     function mainTest(){
 		const http = require('http').createServer(webRequest).listen(55999);
 		this.io = require('socket.io')(http);
@@ -266,7 +276,7 @@
             const launcher_update_path = glob_update_path + "\\launcher";
             const controller_update_path = glob_update_path + "\\controller";
             const other_update_path = glob_update_path + "\\other";
-            update_paths = [
+            this.update_paths = [
                 {name:"launcher", path:launcher_update_path},
                 {name:"controller", path:controller_update_path},
                 {name:"other", path:other_update_path}];
@@ -574,11 +584,17 @@
                 this.browserIoClients.gui_news({msg:'host_table', table: result});
             }else if(msg.startsWith("apply_updates")){
                 if(msg == "apply_updates_off"){
-                    this.SETTINGS.is_apply_updates = false;
+                    this.SETTINGS.apply_updates = false;
                 }else if(msg = "apply_updates_on"){
-                    this.SETTINGS.is_apply_updates = true;
+                    this.SETTINGS.apply_updates = true;
                 }
-                //fs.writeFile("m_settings.json", this.SETTINGS);
+                fs.writeFile('m_settings.json', JSON.stringify(this.SETTINGS, null, '    '), function (err) {
+                    if (err){
+                        console.log("HostCluster.gui_ctrl(): fail to rewrite settings file:",err);
+                    }
+                    this.browserIoClients.gui_news({msg:'apply_updates', value: this.SETTINGS.apply_updates});
+                });
+            }
         }
 	}
 
