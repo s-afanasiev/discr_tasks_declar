@@ -560,8 +560,8 @@
         }
         this.gui_ctrl=(msg)=>{
             //console.log("HostCluster.gui_ctrl() msg=",msg);
-            if(!msg){
-                console.error("HostCluster.gui_ctrl() No msg: ",msg);
+            if(typeof msg != "string"){
+                return console.error("HostCluster.gui_ctrl() msg is not a String type: ",msg);
             }
             if(msg=='host_table'){
                 const result = _hosts_list.map(host=>{
@@ -572,7 +572,13 @@
                     return res;
                 });
                 this.browserIoClients.gui_news({msg:'host_table', table: result});
-            }
+            }else if(msg.startsWith("apply_updates")){
+                if(msg == "apply_updates_off"){
+                    this.SETTINGS.is_apply_updates = false;
+                }else if(msg = "apply_updates_on"){
+                    this.SETTINGS.is_apply_updates = true;
+                }
+                //fs.writeFile("m_settings.json", this.SETTINGS);
         }
 	}
 
