@@ -15,6 +15,42 @@
 		
 		bind_mouse_events_for_document();
 	}
+	//привязка к элементу document
+	function bind_mouse_events_for_document(namespace){
+		$(document).unbind("mousedown");
+		$(document).unbind("mousemove");
+		$(document).unbind("mouseup");
+		//@-----------------------------------------
+		$(document).bind("mousedown", function(mouse_ev){
+			window["document_last_ms"] = new Date().getTime();
+			console.log("mousedown: ID =", mouse_ev.target.id, ", ClassName =", mouse_ev.target.className);
+			window["curr_elem_id"] = mouse_ev.target.id;
+			//- if not such class - then return empty string ""
+			window["curr_elem_class"] = mouse_ev.target.className;
+			window["document_xd"] = mouse_ev.pageX;
+			window["document_yd"] = mouse_ev.pageY;
+		});
+		$(document).bind("mousemove", function(e) {});
+		$(document).bind("mouseup", function(e){
+			if(window["curr_elem_class"].endsWith("_input")){
+				//-? 'mouseup' event happened in input and no reaction is required
+			}else{
+				var dx = Math.abs(window["document_xd"] - e.pageX);
+				var dy = Math.abs(window["document_yd"] - e.pageY);
+				var timestamp = new Date().getTime();
+				var dt = Math.abs(window["document_last_ms"] - timestamp);
+				if(dx < 20 && dy < 20 && dt > 30){	
+					var this_id_decode = window["curr_elem_id"].split("-");
+						//console.log("curr elem id decode =", this_id_decode);
+					var custom_function = this_id_decode[1];
+					if(typeof window[custom_function] == 'function') {
+						window[custom_function](window["curr_elem_id"]);
+					}else{ console.log("couldn't find function: "+ custom_function); }
+				}
+				console.log("mouseup:", e.target.id);
+			}
+		});
+	}
 	
 	function main_id_decode(clickant)
 	{
@@ -116,45 +152,7 @@
 		}
 		
 	}
-	//привязка к элементу document
-	function bind_mouse_events_for_document(namespace) 
-	{
-		$(document).unbind("mousedown");
-		$(document).unbind("mousemove");
-		$(document).unbind("mouseup");
-		//@-----------------------------------------
-		$(document).bind("mousedown", function(mouse_ev){
-			window["document_last_ms"] = new Date().getTime();
-			console.log("mousedown: ID =", mouse_ev.target.id, ", ClassName =", mouse_ev.target.className);
-			window["curr_elem_id"] = mouse_ev.target.id;
-			//- if not such class - then return empty string ""
-			window["curr_elem_class"] = mouse_ev.target.className;
-			window["document_xd"] = mouse_ev.pageX;
-			window["document_yd"] = mouse_ev.pageY;
-		});
-		$(document).bind("mousemove", function(e) {});
-		$(document).bind("mouseup", function(e){
-			if(window["curr_elem_class"].endsWith("_input")){
-				//-? 'mouseup' event happened in input and no reaction is required
-			}
-			else{
-				var dx = Math.abs(window["document_xd"] - e.pageX);
-				var dy = Math.abs(window["document_yd"] - e.pageY);
-				var timestamp = new Date().getTime();
-				var dt = Math.abs(window["document_last_ms"] - timestamp);
-				if(dx < 20 && dy < 20 && dt > 30){	
-					var this_id_decode = window["curr_elem_id"].split("-");
-          			//console.log("curr elem id decode =", this_id_decode);
-					var custom_function = this_id_decode[1];
-					if(typeof window[custom_function] == 'function') {
-						window[custom_function](window["curr_elem_id"]);
-					}else{ console.log("couldn't find function: "+ custom_function); }
-				}
-				console.log("mouseup:", e.target.id);
-			}
-		});
 
-  }
 
   // ------- GARBAGE ----------
   function delete_this_later_if_class_input() 

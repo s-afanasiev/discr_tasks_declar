@@ -216,17 +216,16 @@
 				this.apply_updates_flag = true;
 				this.apply_updates_status_color = "lightgreen";
 				this.ww = $(window).width();
-				this.draw=(div_id)=>{
-					$(div_id).width(400);
+				this.draw=(parent_div_id)=>{
+					$(parent_div_id).width(400);
 					//draw_indicators_table(div_id);
 					const mainMenuTable = new MainMenuTable(
 						new ApplyUpdates(
 							new ApplyUpdatesIndicator(),
-							new ApplyUpdatesLabel(),
 							new ApplyUpdatesButton()
 						)
 					).draw();
-					$(div_id).append(mainMenuTable);
+					$(parent_div_id).append(mainMenuTable);
 					return this;
 				}
 				this.apply_updates=(data)=>{
@@ -235,31 +234,12 @@
 					const a = "<span style='background-color:"+status_color+";'>&emsp;</span>"
 					$("#apply_updates_main_indicator").empty().append(a);
 				}
-				const draw_indicators_table=(div_id)=>{
-					let a = "";
-					a += "<table cellspacing='1' border='1' cellpadding='1' style='border-collapse:collapse; border: 1px solid lightgrey'>";
-						a += "<tr>";
-							a += "<td id='apply_updates_main_indicator'>";
-								a += "<span style='background-color:"+this.apply_updates_status_color+";'>&emsp;</span>";
-							a += "</td>";
-							a += "<td>apply updates</td>";
-							a += "<td>";
-								apply_updates_btn()
-							a += "</td>";
-						a += "</tr>";
-					a += "</table>";
-					$(div_id).append(a);
-					return a;
-				}
-				const apply_updates_btn=(div_id)=>{
-
-				}
 			}
 			function MainMenuTable(applyUpdates){
-				this.draw=(parent_div_id)=>{
-					$(parent_div_id).append(wrap(applyUpdates.draw()))
+				this.draw=()=>{
+					return wrap(applyUpdates.draw());
 				}
-				const wrap=(child_res)=>{
+				const wrap=(child_apply_updates)=>{
 					let a = "";
 					const table_id = 'main_menu_table';
 					a += "<div>"
@@ -270,8 +250,42 @@
 					return $(a);
 				}
 			}
-			function ApplyUpdates(applyUpdatesIndicator, applyUpdatesLabel, applyUpdatesButton){
-
+			function ApplyUpdates(applyUpdatesIndicator, applyUpdatesButton){
+				this.draw=()=>{
+					return wrap(applyUpdatesIndicator.draw(), applyUpdatesButton.draw());
+				}
+				const wrap=(child_indicator, child_button)=>{
+					let a = "";
+					const tr_id = 'main_menu_apply_updates';
+						a += "<tr id='"+tr_id+"'>";
+							a += "<td>";
+								a += child_indicator;
+							a += "</td>";
+							a += "<td>";
+								a += "apply updates";
+							a += "</td>";
+							a += "<td>";
+								a += child_button;
+							a += "</td>";
+						a += "</tr>";
+					return $(a);
+				}
+			}
+			function ApplyUpdatesIndicator(){
+				this.status = "online";
+				this.draw=()=>{
+					const status_color = (this.status=="online") ? "#1e4" : "#f26";
+					const a = "<span style='background-color:"+status_color+";'>&emsp;</span>";
+					return $(a);
+				}
+			}
+			function ApplyUpdatesButton(){
+				this.status = "online";
+				this.draw=()=>{
+					const status_color = (this.status=="online") ? "#1e4" : "#f26";
+					const a = "<span style='background-color:"+status_color+";'>&emsp;</span>";
+					return $(a);
+				}
 			}
 			function HostTable(){
 				this.MAX_WIDTH = 4;
