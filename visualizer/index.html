@@ -114,14 +114,14 @@
 			var my_socket_id = "";
 			function connect_to_server()
 			{
-				const hostTable = new HostTable();
-				const mainMenu = new MainMenu().draw("#nav_board");
-				$("#"+"main_div").append(hostTable.init());
 				server_ = io.connect(endvr_server_address, {query:{browser_or_agent:"browser"}});
-				server_.on('connect', function()
-				{
+				const hostTable = new HostTable();
+				const mainMenu = new MainMenu(server_);
+				server_.on('connect', function(){
 					console.log("connected");
 					server_.emit('get_socket_id',"");
+					mainMenu.init("#nav_board");
+					$("#"+"main_div").append(hostTable.init());
 				});
 				server_.on('id_assigned', function(msg)
 				{
@@ -189,7 +189,7 @@
 					a += "</table>";
 					$("#"+"main_div").empty().append(a);
 				});
-				server_.emit('gui_ctrl', 'host_table');
+				server_.emit('gui_ctrl', {type:'host_table'});
 				server_.on('gui_news', function(data){
 					if(data.msg == 'host_table'){
 						const a = this.host_table(data);
@@ -212,79 +212,110 @@
 					}
 				}.bind(hostTable));
 			}
-			function MainMenu(){
+			function MainMenu(server_){
+				this.mainMenuTable=undefined;//draw
 				this.apply_updates_flag = true;
-				this.apply_updates_status_color = "lightgreen";
+				this.apply_updates=(data)=>{
+					if(this.apply_updates_flag != data.value){
+						this.apply_updates_flag = data.value;
+						//console.log("MainMenu.apply_updates(): mainMenuTable=", this.mainMenuTable);
+						this.mainMenuTable.apply_updates(data.value);
+					}
+				}
 				this.ww = $(window).width();
-				this.draw=(parent_div_id)=>{
+				this.init=(parent_div_id)=>{
+					server_.emit('gui_ctrl', {type:"apply_updates", value: "check"});
 					$(parent_div_id).width(400);
-					//draw_indicators_table(div_id);
-					const mainMenuTable = new MainMenuTable(
+					this.mainMenuTable = new MainMenuTable(
 						new ApplyUpdates(
 							new ApplyUpdatesIndicator(),
-							new ApplyUpdatesButton()
+							new ApplyUpdatesButton(this.button_handler),
+							this.apply_updates_flag
 						)
-					).draw();
-					$(parent_div_id).append(mainMenuTable);
+					)
+					const main_menu_table_render = this.mainMenuTable.draw();
+					//console.log("MainMenu.init(): mainMenuTable object created:", this.mainMenuTable);
+					$(parent_div_id).empty().append(main_menu_table_render);
 					return this;
 				}
-				this.apply_updates=(data)=>{
-					if(data.value == true){}
-					const status_color = (status=="online") ? "#1e4" : "#f26";
-					const a = "<span style='background-color:"+status_color+";'>&emsp;</span>"
-					$("#apply_updates_main_indicator").empty().append(a);
+				this.button_handler=()=>{
+					alert("hi")
 				}
 			}
 			function MainMenuTable(applyUpdates){
+				this.applyUpdates = applyUpdates;
 				this.draw=()=>{
 					return wrap(applyUpdates.draw());
+				}
+				this.apply_updates=(is_apply)=>{
+					this.applyUpdates.apply_updates(is_apply);
 				}
 				const wrap=(child_apply_updates)=>{
 					let a = "";
 					const table_id = 'main_menu_table';
 					a += "<div>"
 						a += "<table id='"+table_id+"' cellspacing='1' border='1' cellpadding='1' style='border-collapse:collapse; border: 1px solid lightgrey'>";
-							a += child_res;
+							a += child_apply_updates;
 						a += "</table>";
 					a += "</div>"
 					return $(a);
 				}
 			}
-			function ApplyUpdates(applyUpdatesIndicator, applyUpdatesButton){
+			function ApplyUpdates(applyUpdatesIndicator, applyUpdatesButton, init_apply_updates_flag){
+				this.$a = undefined;
+				this.wrap_id = "main_menu_apply_updates";
+				this.applyUpdatesIndicator = applyUpdatesIndicator;
+				this.indicator_docking_id = "apply_updates_indicator";
+				this.applyUpdatesButton = applyUpdatesButton;
+				this.button_docking_id = "apply_updates_button";
 				this.draw=()=>{
-					return wrap(applyUpdatesIndicator.draw(), applyUpdatesButton.draw());
+					return wrap(this.applyUpdatesIndicator.draw(init_apply_updates_flag), this.applyUpdatesButton.draw(init_apply_updates_flag));
+				}
+				this.apply_updates=(is_apply)=>{
+					//console.log("ApplyUpdates.apply_updates(): is_apply=",is_apply);
+					//const $finded_element = $("#"+this.indicator_docking_id, this.$a);
+					const $finded_element = $("#"+this.indicator_docking_id, "#"+this.wrap_id);
+					console.log("ApplyUpdates.apply_updates(): $finded_element=", $finded_element);
+					$finded_element.empty().append(this.applyUpdatesIndicator.draw(is_apply));
+					//$finded_element.empty();
+					console.log("ApplyUpdates.apply_updates(): $finded_element=", $finded_element);
 				}
 				const wrap=(child_indicator, child_button)=>{
 					let a = "";
-					const tr_id = 'main_menu_apply_updates';
-						a += "<tr id='"+tr_id+"'>";
-							a += "<td>";
-								a += child_indicator;
-							a += "</td>";
-							a += "<td>";
-								a += "apply updates";
-							a += "</td>";
-							a += "<td>";
-								a += child_button;
-							a += "</td>";
-						a += "</tr>";
-					return $(a);
+					a += "<tr id='"+this.wrap_id+"'>";
+						a += "<td id='"+this.indicator_docking_id+"'>";
+							a += child_indicator;
+						a += "</td>";
+						a += "<td>";
+							a += "apply updates";
+						a += "</td>";
+						a += "<td id='"+this.button_docking_id+"'>";
+							a += child_button;
+						a += "</td>";
+					a += "</tr>";
+					this.$a = $(a);
+					return a;
 				}
 			}
 			function ApplyUpdatesIndicator(){
-				this.status = "online";
-				this.draw=()=>{
-					const status_color = (this.status=="online") ? "#1e4" : "#f26";
+				this.is_online = true;
+				this.$a = undefined;
+				this.draw=(is_apply_updates)=>{
+					const status_color = (is_apply_updates) ? "#1e4" : "#f26";
 					const a = "<span style='background-color:"+status_color+";'>&emsp;</span>";
-					return $(a);
+					this.$a = $(a);
+					return a;
 				}
 			}
-			function ApplyUpdatesButton(){
-				this.status = "online";
-				this.draw=()=>{
-					const status_color = (this.status=="online") ? "#1e4" : "#f26";
-					const a = "<span style='background-color:"+status_color+";'>&emsp;</span>";
-					return $(a);
+			function ApplyUpdatesButton(handler){
+				this.onoff = "on";
+				this.$a = undefined;
+				this.draw=(is_apply_updates)=>{
+					this.onoff = (is_apply_updates) ? "off" : "on";
+					const a = "<div id='apply_updates_button' style='width:100%; height:100%; background-color:lightgrey; cursor:pointer;'>"+this.onoff+"</div>";
+					this.$a = $(a);
+					//this.$a.click(handler);
+					return a;
 				}
 			}
 			function HostTable(){

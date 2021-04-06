@@ -569,31 +569,39 @@
             return agentObj;
         }
         this.gui_ctrl=(msg)=>{
-            //console.log("HostCluster.gui_ctrl() msg=",msg);
-            if(typeof msg != "string"){
-                return console.error("HostCluster.gui_ctrl() msg is not a String type: ",msg);
+            console.log("HostCluster.gui_ctrl() msg=",msg);
+            if(typeof msg != "object"){
+                return console.error("HostCluster.gui_ctrl() msg is not an Object: ",msg);
             }
-            if(msg=='host_table'){
+            if(msg.type=='host_table'){
                 const result = _hosts_list.map(host=>{
                     let res = {};
                     res.md5 = host.commonMd5();
-                    const add_info = host.gui_ctrl(msg);
+                    const add_info = host.gui_ctrl(msg.type);
                     res = Object.assign(res, add_info);
                     return res;
                 });
                 this.browserIoClients.gui_news({msg:'host_table', table: result});
-            }else if(msg.startsWith("apply_updates")){
-                if(msg == "apply_updates_off"){
-                    this.SETTINGS.apply_updates = false;
-                }else if(msg = "apply_updates_on"){
-                    this.SETTINGS.apply_updates = true;
-                }
-                fs.writeFile('m_settings.json', JSON.stringify(this.SETTINGS, null, '    '), function (err) {
-                    if (err){
-                        console.log("HostCluster.gui_ctrl(): fail to rewrite settings file:",err);
-                    }
+            }else if(msg.type=="apply_updates"){
+                if(msg.value == "check"){
                     this.browserIoClients.gui_news({msg:'apply_updates', value: this.SETTINGS.apply_updates});
-                });
+                }else{
+                    let is_apply = this.SETTINGS.apply_updates;
+                    if(msg.value == "off"){
+                        is_apply = false;
+                    }else if(msg.value == "on"){
+                        is_apply = true;
+                    }else 
+                    if(is_apply != this.SETTINGS.apply_updates){
+                        this.SETTINGS.apply_updates = is_apply;
+                        fs.writeFile('m_settings.json', JSON.stringify(this.SETTINGS, null, '    '), function (err) {
+                            if (err){
+                                console.log("HostCluster.gui_ctrl(): fail to rewrite settings file:",err);
+                            }
+                            this.browserIoClients.gui_news({msg:'apply_updates', value: this.SETTINGS.apply_updates});
+                        });
+                    }
+                }
             }
         }
 	}

@@ -7,7 +7,7 @@
         "x": "C:/windows/system32/x",
         "y": "C:/Temp/"
     },
-    "apply_updates": false,
+    "apply_updates": true,
     "comments": {
         "mapped_paths": "it is assumed that all these source paths start in the 'update' folder"
     }
