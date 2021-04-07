@@ -123,7 +123,7 @@
                             new Controller(
                                 new SpecialControllerMode(),
                                 new NormalControllerMode(
-                                    new Jobs(JOBS_CONFIG.throw_right_away)
+                                    new Jobs(JOBS_CONFIG)
                                 ),
                                 undefined
                             ),
@@ -545,9 +545,11 @@
             return this;
 		}
 		this.propagateManifestDiff = (mans_diff)=>{
-            _hosts_list.forEach(host=>{
-                host.propagateManifestDiff(mans_diff);
-            });
+            if(this.SETTINGS.apply_updates){
+                _hosts_list.forEach(host=>{
+                    host.propagateManifestDiff(mans_diff);
+                });
+            }
 		}
 		this.hostByMd5 = (agent_ids)=>{
 			let host_index = -1;
@@ -561,7 +563,7 @@
 			}
 			if(host_index > -1) return _hosts_list[host_index];
 			else {
-                return this.addHost(this.hostAsPair.instance(agent_ids).run(this.browserIoClients));
+                return this.addHost(this.hostAsPair.instance(agent_ids, this).run(this.browserIoClients, this.SETTINGS));
             }
 		}
 		this.addHost = (agentObj)=>{
@@ -592,7 +594,7 @@
                     }else if(msg.value == "on"){
                         is_apply = true;
                     }
-                    console.log("HostCluster.gui_ctrl() is_apply=", is_apply, "SETTINGS.apply_updates=", this.SETTINGS.apply_updates);
+                    //console.log("HostCluster.gui_ctrl() is_apply=", is_apply, "SETTINGS.apply_updates=", this.SETTINGS.apply_updates);
                     if(is_apply != this.SETTINGS.apply_updates){
                         this.SETTINGS.apply_updates = is_apply;
                         fs.writeFile('m_settings.json', JSON.stringify(this.SETTINGS, null, '    '), (err)=>{
@@ -604,6 +606,18 @@
                     }
                 }
             }
+        }
+        //@ host says that all his agents was disconnected, so its equal like host must be recycled
+        this.agents_disconnected=(host_md5)=>{
+            let host_index = -1;
+            for(let i=0; i<_hosts_list.length; i++){
+                if(_hosts_list[i].commonMd5() == host_md5){
+                    host_index = i;
+                }
+            }
+            console.log("HostCluster.agents_disconnected() _hosts_list length before=", _hosts_list.length);
+            if(host_index > -1) _hosts_list.splice(host_index, 1);
+            console.log("HostCluster.agents_disconnected() _hosts_list length after=", _hosts_list.length);
         }
 	}
 
@@ -652,7 +666,7 @@
         }
     }
 
-	function HostAsPair(launcher, controller, connectedAgentsThrottle, agentUpdateChain, creator_ids){
+	function HostAsPair(launcher, controller, connectedAgentsThrottle, agentUpdateChain, creator_ids, hostCluster){
         //@ HostAsPair object instantiates by one of Launcher or Controller, so on creation stage we allready know about one of agents and his states
 		this.launcher = launcher;
 		this.controller = controller;
@@ -660,6 +674,8 @@
         this.agentUpdateChain = agentUpdateChain;
         this.creator_ids = creator_ids;
         this.browserIoClients = undefined; //run()
+        this.SETTINGS = undefined; //run
+        this.hostCluster = hostCluster;
 		this.is_host_first_time_created_flag = true;
         this.manifest_snapshot = undefined;//welcomeAgent
         this.mapped_mans_snapshot = undefined;//welcomeAgent
@@ -670,7 +686,7 @@
         this.creatorPid=()=>{return this.creator_ids.pid}
         this.creatorPpid=()=>{return this.creator_ids.ppid}
         this.creatorApid=()=>{return this.creator_ids.apid}
-		this.instance = function(creator_ids){
+		this.instance = function(creator_ids, hostCluster){
             //console.log("HostAsPair.instance(): creator type is ",creator_ids.ag_type);
             const ag_type = creator_ids.ag_type;
 			return new HostAsPair(
@@ -678,7 +694,8 @@
 				this.controller.instance((ag_type==="controller"?creator_ids:undefined), this),
 				this.connectedAgentsThrottle.instance(),
                 this.agentUpdateChain.instance(),
-                creator_ids
+                creator_ids,
+                hostCluster
 			);
 		}
         this.gui_ctrl=(msg)=>{
@@ -712,7 +729,8 @@
             data.md5 = this.commonMd5();
             this.browserIoClients.gui_news(data);
         }
-        this.run=(browserIoClients)=>{
+        this.run=(browserIoClients, SETTINGS)=>{
+            this.SETTINGS = SETTINGS;
             this.browserIoClients = browserIoClients;
             this.gui_news({msg: "host_born"});
             this.launcher.run(this.browserIoClients, this);
@@ -745,28 +763,33 @@
             }else if(!l_on && c_on){
                 //console.log("HostAsPair: only controller is online...");
                 this.controller.compareCurManifest(this.last_manifest_snapshot()).then(res=>{
-
+                    this.controller.doNormalWork();
                 }).catch(err=>{
                     console.error("HostAsPair: this.controller.compareCurManifest() Error 1: ",err);
                 })
             }
             else if(l_on && c_on){
-                //console.log("HostAsPair: Launcher and Controller are online...");
-                this.launcher.compareCurManifest(this.last_manifest_snapshot()).then(msg=>{
-                    //console.log("HostAsPair: after Launcher's comparing result=",msg);
-                    //@res = {compare:false, kill:false, update:false, start:true}
-                    if(!msg.is_killed){
-                        this.controller.compareCurManifest(this.last_manifest_snapshot()).then(res=>{
-                            //console.log("run_agents_after_first_host_init_timeout(): both agents has updates each other");
-                        }).catch(err=>{
-                            console.error("HostAsPair: this.controller.compareCurManifest() Error: ",err);
-                        })
-                    }else{
-                        console.error("HostAsPair: l and cwas online, then l compared and killed c")
-                    }
-                }).catch(err=>{
-                    console.error("HostAsPair: this.launcher.compareCurManifest() Error 2: ",err);
-                })
+                if(this.SETTINGS.apply_updates){
+                    //console.log("HostAsPair: Launcher and Controller are online...");
+                    this.launcher.compareCurManifest(this.last_manifest_snapshot()).then(msg=>{
+                        //console.log("HostAsPair: after Launcher's comparing result=",msg);
+                        //@res = {compare:false, kill:false, update:false, start:true}
+                        if(!msg.is_killed){
+                            this.controller.compareCurManifest(this.last_manifest_snapshot()).then(res=>{
+                                //console.log("run_agents_after_first_host_init_timeout(): both agents has updates each other");
+                                this.controller.doNormalWork();
+                            }).catch(err=>{
+                                console.error("HostAsPair: this.controller.compareCurManifest() Error: ",err);
+                            })
+                        }else{
+                            console.error("HostAsPair: l and cwas online, then l compared and killed c")
+                        }
+                    }).catch(err=>{
+                        console.error("HostAsPair: this.launcher.compareCurManifest() Error 2: ",err);
+                    })
+                }else{
+                    this.controller.doNormalWork();
+                }
             //@-----------------------------------------------------------
             }else{
                 console.error("HostAsPair: Unhandled situation! launcher state:", this.launcher.isOnline(), ", controller state:", this.controller.isOnline());
@@ -787,11 +810,20 @@
                 }
                 //@ first host init and agents update was finished.Now its a new agents connections and new singles comparings.
                 if(this.is_init_timeout()){
-                    this[ag_type].compareCurManifest(this.manifest_snapshot).then(res=>{
-                        //console.log("HostAsPair.welcomeAgent(): is_init_timeout()",res);
-                    }).catch(err=>{
-                        console.error("HostAsPair.welcomeAgent() after is_init_timeout() Error2: ", err);
-                    });
+                    if(this.SETTINGS.apply_updates){
+                        this[ag_type].compareCurManifest(this.manifest_snapshot).then(res=>{
+                            //console.log("HostAsPair.welcomeAgent(): is_init_timeout()",res);
+                            if(ag_type=="controller"){
+                                this[ag_type].doNormalWork();
+                            }
+                        }).catch(err=>{
+                            console.error("HostAsPair.welcomeAgent() after is_init_timeout() Error2: ", err);
+                        });
+                    }else{
+                        if(ag_type=="controller"){
+                            this[ag_type].doNormalWork();
+                        }
+                    }
                 }
             }else{
                 console.error("HostAsPair.welcomeAgent(): Throttle blocked the agent! ", Object.values(agent_ids).join("|"));
@@ -839,6 +871,12 @@
             }
             
         }
+        this.agent_disconnected=(ag_type)=>{
+            if((!this.launcher.isOnline())&&(!this.controller.isOnline())){
+                //console.log("HostAsPair.agent_disconnected() this.hostCluster=",this.hostCluster);
+                this.hostCluster.agents_disconnected(this.commonMd5());
+            }
+        }
 	}
     function ConnectedAgentsThrottle(){
         this.redundantAgentsArray=[];
@@ -880,7 +918,7 @@
     function Launcher(agent_ids){
         this.agent_ids = agent_ids;
         this.partner = undefined;
-        this.agentUpdateChain = undefined;
+        this.agentUpdateChain = undefined;//init
         this.agent_socket = undefined;
         this.manifest_snapshot = undefined;
         this.browserIoClients =undefined; //run
@@ -940,6 +978,7 @@
                 this.switchOnline(false);
                 //console.log("LAUNCHER DISCONNECTED");
                 this.gui_news("agent_offline");
+                this.host.agent_disconnected(this.agent_ids.ag_type);
                 this.agent_socket = undefined;
             });
         }
@@ -1063,6 +1102,7 @@
                 this.switchOnline(false);
                 //console.log("CONTROLLER DISCONNECTED");
                 this.gui_news("agent_offline");
+                this.host.agent_disconnected(this.agent_ids.ag_type);
                 this.agent_socket = undefined;
             });
         }
@@ -1081,7 +1121,7 @@
                 }).finally(()=>{
                     this.switchUpdateMode(false);
                     this.gui_news("update mode off");
-                    this.doNormalWork();
+                    //this.doNormalWork();
                 })
             });
         }
@@ -1098,14 +1138,14 @@
                 }).finally(()=>{
                     this.switchUpdateMode(false);
                     this.gui_news("update mode off");
-                    this.doNormalWork();
+                    //this.doNormalWork();
                 })
             });
         }
         this.doNormalWork=()=>{
             if(this.isSpecialMode()){
                 //@ Special Mode: for example some Render operation.
-                this.gui_news("resume doing work in a normal mode");
+                this.gui_news("resume doing work in a special mode");
                 this.specialControllerMode.run(this, this.agent_socket);
             }else{
                 //@ Normal Mode: 'diskSpace' and so on...
@@ -1434,32 +1474,59 @@
     }
     function Jobs(jobs_schedule){
         this.schedule = jobs_schedule;
-        agent_socket=undefined; //run()
+        this.agent_socket=undefined; //run()
+        this.controller=undefined;//run
 		this.run=(controller, agent_socket)=>{
-            new JobsMon(
-                new JobsOnResponce(
-                    new JobsRightAway()
-                )
-            )
             this.agent_socket = agent_socket;
-			if(!this.schedule){
+            this.controller = controller;
+            if(!this.schedule){
                 console.error("No global var 'jobs_schedule_temp' !");
                 return [];
             }else{
-                this.schedule.forEach(job=>{
-                    controller.gui_news("doing '"+job.name+"' job");
-                    this.agent_socket.emit(job.name, job).once(job.name, res=>{
-                        controller.gui_news("'"+job.name+"' job done");
-                        console.log("Jobs.run(): socketio answer: ",res);
-                        if(check_condition(job, res)){
-                            console.log("Jobs checking condition = true");
-                        }else{
-                            console.log("Jobs checking condition = false");
-                        }
-                    });
-                });
+                new JobsMon(
+                    new JobsOnResponce(
+                        new JobsRightAway()
+                    )
+                ).run(this.schedule, this.controller, this.agent_socket);
             }
 		}
+		this.sort_jobs=()=>{
+			//@ coupling jobs with same names
+		}
+	}
+    function JobsMon(jobsOnResponce){
+        this.jobsOnResponce = jobsOnResponce;
+        this.run=(schedule, controller, agent_socket)=>{
+            this.jobsOnResponce.run(schedule, controller, agent_socket);
+        }
+    }
+    function JobsOnResponce(jobsRightAway){
+        this.schedule=undefined;//run
+        this.agent_socket=undefined;//run
+        this.controller=undefined;//run
+        this.jobsRightAway = jobsRightAway;
+        this.run=(schedule, controller, agent_socket)=>{
+            this.schedule = schedule;
+            this.agent_socket = agent_socket;
+            this.controller = controller;
+            this.jobsRightAway.run(schedule, controller, agent_socket, this);
+        }
+        this.do=(rightaway_jobs_action)=>{
+            const matched_response_jobs = this.schedule.reaction_on_response.filter(job=>job.name == rightaway_jobs_action);
+            //const on_response_job_names = this.schedule.reaction_on_response.map(job=>job.name);
+            console.log("JobsMon.do() matched_response_jobs=", matched_response_jobs);
+            matched_response_jobs.forEach(job=>{
+                this.agent_socket.emit(job.name).once(job.name, res=>{
+                    this.controller.gui_news("'"+job.name+"' job done");
+                    if(check_condition(job, res)){
+                        console.log("Jobs checking condition = true");
+                        this.do(job.action);
+                    }else{
+                        console.log("Jobs checking condition = false");
+                    }
+                })
+            });
+        }
         const check_condition=(job, res)=>{
             if(job.name=='disk_space'){
                 const GB = 1000000000;
@@ -1476,10 +1543,58 @@
                 return true;
             }
         }
-		this.sort_jobs=()=>{
-			//@ coupling jobs with same names
-		}
-	}
+    }
+    function JobsRightAway(){
+        this.schedule = undefined;//run
+        this.controller = undefined;//run
+        this.agent_socket = undefined;//run
+        this.jobsOnResponce = undefined;//run
+        this.run=(schedule, controller, agent_socket, jobsOnResponce)=>{
+            this.schedule = schedule;
+            this.controller = controller;
+            this.agent_socket = agent_socket;
+            this.jobsOnResponce = jobsOnResponce;
+            schedule.throw_right_away.forEach(job=>{
+                send_one_job(job);
+            })
+        }
+        const send_one_job=(job)=>{
+            this.controller.gui_news("doing '"+job.name+"' job");
+            this.agent_socket.emit(job.name, job).once(job.name, res=>{
+                this.controller.gui_news("'"+job.name+"' job done");
+                console.log("Jobs.run(): socketio answer: ",res);
+                if(check_condition(job, res)){
+                    console.log("Jobs checking condition = true");
+                    this.jobsOnResponce.do(job.action);
+                }else{
+                    console.log("Jobs checking condition = false");
+                }
+            });
+            if(typeof job.interval== "number"&& job.interval > 100){
+                setTimeout(()=>{
+                    send_one_job(job);
+                }, job.interval)
+            }else{
+                console.error("JobsRightAway.send_one_job(): job.interval must be typeof Number and be more than 100 ms");
+            }
+        }
+        const check_condition=(job, res)=>{
+            if(job.name=='disk_space'){
+                const GB = 1000000000;
+                if(job.condition == 'lte 1 gb'){
+                    if(res.free < GB) return true;
+                    else return false;
+                }
+                else if(job.condition == 'gte 100 gb'){
+                    if(res.free > GB*100) return true;
+                    else return false;
+                }
+            }
+            else if(job.name=='nvidia_smi'){
+                return true;
+            }
+        }
+    }
     function Job(name){
 
     }

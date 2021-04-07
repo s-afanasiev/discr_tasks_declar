@@ -310,9 +310,9 @@
 				this.is_online = true;
 				this.$a = undefined;
 				this.draw=(is_apply_updates)=>{
-					console.log("ApplyUpdatesIndicator.draw() is_apply_updates=",is_apply_updates);
+					//console.log("ApplyUpdatesIndicator.draw() is_apply_updates=",is_apply_updates);
 					const status_color = (is_apply_updates) ? "#1e4" : "#f26";
-					console.log("ApplyUpdatesIndicator.draw() status_color=",status_color);
+					//console.log("ApplyUpdatesIndicator.draw() status_color=",status_color);
 					const a = "<span style='background-color:"+status_color+";'>&emsp;</span>";
 					this.$a = $(a);
 					//return a;
@@ -323,7 +323,7 @@
 				this.onoff = "on";
 				this.$a = undefined;
 				this.draw=(is_apply_updates)=>{
-					console.log("ApplyUpdatesButton.draw() is_apply_updates=",is_apply_updates);
+					//console.log("ApplyUpdatesButton.draw() is_apply_updates=",is_apply_updates);
 					this.onoff = (is_apply_updates) ? "off" : "on";
 					const a = "<div id='apply_updates_button' style='width:100%; height:100%; background-color:lightgrey; cursor:pointer;'>"+this.onoff+"</div>";
 					this.$a = $(a);
@@ -332,9 +332,9 @@
 					return this.$a;
 				}
 				this.button_handler=()=>{
-					let value = "off";
-					if(this.onoff == "on") value = "on";
-					server_.emit("gui_ctrl", {type:"apply_updates", value: value});
+					let value_for_server = "off";
+					if(this.onoff == "on") value_for_server = "on";
+					server_.emit("gui_ctrl", {type:"apply_updates", value: value_for_server});
 				}
 			}
 			function HostTable(){

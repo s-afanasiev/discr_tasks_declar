@@ -3,13 +3,13 @@
         {"name":"disk_space", "condition": "lte 1 gb", "action":"clean_space", "interval":5000},
         {"name":"disk_space", "condition": "gte 100 gb", "action":"increase_traffic"},
         {"name":"nvidia_smi", "condition": "nvidia_exist", "action":"do_render"},
-        {"name":"exec_cmd", "cmd":"notepad.exe", "condition": "exec_done", "action":"write data: hi"}
+        {"name":"exec_cmd", "name_param":"notepad.exe", "condition": "is_done", "action":"look_process_by_name", "action_param":"notepad"}
     ],
     "reaction_on_response":[
         {"name":"clean_space", "condition": "is_done", "action":"restart_render_counter"},
         {"name":"increase_traffic", "condition": "is_done"},
         {"name":"do_render", "condition": "is_started_render", "action":"say_when_finish_render"},
-        {"name":"say_when_finish_render", "condition": "is_done", "action":"say_when_finish_render"}
+        {"name":"look_process_by_name", "condition": "is_done", "action":"say_when_finish_render"}
     ],
     "JOBS_DICTIONARY":[
         "this is description block",
