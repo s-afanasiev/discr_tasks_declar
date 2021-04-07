@@ -591,10 +591,11 @@
                         is_apply = false;
                     }else if(msg.value == "on"){
                         is_apply = true;
-                    }else 
+                    }
+                    console.log("HostCluster.gui_ctrl() is_apply=", is_apply, "SETTINGS.apply_updates=", this.SETTINGS.apply_updates);
                     if(is_apply != this.SETTINGS.apply_updates){
                         this.SETTINGS.apply_updates = is_apply;
-                        fs.writeFile('m_settings.json', JSON.stringify(this.SETTINGS, null, '    '), function (err) {
+                        fs.writeFile('m_settings.json', JSON.stringify(this.SETTINGS, null, '    '), (err)=>{
                             if (err){
                                 console.log("HostCluster.gui_ctrl(): fail to rewrite settings file:",err);
                             }
