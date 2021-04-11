@@ -56,6 +56,8 @@ function App(){
                 .with('disk_space', new DiskSpace())
                 .with('nvidia_smi', new NvidiaSmi())
                 .with('exec_cmd', new ExecuteCommand())
+                .with('proc_count', new ProcCount())
+                .with('do_render', new DoRender())
         ).run();
 	}
 }
@@ -276,7 +278,7 @@ function FirstComparingMappedMans(settings_){
     }
     const create_mapped_dst_path=(dst_path)=>{
         return new Promise((resolve, reject)=>{
-            fs.stat(file, function(err, stat) {
+            fs.stat(dst_path, function(err, stat) {
                 if (stat && stat.isDirectory()) {
                     resolve();
                 }else{
@@ -291,7 +293,7 @@ function FirstComparingMappedMans(settings_){
     const sync_mapped_dir=(mapped_mans, src_path, is_keep_old_files)=>{
         //@ man = [[f1], [f2]]
         return new Promise((resolve, reject)=>{
-            const all_err_names = [];
+            let all_err_names = [];
             //const man = mapped_mans[src_path].dst_path;
             this.createMappedEmptyDirs(mapped_mans, src_path).then(err_names=>{
                 console.log("UpdatedFiles.sync_dirs(): createEmptyDirs(): err_names=",err_names);
@@ -332,9 +334,9 @@ function FirstComparingMappedMans(settings_){
         })
     }
     this.copy_mapped_files=(mapped_mans, src_path, error_names)=>{
-        console.log("FirstComparingMappedMans.copy_mapped_files() files_to_write=",files_to_write);
         return new Promise((resolve, reject) => {
             const files_to_write = mapped_mans[src_path].man;
+            console.log("FirstComparingMappedMans.copy_mapped_files() files_to_write=",files_to_write);
             let dst_path = mapped_mans[src_path].dst_path;
             dst_path = this.stringEndSlash.add(dst_path);
             src_path = this.stringEndSlash.add(src_path);
@@ -343,8 +345,10 @@ function FirstComparingMappedMans(settings_){
             if(pending==0){return resolve();}
             const err_names = error_names || [];
             files_to_write.forEach(file_info=>{
-                console.log("copy_files() file_info=",file_info);
-                if(this.stringEndSlash.check(file_info)){
+                console.log("copy_mapped_files() file_info=",file_info);
+                const FNAME = 0;
+                if(this.stringEndSlash.check(file_info[FNAME])){
+                    console.log("copy_mapped_files() file_info ends with slash: ",file_info);
                     //@ Ignore Empty Dirs
                     if (!--pending) { resolve(err_names); }
                 }else{
@@ -354,7 +358,7 @@ function FirstComparingMappedMans(settings_){
                     console.log("copy_mapped_files() rem_file=",rem_file);
                     fs.copyFile(rem_file, loc_file, (err)=>{
                         if (err) {
-                            console.log("copy_files() Error=",err);
+                            console.log("copy_mapped_files() Error=",err);
                             err_names.push(file_info);
                             if (!--pending) { resolve(err_names); }
                         }   
@@ -369,10 +373,11 @@ function FirstComparingMappedMans(settings_){
 }
 function StringEndSlash(){
     this.check=(str)=>{
-        if(!str || typeof str != "string"){return str}
+        if(!str || typeof str != "string"){throw new Error("StringEndSlash.check() arg must be a String type!");}
         else{
             const is_end1 = str.endsWith("\\");
             const is_end2 = str.endsWith("/");
+            console.log("StringEndSlash.check() is_end1=",is_end1,",is_end2=",is_end2);
             if(is_end1 || is_end2){return true}
             else return false;
         }
@@ -1073,7 +1078,7 @@ function NvidiaSmi(){
             let is_path_exist = true;
             fs.stat(NVIDIA_PATH_NORMALIZED, function(err) {
                 if(err){
-                    console.log("NvidiaSmi.run() err=", err);                            
+                    console.error("NvidiaSmi.run() err=", err);                            
                     is_path_exist = false;
                 }
             });
@@ -1081,13 +1086,13 @@ function NvidiaSmi(){
                 execute_command(NVIDIA_PATH + '\r\n').then(cmd_out=>{
                     let nvidia_info = parse_nvsmi_result(cmd_out);
                     console.log("NvidiaSmi.run(): nvidia_info=",nvidia_info);
-                    socket.emit(ev_name, {info:nvidia_info});
+                    socket.emit(ev_name, {is_exist:true, info:nvidia_info});
                 }).catch(ex=>{
                     console.log("ERR: NVSMI: fail to execute_command !");
                     socket.emit(ev_name, {error:ex});
                 });
             }else{
-                socket.emit(ev_name, {error:"no nvidia gpu on host"});
+                socket.emit(ev_name, {is_exist:false, error:"no nvidia gpu on host"});
             }
         })
     }
@@ -1121,6 +1126,39 @@ function ExecuteCommand(){
             }
         })
         return res;
+    }
+}
+function ProcCount(){
+    this.run=(ev_name, socket)=>{
+        //@ ev_name == "do_render"
+        socket.on(ev_name, (proc_name)=>{
+            console.log("proc_count event! proc_name =",proc_name);
+            this.by_name(proc_name).then(res=>{
+                console.log("proc_count event! res =",res);
+                socket.emit(ev_name, {info: res});
+            }).catch(err=>{
+                socket.emit(ev_name, {is_error: true, error: err});
+            });
+        });
+    }	
+    this.by_name=(proc_name)=>{
+        return new Promise( (resolve, reject) => {
+            //const prcs = [];
+            ps.lookup({	command: proc_name, psargs: 'ux'}, 
+                function(err, resultList ) {
+                    if (err) reject(err);
+                    else resolve(resultList);			
+            });
+        });
+    }
+}
+function DoRender(){
+    this.run=(ev_name, socket)=>{
+        //@ ev_name == "do_render"
+        socket.on(ev_name, (data)=>{
+            console.log("do_render event!");
+            socket.emit(ev_name, {is_started_render: true});
+        });
     }
 }
 //----------PARSE NVIDIA GPU FUNCTIONS--------------

@@ -116,7 +116,7 @@
                 ),
                 new BrowserIoClients(),
                 new UpdatableHostCluster(
-                    new Manifest(new DirStructure(), new DirsComparing(), SETTINGS.mapped_paths),
+                    new Manifest(new DirStructure(), new DirsComparing()),
                     new HostCluster(
                         new HostAsPair(
                             new Launcher({}),
@@ -146,11 +146,31 @@
         this.browserIoClients=browserIoClients;
         this.updatableHostCluster=updatableHostCluster;
         this.run=()=>{
+            const stringEndSlash = new StringEndSlash();
+            const update_path_with_slash = stringEndSlash.add(SETTINGS.update_folder);
+            SETTINGS.update_folder = update_path_with_slash;
             this.browserIoClients.run(this.updatableHostCluster);
             this.updatableHostCluster.run(this.browserIoClients, SETTINGS);
             this.ioServer.run(this.updatableHostCluster, this.browserIoClients);
         }
     }
+    function StringEndSlash(){
+    this.check=(str)=>{
+        if(!str || typeof str != "string"){throw new Error("StringEndSlash.check() arg must be a String type!");}
+        else{
+            const is_end1 = str.endsWith("\\");
+            const is_end2 = str.endsWith("/");
+            //console.log("StringEndSlash.check() is_end1=",is_end1,",is_end2=",is_end2);
+            if(is_end1 || is_end2){return true}
+            else return false;
+        }
+    }
+    this.add=(str)=>{
+        if(!str || typeof str != "string"){return str}
+        else if(this.check(str)) return str;
+        else return str + '/';
+    }
+}
 
     function BrowserIoClients(){
         this.updatableHostCluster=undefined;
@@ -248,9 +268,9 @@
     }
 
     //@ ready=1
-	function Manifest(dirStructure, dirsComparing, mapped_paths){
-        this.update_paths = []; //run
-        this.mapped_paths = mapped_paths || {};
+	function Manifest(dirStructure, dirsComparing){
+        this.main_update_paths = []; //run
+        this.mapped_paths = {};//run
         this.dirStructure=dirStructure;
         this.dirsComparing=dirsComparing;
         this.hostCluster=undefined;//run
@@ -262,26 +282,28 @@
 		this.current = ()=>{ return this.prev_mans };
         this.run = function(hostCluster, SETTINGS){
             init_by_settings(SETTINGS);
+            console.log("Manifest.run(): main_update_paths=",this.main_update_paths);
+            this.mapped_paths = SETTINGS.mapped_paths;
             this.hostCluster=hostCluster;
-            this.prev_mans = this.dirStructure.allMansSync(this.update_paths); //sync
+            this.prev_mans = this.dirStructure.allMansSync(this.main_update_paths); //sync
             //console.log("Manifest.run(): this.prev_mans=",this.prev_mans);
             //@ mapped_mans = {"x":{dst_path:"C:/Temp", man:[[...],[...]]}, "y":{...}}
-            this.mapped_mans = this.dirStructure.allMappedMansSync(filterExistingMappedPaths(this.mapped_paths));
-            console.log("Manifest.run(): this.mapped_mans=",this.mapped_mans)
+            this.mapped_mans = this.dirStructure.allMappedMansSync(filterExistingMappedPaths(SETTINGS));
+            console.log("Manifest.run(): this.mapped_mans=",this.mapped_mans);
             setTimeout(()=>{
                 this.nextManifest();
-                this.nextMappedMans();
+                this.nextMappedMans(SETTINGS);
             }, this.timer);
-            console.log("Manifest.run() mapped_mans=", this.mapped_mans);
             return this;
         }
         const init_by_settings=(SETTINGS)=>{
+            console.log("Manifest.init_by_settings() SETTINGS=", SETTINGS);
             this.timer = SETTINGS.update_folder_watch_timer || 60000;
-            const glob_update_path = SETTINGS.update_folder || "\\update";
-            const launcher_update_path = glob_update_path + "\\launcher";
-            const controller_update_path = glob_update_path + "\\controller";
-            const other_update_path = glob_update_path + "\\other";
-            this.update_paths = [
+            const glob_update_path = SETTINGS.update_folder || "update/";
+            const launcher_update_path = glob_update_path + "launcher";
+            const controller_update_path = glob_update_path + "controller";
+            const other_update_path = glob_update_path + "other";
+            this.main_update_paths = [
                 {name:"launcher", path:launcher_update_path},
                 {name:"controller", path:controller_update_path},
                 {name:"other", path:other_update_path}];
@@ -290,7 +312,7 @@
             this.switch_on_flag = false;
         }
         this.nextManifest = function(){
-            this.dirStructure.allMansAsync(this.update_paths).then(next_mans=>{
+            this.dirStructure.allMansAsync(this.main_update_paths).then(next_mans=>{
                 //console.log("Manifest.nextManifest(): next_mans=",next_mans);
                 const dirs_compare_diff = this.dirsComparing.compare(next_mans, this.prev_mans);
                 //console.log("Manifest.nextManifest(): dirs_compare_diff=",dirs_compare_diff);
@@ -309,12 +331,12 @@
                 setTimeout(()=>{this.nextManifest()}, this.timer);
             })
         }
-        this.nextMappedMans = function(){
+        this.nextMappedMans = function(SETTINGS){
             //@ mapped_paths looks like: {"dst_path":[["filename.txt",<date>,<size>], [...]], "x":[[],[]]}
-            this.dirStructure.allMappedMansAsync(mapped_paths).then(next_mapped_mans=>{
+            this.dirStructure.allMappedMansAsync(SETTINGS).then(next_mapped_mans=>{
                 const dirs_compare_diff = this.dirsComparing.compare_mapped(next_mapped_mans, this.mapped_mans);
                 if(dirs_compare_diff) {
-                    //console.log("Manifest.nextManifest():CHANGES EXIST!");
+                    console.log("Manifest.nextManifest(): dirs_compare_diff=",dirs_compare_diff);
                     this.mapped_mans = next_mapped_mans;
                     this.hostCluster.propagateMappedMansDiff(dirs_compare_diff);
                 }else{
@@ -324,22 +346,24 @@
             }).finally(()=>{
             })
         }
-        const filterExistingMappedPaths=(mapped_paths)=>{
-            Object.keys(mapped_paths).forEach(key=>{
+        const filterExistingMappedPaths=(SETTINGS)=>{
+            Object.keys(SETTINGS.mapped_paths).forEach(key=>{
+                const local_path  = SETTINGS.update_folder + key;
+                console.log("filterExistingMappedPaths local_path = ",local_path);
                 try{
-                    const stat = fs.statSync(key);
+                    const stat = fs.statSync(local_path);
                     if (stat && stat.isDirectory()){
                         console.log("mapped path '"+key+"' exists...");
                     }else{
-                        console.log("Warning: mapped path '"+key+"' is not a directory!");
-                        delete mapped_paths[key];
+                        console.log("Warning: mapped path '"+local_path+"' is not a directory!");
+                        delete SETTINGS.mapped_paths[key];
                     }
                 }catch(err){
-                    console.log("Warning: mapped path '"+key+"' does not exist!");
-                    delete mapped_paths[key];
+                    console.log("Warning: mapped path '"+local_path+"' does not exist!");
+                    delete SETTINGS.mapped_paths[key];
                 }
             });
-            return mapped_paths;
+            return SETTINGS;
         }
     }
     function DirStructure(){
@@ -376,16 +400,17 @@
             });
         }
         //@ return  {"x":{dst_path:"C:/Temp", man:[[...],[...]]}, "y":{...}}
-        this.allMappedMansSync=(mapped_paths)=>{
-            //@ mapped_paths = {"x": "C:/Temp", "y": "..."}
-            console.log("Manifest.allMappedMansSync() mapped_paths=",mapped_paths);
+        this.allMappedMansSync=(SETTINGS)=>{
+            //@ mapped_paths = { 'update/x': 'C:/Pics', "y": "..."}
+            console.log("Manifest.allMappedMansSync() mapped_paths=",SETTINGS.mapped_paths);
             const result = {};
-            const mapped_paths_keys = Object.keys(mapped_paths);
+            const mapped_paths_keys = Object.keys(SETTINGS.mapped_paths);
             mapped_paths_keys.forEach(src_path=>{
+                const local_path  = SETTINGS.update_folder + src_path;
                 result[src_path] = {};
-                result[src_path].dst_path = mapped_paths[src_path];
+                result[src_path].dst_path = SETTINGS.mapped_paths[src_path];
                 try{
-                    result[src_path].man = this.manOfDirSync(src_path);
+                    result[src_path].man = this.manOfDirSync(local_path);
                     //const dst_path = mapped_paths[src_path];
                     //result[dst_path] = this.manOfDirSync(src_path);
                 }catch(err){
@@ -394,15 +419,16 @@
             });
             return result;
         }
-        this.allMappedMansAsync=(mapped_paths)=>{
+        this.allMappedMansAsync=(SETTINGS)=>{
             return new Promise((resolve,reject)=>{
                 const result = {};
-                let pending = Object.keys(mapped_paths).length;
+                let pending = Object.keys(SETTINGS.mapped_paths).length;
                 if(pending == 0){return resolve(result)}
-                Object.keys(mapped_paths).forEach(src_path=>{
-                    this.manOfDirAsync(src_path).then(man=>{
+                Object.keys(SETTINGS.mapped_paths).forEach(src_path=>{
+                    const local_path  = SETTINGS.update_folder + src_path;
+                    this.manOfDirAsync(local_path).then(man=>{
                         result[src_path] = {};
-                        result[src_path].dst_path = mapped_paths[src_path];
+                        result[src_path].dst_path = SETTINGS.mapped_paths[src_path];
                         result[src_path].man = man;
                         //const dst_path = mapped_paths[src_path];
                         //result[dst_path] = man;
@@ -1629,10 +1655,10 @@
                 this.controller.gui_news("'"+job.name+"' job done");
                 console.log("Jobs.run(): socketio answer: ",res);
                 if(this.jobConditionChecking.check(job, res)){
-                    console.log("Jobs checking condition = true");
+                    //console.log("Jobs checking condition = true");
                     this.jobsOnResponce.do(job.action);
                 }else{
-                    console.log("Jobs checking condition = false");
+                    //console.log("Jobs checking condition = false");
                 }
             });
             if(typeof job.interval== "number"&& job.interval > 100){
@@ -1658,14 +1684,15 @@
             const matched_response_jobs = this.schedule.reaction_on_response.filter(job=>job.name == rightaway_job_action);
             //const on_response_job_names = this.schedule.reaction_on_response.map(job=>job.name);
             console.log("JobsMon.do() matched_response_jobs=", matched_response_jobs);
+            //@ most likely it will be onejob, althought user can write more
             matched_response_jobs.forEach(job=>{
                 this.agent_socket.emit(job.name).once(job.name, res=>{
                     this.controller.gui_news("'"+job.name+"' job done");
                     if(this.jobConditionChecking.check(job, res)){
-                        console.log("Jobs checking condition = true");
+                        //console.log("Jobs checking condition = true");
                         this.do(job.action);
                     }else{
-                        console.log("Jobs checking condition = false");
+                        //console.log("Jobs checking condition = false");
                     }
                 })
             });
@@ -1687,8 +1714,13 @@
             }
             else if(job.name=='nvidia_smi'){
                 if(job.condition == 'is_exist'){
-                    return true
+                    return Boolean(res.is_exist);
                 }else return true;
+            }
+            else if(job.name == 'do_render'){
+                if(job.condition == 'is_started_render'){
+                    return Boolean(res.is_started_render);
+                }
             }
         }
     }
