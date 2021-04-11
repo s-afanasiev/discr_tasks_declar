@@ -36,13 +36,15 @@ function App(){
                     new StringifiedJson()
                 )
             )
-                .with('compareManifest', 
+                .with('compareManifest',
                     new ComparedManifest(
                         new DirStructure(), 
                         new DirsComparing(),
                         "settings_"
                     ).as("comparedManifest_")
                 )
+                .with('firstComparingMappedMans', new FirstComparingMappedMans("settings_"))
+                .with('updateMappedPaths', new UpdateMappedPaths("settings_"))
                 .with('killPartner', new KilledPartner())
                 .with('updateFiles', 
                     new UpdatedFiles(
@@ -217,6 +219,169 @@ function SocketIoHandlers(ioWrap){
 	this.user_events = ['diskSpace', 'gpu_info', 'housekeeping', 'proc_count', 'exec_cmd', 'nvidia_smi', 'wetransfer'];
 }
 //@-------Comparing the Manifest-------------
+function FirstComparingMappedMans(settings_){
+    this.dirStructure = new DirStructure();
+    this.dirsComparing = new DirsComparing();
+    this.stringEndSlash = new StringEndSlash();
+    this.settings = glob[settings_].read() || {}
+    let REMOTE_DIR = this.settings.remote_dir;
+    this.is_keep_old_files = true;
+    this.is_timeout = true;
+    this.run=(ev_name, socket)=>{
+        REMOTE_DIR = this.stringEndSlash.add(REMOTE_DIR);
+        //@ remote_mapped_mans = {"x":{dst_path:"C:/Temp", man:[[f1], [f2]]}}
+        socket.on(ev_name, (remote_mapped_mans)=>{
+            first_sync_mapped_dirs(remote_mapped_mans, this.is_keep_old_files).then(err_names=>{
+                if(err_names && err_names.length){
+                    socket.emit(ev_name, {is_updated: false, err_names: err_names});
+                }else{
+                    socket.emit(ev_name, {is_updated: true});
+                }
+            }).catch(err=>{
+                console.log("UpdateMappedPaths: sync_dirs() Error: ",err);
+                socket.emit(ev_name, {is_error: true, error:err});
+            }).finally(()=>{ this.is_timeout = false; });
+            setTimeout(()=>{
+                if(this.is_timeout){ socket.emit(ev_name, {is_updated: false, is_error: true, error:"FirstComparingMappedMans TIMEOUT"}); }
+            }, 5000);
+        });
+        return this;
+    }
+    const first_sync_mapped_dirs=(mapped_mans, is_keep_old_files)=>{
+        //@ mapped_mans = {"x":{dst_path:"C:/Temp", man:[[f1], [f2]]}}
+        return new Promise((resolve, reject)=>{
+            const mapped_mans_keys = Object.keys(mapped_mans);
+            let pending = mapped_mans_keys.length;
+            if(pending == 0){return resolve()}
+            let all_err_names = [];
+            mapped_mans_keys.forEach(src_path=>{
+                //@ src_path = "x"
+                //@ mapped_mans[src_path] = {dst_path: "C:/Temp", man: [[],[]]}
+                create_mapped_dst_path(mapped_mans[src_path].dst_path).then(res=>{    
+                    sync_mapped_dir(mapped_mans, src_path, is_keep_old_files).then(err_names=>{
+                        all_err_names = all_err_names.concat(err_names ? err_names : []);
+                        if(!--pending){resolve(all_err_names);}
+                    }).catch(err=>{
+                        console.error("FirstComparingMappedMans.sync_mapped_dirs() Error:",err);
+                        //@ all file list that must be updated- now is error list
+                        //let files_list = concat_filelist_to_update(mans_diff[src_path].man, is_keep_old_files);
+                        all_err_names = all_err_names.concat(mans_diff[src_path].man);
+                        if(!--pending){resolve(all_err_names);}
+                    })
+                }).catch(err=>{
+                    console.error("FirstComparingMappedMans.first_sync_mapped_dirs() Error:", err);
+                });
+            });
+        });
+    }
+    const create_mapped_dst_path=(dst_path)=>{
+        return new Promise((resolve, reject)=>{
+            fs.stat(file, function(err, stat) {
+                if (stat && stat.isDirectory()) {
+                    resolve();
+                }else{
+                    fs.mkdir(dst_path, { recursive: true }, (err) => {
+                        if(err) { reject(err); }
+                        else{ resolve(); }
+                    })
+                }
+            });
+        })
+    }
+    const sync_mapped_dir=(mapped_mans, src_path, is_keep_old_files)=>{
+        //@ man = [[f1], [f2]]
+        return new Promise((resolve, reject)=>{
+            const all_err_names = [];
+            //const man = mapped_mans[src_path].dst_path;
+            this.createMappedEmptyDirs(mapped_mans, src_path).then(err_names=>{
+                console.log("UpdatedFiles.sync_dirs(): createEmptyDirs(): err_names=",err_names);
+                all_err_names = all_err_names.concat(err_names ? err_names : []);
+                return this.copy_mapped_files(mapped_mans, src_path, err_names);
+            }).then(err_names=>{
+                all_err_names = all_err_names.concat(err_names ? err_names : []);
+                console.log("UpdatedFiles.sync_dirs(): copy_files(): err_names=",err_names);
+                resolve(all_err_names);
+            }).catch(err=>{
+                console.log("UpdatedFiles.sync_dirs(): Error:",err);
+                reject(err);
+            })
+            //man.forEach(file_arr=>{            });
+        });
+    }
+    this.createMappedEmptyDirs=(mapped_mans, src_path)=>{
+        return new Promise((resolve, reject) => {
+            const files_to_write = mapped_mans[src_path].man;
+            let dst_path = mapped_mans[src_path].dst_path;
+            const end1 = dst_path.endsWith("/");
+            const end2 = dst_path.endsWith("\\");
+            if(!end1 || !end2) dst_path = "/" + dst_path;
+            const FNAME = 0;
+            let pending = files_to_write.length;
+            if(pending==0){return resolve();}
+            const err_names = [];
+            files_to_write.forEach(file_info=>{
+                if(file_info[FNAME].endsWith("\\")){
+                    const loc_dir = dst_path+file_info[FNAME] ;
+                    console.log("createEmptyDirs() loc_dir=",loc_dir);
+                    fs.mkdir(loc_dir, { recursive: true }, (err) => {
+                        if(err) {err_names.push(file_info);}
+                        if (!--pending) {resolve(err_names)}
+                    })
+                }else if(!--pending){resolve(err_names)}
+            });
+        })
+    }
+    this.copy_mapped_files=(mapped_mans, src_path, error_names)=>{
+        console.log("FirstComparingMappedMans.copy_mapped_files() files_to_write=",files_to_write);
+        return new Promise((resolve, reject) => {
+            const files_to_write = mapped_mans[src_path].man;
+            let dst_path = mapped_mans[src_path].dst_path;
+            dst_path = this.stringEndSlash.add(dst_path);
+            src_path = this.stringEndSlash.add(src_path);
+            const FNAME = 0;
+            let pending = files_to_write.length;
+            if(pending==0){return resolve();}
+            const err_names = error_names || [];
+            files_to_write.forEach(file_info=>{
+                console.log("copy_files() file_info=",file_info);
+                if(this.stringEndSlash.check(file_info)){
+                    //@ Ignore Empty Dirs
+                    if (!--pending) { resolve(err_names); }
+                }else{
+                    const loc_file = dst_path+file_info[FNAME] ;
+                    const rem_file = REMOTE_DIR+src_path+file_info[FNAME] ;
+                    console.log("copy_mapped_files() loc_file=",loc_file);
+                    console.log("copy_mapped_files() rem_file=",rem_file);
+                    fs.copyFile(rem_file, loc_file, (err)=>{
+                        if (err) {
+                            console.log("copy_files() Error=",err);
+                            err_names.push(file_info);
+                            if (!--pending) { resolve(err_names); }
+                        }   
+                        else {
+                            if (!--pending) { resolve(err_names); }
+                        }
+                    });
+                }
+            });
+        });
+    }
+}
+function StringEndSlash(){
+    this.check=(str)=>{
+        if(!str || typeof str != "string"){return str}
+        else{
+            const is_end1 = str.endsWith("\\");
+            const is_end2 = str.endsWith("/");
+            if(is_end1 || is_end2){return true}
+            else return false;
+        }
+    }
+    this.add=(str)=>{
+        if(!str || typeof str != "string"){return str}
+        else if(!this.check(str)) return str + '/';
+    }
+}
 function ComparedManifest(dirStructure, dirsComparing, settings_){
     this.dirStructure = dirStructure;
     this.dirsComparing = dirsComparing;
@@ -310,6 +475,27 @@ function DirStructure(){
     //@ output: manifests of a several dirs. Type object {'launcher':[], 'controller':[]}
     this.allMansAsync=(paths_data)=>{
         console.log("DirStructure.allMansAsync: paths_data=", paths_data)
+        return new Promise((resolve,reject)=>{
+            const result = {};
+            let pending = paths_data.length;
+            paths_data.forEach(path_data=>{
+                if(path_data==undefined){
+                    if(!--pending){return resolve(result);}
+                }else{
+                    this.manOfDirAsync(path_data.path).then(res=>{
+                        result[path_data.name] = res;
+                        if(!--pending){resolve(result)}
+                    }).catch(err=>{
+                        console.log("DirStructure.allMansAsync() Error: ", err);
+                        if(!--pending){resolve(result)}
+                    });
+                }
+            });
+            setTimeout(()=>{reject("DirStructure.allMansAsync(): timeout Error!")},5000);
+        });
+    }
+    this.allMappedMansAsync=(paths_struct)=>{
+        console.log("DirStructure.allMappedMansAsync: paths_struct=", paths_struct)
         return new Promise((resolve,reject)=>{
             const result = {};
             let pending = paths_data.length;
@@ -567,6 +753,133 @@ function UpdatedFiles(settings_, comparedManifest_){
         })
     }
 }
+function UpdateMappedPaths(){
+    //@ next_mapped = {"x":{dst_path:"C:/Temp", man:[[...],[...]]}, "y":{...}}
+    this.is_keep_old_files = true;
+    this.is_timeout = true;
+    this.run=(ev_name, socket)=>{
+        console.log("UpdateMappedPaths.run()...");
+        socket.on(ev_name, (remote_mapped_mans_diff)=>{
+            sync_mapped_dirs(remote_mapped_mans_diff, this.is_keep_old_files).then(err_names=>{
+                if(err_names && err_names.length){
+                    socket.emit(ev_name, {is_updated: false, err_names: err_names});
+                }else{
+                    socket.emit(ev_name, {is_updated: true});
+                }
+            }).catch(err=>{
+                console.log("UpdateMappedPaths: sync_dirs() Error: ",err);
+                socket.emit(ev_name, {is_error: true, error:err});
+            }).finally(()=>{ this.is_timeout = false; });
+            setTimeout(()=>{
+                if(this.is_timeout){ socket.emit(ev_name, {is_updated: false, is_error: true, error:"UpdateMappedPaths TIMEOUT"}); }
+            }, 5000);
+        });
+    }
+    const sync_mapped_dirs=(mapped_mans_diff, is_keep_old_files)=>{
+        //@ next_mapped = can be undefined or kinda {"x":{dst_path:"C:/Temp", comparing:[[...],[...]]}, "y":{...}}
+        return new Promise((resolve, reject)=>{
+            const mapped_mans_diff_keys = Object.keys(mapped_mans_diff);
+            let pending = mapped_mans_diff_keys.length;
+            if(pending == 0){return resolve()}
+            let all_err_names = [];
+            mapped_mans_diff_keys.forEach(src_path=>{
+                //@ src_path = "x"
+                //@ mapped_mans_diff[src_path] = {dst_path: "C:/Temp", comparing: {new_files:[[],[]], files_to_change:[[],[],[]], old_files:[[]]}}
+                sync_dirs(mapped_mans_diff, src_path, is_keep_old_files).then(err_names=>{
+                    all_err_names = all_err_names.concat(err_names ? err_names : []);
+                    if(!--pending){resolve(all_err_names);}
+                }).catch(err=>{
+                    console.error("UpdateMappedPaths.sync_mapped_dirs() Error:",err);
+                    //@ all file list that must be updated- now is error list
+                    let files_list = concat_filelist_to_update(mans_diff[src_path].comparing, is_keep_old_files);
+                    all_err_names = all_err_names.concat(files_list);
+                    if(!--pending){resolve(all_err_names);}
+                })
+            });
+        });
+    }
+    //@ FOR MAPPED PATHS !
+    const sync_dirs=(mans_diff_struct, src_path, is_keep_old_files)=>{
+        //@ mans_diff = {new_files:[[],[]], files_to_change:[[],[],[]], old_files:[[]]}
+        //@ dst_path = "C:/TEMP"
+        return new Promise((resolve, reject)=>{
+            let files_to_write = concat_filelist_to_update(mans_diff[src_path].comparing, is_keep_old_files);
+            console.log("UpdateMappedPaths.sync_dirs(): files_to_write=",files_to_write);
+            if(files_to_write.length==0){ return resolve(); }
+            createEmptyDirs(files_to_write, mans_diff[src_path].dst_path).then(err_names=>{
+                return copy_files(files_to_write, src_path, mans_diff[src_path].dst_path, err_names);
+            }).then(res=>{
+
+            }).catch(err=>{});
+        });
+    }
+    //@ FOR MAPPED PATHS !
+    const concat_filelist_to_update=(mans_diff, is_keep_old_files)=>{
+        //@ mans_diff = {launcher: { new_files: [ [Array], [Array] ], old_files: [ [Array] ] } }
+        let files_to_write = [];
+        Object.keys(mans_diff).forEach(subtype=>{
+            if(is_keep_old_files && subtype=="old_files"){}
+            else{
+                files_to_write = files_to_write.concat(mans_diff[subtype]);        
+            }
+        });
+        return files_to_write;
+    }
+    //@ FOR MAPPED PATHS !
+    const createEmptyDirs=(files_to_write, dst_path)=>{
+        return new Promise((resolve) => {
+            const FNAME = 0;
+            let pending = files_to_write.length;
+            if(pending==0){return resolve();}
+            const err_names = [];
+            files_to_write.forEach(file_info=>{
+                if(file_info[FNAME].endsWith("\\")){
+                    const loc_dir = dst_path+file_info[FNAME] ;
+                    console.log("createEmptyDirs() loc_dir=",loc_dir);
+                    fs.mkdir(loc_dir, { recursive: true }, (err) => {
+                        if(err) {err_names.push(file_info);}
+                        if (!--pending) {resolve(err_names)}
+                    })
+                }else if(!--pending){resolve(err_names)}
+            });
+        })
+    }
+    //@ FOR MAPPED PATHS !
+    const copy_files=(files_to_write, src_path, dst_path, error_names)=>{
+        return new Promise((resolve, reject) => {
+            console.log("UpdatedDiffFiles.copy_files() files_to_write=",files_to_write);
+            const REMOTE_DIR = this.settings.remote_dir;
+            const FNAME = 0;
+            let pending = files_to_write.length;
+            if(pending==0){return resolve();}
+            const err_names = error_names || [];
+            files_to_write.forEach(file_info=>{
+                console.log("copy_files() file_info=",file_info);
+                const is_end1 = file_info[FNAME].endsWith("\\");
+                const is_end2 = file_info[FNAME].endsWith("/");
+                if(is_end1 || is_end2){
+                    //@ Ignore Empty Dirs
+                    if (!--pending) { resolve(err_names); }
+                }else{
+                    const loc_file = dst_path+file_info[FNAME] ;
+                    const rem_file = REMOTE_DIR+src_path+file_info[FNAME] ;
+                    console.log("copy_files() loc_file=",loc_file);
+                    console.log("copy_files() rem_file=",rem_file);
+                    fs.copyFile(rem_file, loc_file, (err)=>{
+                        if (err) {
+                            console.log("copy_files() Error=",err);
+                            err_names.push(file_info);
+                            if (!--pending) { resolve(err_names); }
+                        }   
+                        else {
+                            if (!--pending) { resolve(err_names); }
+                        }
+                    });
+                }
+            });
+        });
+    }
+}
 function UpdatedDiffFiles(settings_){
     this.settings = glob[settings_].read() || {}
     let loc_launcher = this.settings.local_dir_launcher;
@@ -596,10 +909,11 @@ function UpdatedDiffFiles(settings_){
             }, 5000);
         });
     }
+    //@ FOR LAUNCHER DIR
     const sync_dirs=(mans_diff, is_keep_old_files)=>{
-        //@ mans_diff can be undefined
+        //@ mans_diff can be undefined or like: {"launcher": {new_files:[[],[]], files_to_change:[[],[],[]], old_files:[[]]}}
         return new Promise((resolve, reject) => {
-            //@ dont touch The Old Files!
+            //@ is_keep_old_files - means dont touch The Old Files!
             let files_to_write = concat_filelist_to_update(mans_diff, is_keep_old_files);
             console.log("UpdatedDiffFiles.sync_dirs(): copy_files(): files_to_write=",files_to_write);
             if(files_to_write.length==0){ return resolve(); }

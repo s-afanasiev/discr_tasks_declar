@@ -2,8 +2,10 @@
     "host": "seasea",
     "port": "55999",
     "update_folder": "./update",
-    "update_folder_watch_timer": 20000,
-    "mapped_paths": {},
+    "update_folder_watch_timer": 60000,
+    "mapped_paths": {
+        "x":"C:/Pics"
+    },
     "apply_updates": false,
     "comments": {
         "mapped_paths": "it is assumed that all these source paths start in the 'update' folder"

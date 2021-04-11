@@ -50,6 +50,7 @@ function App(){
                         "comparedManifest_")
                 )
                 .with('updateDiffFiles', new UpdatedDiffFiles("settings_"))
+                .with('updateMappedPaths', new UpdateMappedPaths("settings_"))
                 .with('startPartner', new StartedPartner("settings_"))
                 .with('disk_space', new DiskSpace())
                 .with('nvidia_smi', new NvidiaSmi())
@@ -567,6 +568,93 @@ function UpdatedFiles(settings_, comparedManifest_){
         })
     }
 }
+function UpdateMappedPaths(){
+    this.is_keep_old_files = true;
+    this.is_timeout = true;
+    this.run=(ev_name, socket)=>{
+        console.log("UpdateMappedPaths.run()...");
+        socket.on(ev_name, (remote_mapped_mans_diff)=>{
+            sync_mapped_dirs(remote_mapped_mans_diff, this.is_keep_old_files).then(err_names=>{
+                if(err_names && err_names.length){
+                    socket.emit(ev_name, {is_updated: false, err_names: err_names});
+                }else{
+                    socket.emit(ev_name, {is_updated: true});
+                }
+            }).catch(err=>{
+                console.log("UpdateMappedPaths: sync_dirs() Error: ",err);
+                socket.emit(ev_name, {is_error: true, error:err});
+            }).finally(()=>{ this.is_timeout = false; });
+            setTimeout(()=>{
+                if(this.is_timeout){ socket.emit(ev_name, {is_updated: false, is_error: true, error:"UpdateMappedPaths TIMEOUT"}); }
+            }, 5000);
+        });
+    }
+    const sync_mapped_dirs=(mapped_mans_diff, is_keep_old_files)=>{
+        //@ mapped_mans_diff can be undefined or kinda: {"D:/pics": {new_files:[], files_to_change:[], old_files:[]}, "C:/TEMP": {...} }
+        return new Promise((resolve, reject)=>{
+            const mapped_mans_diff_keys = Object.keys(mapped_mans_diff);
+            let pending = mapped_mans_diff_keys.length;
+            if(pending == 0){return resolve()}
+            let all_err_names = [];
+            mapped_mans_diff_keys.forEach(dst_path=>{
+                //@ dst_path = "C:/TEMP"
+                //@ mapped_mans_diff[dst_path] = {new_files:[[],[]], files_to_change:[[],[],[]], old_files:[[]]}
+                sync_dirs(mapped_mans_diff[dst_path], dst_path, is_keep_old_files).then(err_names=>{
+                    all_err_names = all_err_names.concat(err_names ? err_names : []);
+                    if(!--pending){resolve(all_err_names);}
+                }).catch(err=>{
+                    console.error("UpdateMappedPaths.sync_mapped_dirs() Error:",err);
+                    //@ all file list that must be updated- now is error list
+                    let files_list = concat_filelist_to_update(mans_diff[dst_path], is_keep_old_files);
+                    all_err_names = all_err_names.concat(files_list);
+                    if(!--pending){resolve(all_err_names);}
+                })
+            });
+        });
+    }
+    //@ FOR MAPPED PATHS !
+    const sync_dirs=(mans_diff, dst_path, is_keep_old_files)=>{
+        //@ mans_diff = {new_files:[[],[]], files_to_change:[[],[],[]], old_files:[[]]}
+        //@ dst_path = "C:/TEMP"
+        return new Promise((resolve, reject)=>{
+            let files_to_write = concat_filelist_to_update(mans_diff, is_keep_old_files);
+            console.log("UpdateMappedPaths.sync_dirs(): files_to_write=",files_to_write);
+            if(files_to_write.length==0){ return resolve(); }
+            createEmptyDirs(files_to_write, dst_path).then(err_names=>{
+                
+            }).catch(err=>{});
+        });
+    }
+    const concat_filelist_to_update=(mans_diff, is_keep_old_files)=>{
+        //@ mans_diff = {launcher: { new_files: [ [Array], [Array] ], old_files: [ [Array] ] } }
+        let files_to_write = [];
+        Object.keys(mans_diff).forEach(subtype=>{
+            if(is_keep_old_files && subtype=="old_files"){}
+            else{
+                files_to_write = files_to_write.concat(mans_diff[subtype]);        
+            }
+        });
+        return files_to_write;
+    }
+    const createEmptyDirs=(files_to_write, dst_path)=>{
+        return new Promise((resolve) => {
+            const FNAME = 0;
+            let pending = files_to_write.length;
+            if(pending==0){return resolve();}
+            const err_names = [];
+            files_to_write.forEach(file_info=>{
+                if(file_info[FNAME].endsWith("\\")){
+                    const loc_dir = dst_path+file_info[FNAME] ;
+                    console.log("createEmptyDirs() loc_dir=",loc_dir);
+                    fs.mkdir(loc_dir, { recursive: true }, (err) => {
+                        if(err) {err_names.push(file_info);}
+                        if (!--pending) {resolve(err_names)}
+                    })
+                }else if(!--pending){resolve(err_names)}
+            });
+        })
+    }
+}
 function UpdatedDiffFiles(settings_){
     this.settings = glob[settings_].read() || {}
     let loc_launcher = this.settings.local_dir_launcher;
@@ -596,10 +684,11 @@ function UpdatedDiffFiles(settings_){
             }, 5000);
         });
     }
+    //@ FOR LAUNCHER DIR
     const sync_dirs=(mans_diff, is_keep_old_files)=>{
-        //@ mans_diff can be undefined
+        //@ mans_diff can be undefined or like: {"launcher": {new_files:[[],[]], files_to_change:[[],[],[]], old_files:[[]]}}
         return new Promise((resolve, reject) => {
-            //@ dont touch The Old Files!
+            //@ is_keep_old_files - means dont touch The Old Files!
             let files_to_write = concat_filelist_to_update(mans_diff, is_keep_old_files);
             console.log("UpdatedDiffFiles.sync_dirs(): copy_files(): files_to_write=",files_to_write);
             if(files_to_write.length==0){ return resolve(); }

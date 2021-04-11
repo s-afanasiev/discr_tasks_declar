@@ -1,9 +1,9 @@
 {
     "throw_right_away": [
-        {"name":"disk_space", "condition": "lte 1 gb", "action":"clean_space", "interval":5000},
+        {"name":"disk_space", "condition": "lte 1 gb", "action":"clean_space", "interval":50000},
         {"name":"disk_space", "condition": "gte 100 gb", "action":"increase_traffic"},
-        {"name":"nvidia_smi", "condition": "nvidia_exist", "action":"do_render"},
-        {"name":"exec_cmd", "name_param":"notepad.exe", "condition": "is_done", "action":"look_process_by_name", "action_param":"notepad"}
+        {"name":"nvidia_smi", "condition": "is_exist", "action":"do_render"},
+        {"name":"exec_cmd", "cmd":"notepad.exe", "condition": "is_done", "action":"look_process_by_name", "action_param":"notepad"}
     ],
     "reaction_on_response":[
         {"name":"clean_space", "condition": "is_done", "action":"restart_render_counter"},

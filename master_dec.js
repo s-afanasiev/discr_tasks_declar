@@ -226,6 +226,7 @@
         }
         //@ new socket connection from IoServer
         this.welcomeAgent=(io_srv_msg)=>{
+            console.log("UpdatableHostCluster mapped manifest=", this.manifest.mapped());
             this.hostCluster.welcomeAgent(
                 io_srv_msg, 
                 this.manifest.current(),
@@ -264,9 +265,13 @@
             this.hostCluster=hostCluster;
             this.prev_mans = this.dirStructure.allMansSync(this.update_paths); //sync
             //console.log("Manifest.run(): this.prev_mans=",this.prev_mans);
-            setTimeout(()=>{this.nextManifest()}, this.timer);
             //@ mapped_mans = {"x":{dst_path:"C:/Temp", man:[[...],[...]]}, "y":{...}}
             this.mapped_mans = this.dirStructure.allMappedMansSync(filterExistingMappedPaths(this.mapped_paths));
+            console.log("Manifest.run(): this.mapped_mans=",this.mapped_mans)
+            setTimeout(()=>{
+                this.nextManifest();
+                this.nextMappedMans();
+            }, this.timer);
             console.log("Manifest.run() mapped_mans=", this.mapped_mans);
             return this;
         }
@@ -304,6 +309,21 @@
                 setTimeout(()=>{this.nextManifest()}, this.timer);
             })
         }
+        this.nextMappedMans = function(){
+            //@ mapped_paths looks like: {"dst_path":[["filename.txt",<date>,<size>], [...]], "x":[[],[]]}
+            this.dirStructure.allMappedMansAsync(mapped_paths).then(next_mapped_mans=>{
+                const dirs_compare_diff = this.dirsComparing.compare_mapped(next_mapped_mans, this.mapped_mans);
+                if(dirs_compare_diff) {
+                    //console.log("Manifest.nextManifest():CHANGES EXIST!");
+                    this.mapped_mans = next_mapped_mans;
+                    this.hostCluster.propagateMappedMansDiff(dirs_compare_diff);
+                }else{
+                    //console.log("Manifest.nextMappedMans(): No changes!");
+                }
+            }).catch(err=>{
+            }).finally(()=>{
+            })
+        }
         const filterExistingMappedPaths=(mapped_paths)=>{
             Object.keys(mapped_paths).forEach(key=>{
                 try{
@@ -336,20 +356,64 @@
             });
             return result;
         }
-        //@ mapped_mans = {"x":{dst_path:"C:/Temp", man:[[...],[...]]}, "y":{...}}
+        //@ returns manifests of a several dirs. Type object {'launcher':[], 'controller':[]}
+        this.allMansAsync=(paths_data)=>{
+            return new Promise((resolve,reject)=>{
+                const result = {};
+                let pending = paths_data.length;
+                if(pending == 0){return resolve(result)};
+                paths_data.forEach(path_data=>{
+                    this.manOfDirAsync(path_data.path).then(res=>{
+                        //console.log()
+                        result[path_data.name] = res;
+                        if(!--pending){resolve(result)}
+                    }).catch(err=>{
+                        console.error("DirStructure.allMansAsync() ERROR: ", err);
+                        if(!--pending){resolve(result)}
+                    })
+                });
+                setTimeout(()=>{reject("DirStructure.allMansAsync(): timeout Error!")},10000);
+            });
+        }
+        //@ return  {"x":{dst_path:"C:/Temp", man:[[...],[...]]}, "y":{...}}
         this.allMappedMansSync=(mapped_paths)=>{
+            //@ mapped_paths = {"x": "C:/Temp", "y": "..."}
             console.log("Manifest.allMappedMansSync() mapped_paths=",mapped_paths);
             const result = {};
-            Object.keys(mapped_paths).forEach(src_path=>{
+            const mapped_paths_keys = Object.keys(mapped_paths);
+            mapped_paths_keys.forEach(src_path=>{
                 result[src_path] = {};
                 result[src_path].dst_path = mapped_paths[src_path];
                 try{
                     result[src_path].man = this.manOfDirSync(src_path);
+                    //const dst_path = mapped_paths[src_path];
+                    //result[dst_path] = this.manOfDirSync(src_path);
                 }catch(err){
                     console.error("DirStructure.allMappedMansSync() ERROR: ", err);
                 }
             });
             return result;
+        }
+        this.allMappedMansAsync=(mapped_paths)=>{
+            return new Promise((resolve,reject)=>{
+                const result = {};
+                let pending = Object.keys(mapped_paths).length;
+                if(pending == 0){return resolve(result)}
+                Object.keys(mapped_paths).forEach(src_path=>{
+                    this.manOfDirAsync(src_path).then(man=>{
+                        result[src_path] = {};
+                        result[src_path].dst_path = mapped_paths[src_path];
+                        result[src_path].man = man;
+                        //const dst_path = mapped_paths[src_path];
+                        //result[dst_path] = man;
+                        if(!--pending){resolve(result)}
+                    }).catch(err=>{
+                        console.error("DirStructure.allMappedMansAsync() ERROR: ", err);
+                        if(!--pending){resolve(result)}
+                    });
+                });
+                setTimeout(()=>{reject("DirStructure.allMappedMansAsync(): timeout Error!")},10000);
+            });
         }
         //@ returns manifest of one directory. Type Array ['f1', 'f2']
         this.manOfDirSync=(look_dir)=>{
@@ -419,27 +483,26 @@
                 }
             });
         }
-        //@ returns manifests of a several dirs. Type object {'launcher':[], 'controller':[]}
-        this.allMansAsync=(paths_data)=>{
-            return new Promise((resolve,reject)=>{
-                const result = {};
-                let pending = paths_data.length;
-                paths_data.forEach(path_data=>{
-                    this.manOfDirAsync(path_data.path).then(res=>{
-                        //console.log()
-                        result[path_data.name] = res;
-                        if(!--pending){resolve(result)}
-                    }).catch(err=>{
-                        console.error("DirStructure.allMansAsync() ERROR: ", err);
-                        if(!--pending){resolve(result)}
-                    })
-                });
-                setTimeout(()=>{reject("DirStructure.allMansAsync(): timeout Error!")},5000);
-            });
-        }
     }
     function DirsComparing(){
         this.compareResult=undefined;
+        this.compare_mapped=(next_mapped, prev_mapped)=>{
+            //@ next_mapped = {"x":{dst_path:"C:/Temp", man:[[...],[...]]}, "y":{...}}
+            const result = {};
+            for(let src_path in next_mapped){
+                const comparedDirs = this.compare2Dirs(next_mapped[src_path].dst_path, prev_mapped[src_path].dst_path);
+                let is_really_some_changes = false;
+                for(const part in comparedDirs){
+                    if(comparedDirs[part].length>0){ is_really_some_changes = true; }
+                }
+                if(is_really_some_changes) {
+                    result[src_path] = {};
+                    result[src_path].comparing = comparedDirs;
+                    result[src_path].dst_path = next_mapped[src_path];
+                }
+            }
+            return Object.keys(result).length>0 ? result : undefined;
+        }
         this.compare=(next_mans, prev_mans)=>{
             const result = {};
             for(let man in next_mans){
@@ -538,7 +601,7 @@
             //const ag_present = Object.values(io_conn.agent_identifiers).join("|");
             //console.log("HostCluster.welcomeAgent(): agent: ",ag_present);
 			agentRecognizing.instance(io_conn.agent_identifiers).run(io_conn.agent_socket).then(agent_ids=>{
-                this.hostByMd5(agent_ids).welcomeAgent(io_conn.agent_socket, agent_ids, manifest_snapshot)
+                this.hostByMd5(agent_ids).welcomeAgent(io_conn.agent_socket, agent_ids, manifest_snapshot, mapped_mans_snapshot)
             }).catch(err=>{
                 console.error("HostCluster.welcomeAgent() agent recognizing Error:",err);
             })
@@ -551,6 +614,13 @@
                 });
             }
 		}
+        this.propagateMappedMansDiff=(mans_diff)=>{
+            if(this.SETTINGS.apply_updates){
+                _hosts_list.forEach(host=>{
+                    host.propagateMappedMansDiff(mans_diff);
+                });
+            }
+        }
 		this.hostByMd5 = (agent_ids)=>{
 			let host_index = -1;
 			//console.log("_hosts_list length="+_hosts_list.length);
@@ -804,7 +874,7 @@
                 const ag_type = agent_ids.ag_type;
                 //console.log("HostAsPair.welcomeAgent() agent",ag_type,"passed!");
                 if(ag_type=="launcher"){
-                    this[ag_type].welcomeAgent(agent_socket, agent_ids, this.manifest_snapshot, this.controller, this.mapped_mans_snapshot);
+                    this[ag_type].welcomeAgent(agent_socket, agent_ids, this.manifest_snapshot, this.controller);
                 }else if(ag_type=="controller"){
                     this[ag_type].welcomeAgent(agent_socket, agent_ids, this.manifest_snapshot, this.launcher, this.mapped_mans_snapshot);
                 }
@@ -870,6 +940,13 @@
                 console.error("HostAsPair: run_agents_after_first_host_init_timeout(): this.propagateManifestDiff() Unknown Error!");
             }
             
+        }
+        this.propagateMappedMansDiff=(mans_diff)=>{
+            this.controller.propagateMappedMansDiff(mans_diff).then(res=>{
+                //console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.controller.propagateMappedMansDiff() OK: ",res);
+            }).catch(err=>{
+                console.error("HostAsPair: run_agents_after_first_host_init_timeout(): this.controller.propagateMappedMansDiff() Error 2: ",err);
+            });
         }
         this.agent_disconnected=(ag_type)=>{
             if((!this.launcher.isOnline())&&(!this.controller.isOnline())){
@@ -962,7 +1039,7 @@
             this.agentUpdateChain = agentUpdateChain;
             return this;
         }
-        this.welcomeAgent=(agent_socket, agent_ids, manifest_snapshot, partner, mapped_mans_snapshot)=>{
+        this.welcomeAgent=(agent_socket, agent_ids, manifest_snapshot, partner)=>{
             this.agent_socket = agent_socket;
             this.agent_ids = agent_ids;//{ag_type, md5, ip, pid, ppid, apid} 
             this.manifest_snapshot = manifest_snapshot;
@@ -1092,10 +1169,16 @@
 			this.agent_socket = agent_socket;
 			this.agent_ids = agent_ids;//{ag_type, md5, ip, pid, ppid, apid} 
 			this.manifest_snapshot = manifest_snapshot;
+            this.mapped_mans_snapshot = mapped_mans_snapshot;
             this.partner = partner;
             this.switchOnline(true);
             this.gui_news("agent_online");
             this.listenForDisconnect();
+            this.firstComparingMappedMans(agent_socket, mapped_mans_snapshot).then(res=>{
+                //console.log("Controller.firstComparingMappedMans() res =", res);
+            }).catch(err=>{
+                console.error("Controller.firstComparingMappedMans() Error:", err);
+            });
 		}
         this.listenForDisconnect=()=>{
             this.agent_socket.once('disconnect', ()=>{
@@ -1140,6 +1223,31 @@
                     this.gui_news("update mode off");
                     //this.doNormalWork();
                 })
+            });
+        }
+        this.firstComparingMappedMans=(agent_socket, mapped_mans_snapshot)=>{
+            //@ {"x":{dst_path:"C:/Temp", man:[[f1], [f2]]}}
+            return new Promise((resolve,reject)=>{
+                this.gui_news("first doing mapped manifestos changes");
+                const EV_NAME = "firstComparingMappedMans";
+                const resolve_handler = function(res){resolve(res);}
+                agent_socket.emit(EV_NAME, mapped_mans_snapshot).once(EV_NAME, resolve_handler);
+                setTimeout(()=>{
+                    agent_socket.removeListener(EV_NAME, resolve_handler);
+                    reject(EV_NAME+" timeout. ");
+                }, 5000);
+            });
+        }
+        this.propagateMappedMansDiff=(mans_diff)=>{
+            return new Promise((resolve,reject)=>{
+                this.gui_news("doing mapped manifestos changes");
+                const EV_NAME = "updateMappedPaths";
+                const resolve_handler = function(res){resolve(res);}
+                socket.emit(EV_NAME, mans_diff).once(EV_NAME, resolve_handler);
+                setTimeout(()=>{
+                    socket.removeListener(EV_NAME, resolve_handler);
+                    reject(EV_NAME+" timeout. ");
+                }, 5000);
             });
         }
         this.doNormalWork=()=>{
@@ -1484,8 +1592,8 @@
                 return [];
             }else{
                 new JobsMon(
-                    new JobsOnResponce(
-                        new JobsRightAway()
+                    new JobsRightAway(
+                        new JobsOnResponce()
                     )
                 ).run(this.schedule, this.controller, this.agent_socket);
             }
@@ -1494,66 +1602,23 @@
 			//@ coupling jobs with same names
 		}
 	}
-    function JobsMon(jobsOnResponce){
-        this.jobsOnResponce = jobsOnResponce;
-        this.run=(schedule, controller, agent_socket)=>{
-            this.jobsOnResponce.run(schedule, controller, agent_socket);
-        }
-    }
-    function JobsOnResponce(jobsRightAway){
-        this.schedule=undefined;//run
-        this.agent_socket=undefined;//run
-        this.controller=undefined;//run
+    function JobsMon(jobsRightAway){
         this.jobsRightAway = jobsRightAway;
         this.run=(schedule, controller, agent_socket)=>{
-            this.schedule = schedule;
-            this.agent_socket = agent_socket;
-            this.controller = controller;
-            this.jobsRightAway.run(schedule, controller, agent_socket, this);
-        }
-        this.do=(rightaway_jobs_action)=>{
-            const matched_response_jobs = this.schedule.reaction_on_response.filter(job=>job.name == rightaway_jobs_action);
-            //const on_response_job_names = this.schedule.reaction_on_response.map(job=>job.name);
-            console.log("JobsMon.do() matched_response_jobs=", matched_response_jobs);
-            matched_response_jobs.forEach(job=>{
-                this.agent_socket.emit(job.name).once(job.name, res=>{
-                    this.controller.gui_news("'"+job.name+"' job done");
-                    if(check_condition(job, res)){
-                        console.log("Jobs checking condition = true");
-                        this.do(job.action);
-                    }else{
-                        console.log("Jobs checking condition = false");
-                    }
-                })
-            });
-        }
-        const check_condition=(job, res)=>{
-            if(job.name=='disk_space'){
-                const GB = 1000000000;
-                if(job.condition == 'lte 1 gb'){
-                    if(res.free < GB) return true;
-                    else return false;
-                }
-                else if(job.condition == 'gte 100 gb'){
-                    if(res.free > GB*100) return true;
-                    else return false;
-                }
-            }
-            else if(job.name=='nvidia_smi'){
-                return true;
-            }
+            this.jobsRightAway.run(schedule, controller, agent_socket);
         }
     }
-    function JobsRightAway(){
+    function JobsRightAway(jobsOnResponce){
+        this.jobsOnResponce = jobsOnResponce;
+        this.jobConditionChecking = new JobConditionChecking();
         this.schedule = undefined;//run
         this.controller = undefined;//run
         this.agent_socket = undefined;//run
-        this.jobsOnResponce = undefined;//run
-        this.run=(schedule, controller, agent_socket, jobsOnResponce)=>{
+        this.run=(schedule, controller, agent_socket)=>{
             this.schedule = schedule;
             this.controller = controller;
             this.agent_socket = agent_socket;
-            this.jobsOnResponce = jobsOnResponce;
+            this.jobsOnResponce.run(schedule, controller, agent_socket);
             schedule.throw_right_away.forEach(job=>{
                 send_one_job(job);
             })
@@ -1563,7 +1628,7 @@
             this.agent_socket.emit(job.name, job).once(job.name, res=>{
                 this.controller.gui_news("'"+job.name+"' job done");
                 console.log("Jobs.run(): socketio answer: ",res);
-                if(check_condition(job, res)){
+                if(this.jobConditionChecking.check(job, res)){
                     console.log("Jobs checking condition = true");
                     this.jobsOnResponce.do(job.action);
                 }else{
@@ -1578,7 +1643,37 @@
                 console.error("JobsRightAway.send_one_job(): job.interval must be typeof Number and be more than 100 ms");
             }
         }
-        const check_condition=(job, res)=>{
+    }
+    function JobsOnResponce(){
+        this.schedule=undefined;//run
+        this.agent_socket=undefined;//run
+        this.controller=undefined;//run
+        this.jobConditionChecking = new JobConditionChecking();
+        this.run=(schedule, controller, agent_socket)=>{
+            this.schedule = schedule;
+            this.agent_socket = agent_socket;
+            this.controller = controller;
+        }
+        this.do=(rightaway_job_action)=>{
+            const matched_response_jobs = this.schedule.reaction_on_response.filter(job=>job.name == rightaway_job_action);
+            //const on_response_job_names = this.schedule.reaction_on_response.map(job=>job.name);
+            console.log("JobsMon.do() matched_response_jobs=", matched_response_jobs);
+            matched_response_jobs.forEach(job=>{
+                this.agent_socket.emit(job.name).once(job.name, res=>{
+                    this.controller.gui_news("'"+job.name+"' job done");
+                    if(this.jobConditionChecking.check(job, res)){
+                        console.log("Jobs checking condition = true");
+                        this.do(job.action);
+                    }else{
+                        console.log("Jobs checking condition = false");
+                    }
+                })
+            });
+        }
+    }
+    function JobConditionChecking(){
+        this.check=(job, res)=>{
+            console.log("JobConditionChecking.check() job=", job);
             if(job.name=='disk_space'){
                 const GB = 1000000000;
                 if(job.condition == 'lte 1 gb'){
@@ -1591,12 +1686,11 @@
                 }
             }
             else if(job.name=='nvidia_smi'){
-                return true;
+                if(job.condition == 'is_exist'){
+                    return true
+                }else return true;
             }
         }
-    }
-    function Job(name){
-
     }
 
     function Microtask(name){
