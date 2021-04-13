@@ -5,6 +5,7 @@
     const url = require('url');
     const fs = require('fs');
     const EventEmitter = require('events');
+    const log = require('./log.js');
     //const http = require('http');
     //const io = require('socket.io');
     //const VISUALIZER_PATH = __dirname + "/visualizer/index.html"
@@ -14,6 +15,21 @@
     //@ -----I-M-P-L-E-M-E-N-T-A-T-I-O-N-----
 	main();
 	function main(){
+        const consoleerror = console.error;
+        const consolelog = console.log;
+        log.init(false, "master", "./log").then(res=>{
+            console.error = (msg)=>{
+                //log.write("HTTP",MSG_INFO,"Client request","127.0.0.1","Google Chrome");
+                log.write(msg);
+                consoleerror(msg);
+            }
+            console.log = (msg)=>{
+                log.write(msg);
+                consolelog(msg);
+            }
+        }).catch(err=>{
+            console.log("log error:",err)
+        })
 		new App().run();
         //rewrite_config_test();
 	}
