@@ -1,4 +1,4 @@
-//controller.js55
+//controller.js66
 'use sctrict';
 const fs = require('fs');
 const path = require('path');
@@ -1111,7 +1111,7 @@ function ExecuteCommand(){
             execute_command(data.cmd + '\r\n').then(cmd_out=>{
                 const process_id = parse_process_pid(cmd_out);
                 console.log("ExecuteCommand.run(): process id of ",data.cmd,"=",process_id);
-                socket.emit(ev_name, {info:cmd_out});
+                socket.emit(ev_name, {info:process_id});
             }).catch(ex=>{
                 console.log("ExecuteCommand.run(): fail to execute_command:",ex);
                 socket.emit(ev_name, {error:ex});

@@ -1,8 +1,12 @@
-const arr = ['a', 'b', 'c', 'd', 'e'];
-arr.forEach((el,i)=>{
-    console.log("el=",el);
-    if (el=='b' || el=='c'){
-        arr.splice(i,1);
+const obj = {
+    a:5,
+    b:()=>{
+        console.log("fu");
     }
-})
-console.log("arr=",arr);
+}
+const stringified = JSON.stringify(obj);
+console.log("stringified=",stringified);
+const stringified2 = JSON.stringify(stringified);
+console.log("stringified2=",stringified2);
+const stringified3 = JSON.stringify(stringified2);
+console.log("stringified3=",stringified3);

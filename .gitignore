@@ -1,6 +1,7 @@
 /node_modules/
 /agents/node_modules/
 /sql mm test/
+/log/
 *.pptx
 *.mm
 *.drn

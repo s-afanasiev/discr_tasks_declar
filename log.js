@@ -14,7 +14,7 @@
     var g_last_date;
     var g_last_fname;
     var g_log_levels = [];
-    const g_max_f_size = 1000;
+    const g_max_f_size = 1000000;
     const g_size_check_interval = 60000;
     const g_comments = false;
     //@ flag = Типа, нужно ли дублировать сообщения в консоль 
@@ -52,14 +52,19 @@
                 g_flag_display = flag;
                 folder = m_path.normalize(folder);
                 create_log_folder(folder)
-                    .then((folder) => { return create_archive_folder(folder); })
-                    .then((arch_fold) => { return prepare_filestream(type, folder, worker_pid); })
-                    .then((fname) =>{
+                    .then((folder) => {
+                        console.log("log.js: init(): log folder created");
+                        return create_archive_folder(folder); 
+                    }).then((arch_fold) => {
+                        console.log("log.js: init(): archive folder created");
+                        return prepare_filestream(type, folder, worker_pid);
+                    }).then((fname) =>{
+                        console.log("log.js: init(): filestream prepared");
                         g_last_fname = fname;
                         if (g_comments) console.log("63.g_last_fname= ",g_last_fname);
                         return archive_old_files(type,folder,folder+"/archive");
-                    })
-                    .then(() =>{
+                    }).then(() =>{
+                        console.log("log.js: init(): old files archived");
                         if (g_comments) console.log("66.FILES ARE COPIED");
                         var emitter = new EventEmitter();
                         set_checksize_interval(emitter);
@@ -157,7 +162,7 @@
             resolve(fname);
         });   
     }   
-    //Пример: m_log.write("HTTP",MSG_INFO,"Client request","127.0.0.1","Google Chrome");
+    //Пример: m_log.write("Client request","HTTP",MSG_INFO,"127.0.0.1","Google Chrome");
     function write(msg, service_name, level, ip, agent) {
         service_name = service_name || "";
         ip = ip || "";
@@ -183,7 +188,7 @@
                 let msg_body = "";
                 service_name = service_name.toUpperCase();
                 service_name = addSpaces(service_name);
-                msg_body = date + service_name + level + msg + ip + agent + new_line;
+                msg_body = date_str + service_name + level + msg + ip + agent + new_line;
                 try {
                     g_fd.write(msg_body);
                     if (g_flag_display === true) {
