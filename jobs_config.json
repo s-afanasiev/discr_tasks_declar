@@ -1,16 +1,16 @@
 {
-    "throw_right_away": [
-        {"name":"disk_space", "condition": "lte 1 gb", "action":"clean_space", "interval":50000},
-        {"name":"disk_space", "condition": "gte 100 gb", "action":"increase_traffic"},
-        {"name":"nvidia_smi", "condition": "is_exist", "action":"do_render"},
-        {"name":"exec_cmd", "cmd":"notepad.exe", "condition": "is_done", "action":"proc_count", "action_param":"notepad"}
-    ],
-    "reaction_on_response":[
-        {"name":"clean_space", "condition": "is_done", "action":"restart_render_counter"},
-        {"name":"increase_traffic", "condition": "is_done"},
-        {"name":"do_render", "condition": "is_started_render", "action":"say_when_finish_render"},
-        {"name":"proc_count", "condition": "is_done", "action":"nothing"}
-    ],
+    "init": ["disk_space_1", "disk_space_2", "nvidia_1"],
+    "jobs": {
+        "disk_space_1": {"type":"disk_space", "condition": "lte 1 gb", "action":"clean_space_1"},
+        "disk_space_2": {"type":"disk_space", "condition": "gte 100 gb", "action":"increase_traffic"},
+        "disk_space_3": {"type":"disk_space", "condition": "gte 100 gb", "action":"increase_traffic", "interval":9999999},
+        "nvidia_1":{"type":"nvidia_smi", "condition": "is_exist", "action":"do_render"},
+        "clean_space_1":{"type":"exec_cmd", "type_param":"clean.bat", "condition": "is_done", "action":"proc_count_1"},
+        "proc_count_1": {"type":"proc_count_by_name", "type_param":"notepad", "condition": "is_one", "action":"do_render_2", "delay":50000},
+        "do_render_2": {"type":"exec_cmd", "type_param":"3dmax.exe"},
+        "proc_count_2": {"type":"proc_count", "condition": "gte", "action":"stop_1", "interval":30000},
+        "stop_1": {"type":"stop", "type_param":"disk_space_1"}
+    },
     "JOBS_DICTIONARY":[
         "this is description block",
         {"disk_space":"return disk space on disk by disk letter. Answer keys: {free, size}"},

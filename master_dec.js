@@ -6,17 +6,13 @@
     const fs = require('fs');
     const EventEmitter = require('events');
     const log = require('./log.js');
-    //const http = require('http');
-    //const io = require('socket.io');
-    //const VISUALIZER_PATH = __dirname + "/visualizer/index.html"
-    const SETTINGS	= read_json_sync("./m_settings.json");
-    const JOBS_CONFIG = read_json_sync("jobs_config.json");
-    if (SETTINGS.error || JOBS_CONFIG.error){return console.log("Application not started")}
-    //@ -----I-M-P-L-E-M-E-N-T-A-T-I-O-N-----
 	main();
 	function main(){
         retranslate_logger();
-		new App().run();
+        const SETTINGS	= read_json_sync("./m_settings.json");
+        const JOBS_CONFIG = read_json_sync("jobs_config.json");
+        if (SETTINGS.error || JOBS_CONFIG.error) {return console.log("Application not started")}
+		else { new App().run(SETTINGS, JOBS_CONFIG); }
         //rewrite_config_test();
 	}
     function retranslate_logger(){
@@ -52,40 +48,6 @@
             return result;
         });
         return args2;
-    }
-    function rewrite_config_test(){
-        SETTINGS.a = 5;
-        SETTINGS.apply_updates = !SETTINGS.apply_updates;
-        fs.writeFile('m_settings.json', JSON.stringify(SETTINGS, null, '    '), function (err) {
-            if (err){
-                console.log("HostCluster.gui_ctrl(): fail to rewrite settings file:",err);
-            }
-        });
-    }
-    function mainTest(){
-		const http = require('http').createServer(webRequest).listen(55999);
-		this.io = require('socket.io')(http);
-		this.io.on('connection', agent => {
-			console.log("io.connection event: agent="+Object.keys(agent));
-		});
-	}
-    function dirStructureSyncTest(){
-        const dirStructure = new DirStructure();
-        const res = dirStructure.manOfDirSync("./update");
-        console.log(res);
-    }
-    function dirsComparingTest(){
-        const glob_update_path = SETTINGS.update_folder || "./update";
-        const launcher_update_path = glob_update_path + "\\launcher";
-        const controller_update_path = glob_update_path + "\\controller";
-        const other_update_path = glob_update_path + "\\other";
-        const dirStructure = new DirStructure();
-        const res= dirStructure.allMansSync([
-            {name:"controller", path:controller_update_path},
-            {name:"launcher", path:launcher_update_path},
-            {name:"other", path:other_update_path}
-        ]);
-        setTimeout(()=>{console.log("res=",res);}, 1000)
     }
     //@ При включении сервера к нему должны сразу начать подключаться Лончеры и КОнтролеры, 
     //@ которые автоматические реконектятся. За исключением самого превого развертывания, когда 
@@ -131,7 +93,7 @@
 
 	//@ Application
 	function App(){
-        this.run=()=>{
+        this.run=(SETTINGS, JOBS_CONFIG)=>{
             new ZooKeeper(
                 new IoServer(
                     new HttpServer(
@@ -140,7 +102,7 @@
                                 .with("/", new Page("/"))
                                 .with("/io_address", new Page(
                                     "/io_address", 
-                                    new IoConfig().io_address()
+                                    new IoConfig(SETTINGS).io_address()
                                 ))
                                 .with("/socket.js", new Page("/socket.js"))
                                 .with("/engine.js", new Page("/engine.js"))
@@ -161,7 +123,7 @@
                                 new NormalControllerMode(
                                     new Jobs(JOBS_CONFIG)
                                 ),
-                                undefined
+                                {stub:true}
                             ),
                             new ConnectedAgentsThrottle(
                                 new RedundantAgentsReservation()
@@ -254,7 +216,6 @@
                     agent_identifiers: new ParsedJSON(socket.handshake.query.agent_identifiers).run()
                 }
                 if(io_srv_msg.browser_or_agent == "agent"){
-                    console.log("UpdatableHostCluster.socketConnected() Agent connected!");
                     this.updatableHostCluster.welcomeAgent(io_srv_msg);
                 }else if(io_srv_msg.browser_or_agent == "browser"){
                     console.log("UpdatableHostCluster.socketConnected() Browser connected!");
@@ -282,7 +243,6 @@
         }
         //@ new socket connection from IoServer
         this.welcomeAgent=(io_srv_msg)=>{
-            console.log("UpdatableHostCluster mapped manifest=", JSON.stringify(this.manifest.mapped()));
             this.hostCluster.welcomeAgent(
                 io_srv_msg, 
                 this.manifest.current(),
@@ -294,7 +254,6 @@
             this.hostCluster.propagateManifestDiff(mans_diff);
         }
         this.gui_ctrl=(msg)=>{
-            console.log("UpdatableHostCluster.gui_ctrl() msg=",msg);
             if(msg == "switch_manifest_off"){
                 this.manifest.switch_off();
             }else{
@@ -382,6 +341,8 @@
             }).catch(err=>{
                 console.error("Manifest.nextMappedMans() after allMappedMansAsync Error:", err);
             }).finally(()=>{
+                console.log("Manifes.tnextManifest(): finally: new manifest check will after "+this.timer+ " ms...");
+                setTimeout(()=>{this.nextMappedMans(SETTINGS)}, this.timer);
             })
         }
         const filterExistingMappedPaths=(SETTINGS)=>{
@@ -704,7 +665,6 @@
             return agentObj;
         }
         this.gui_ctrl=(msg)=>{
-            console.log("HostCluster.gui_ctrl() msg=",msg);
             if(typeof msg != "object"){
                 return console.error("HostCluster.gui_ctrl() msg is not an Object: ",msg);
             }
@@ -820,7 +780,7 @@
         this.creatorPpid=()=>{return this.creator_ids.ppid}
         this.creatorApid=()=>{return this.creator_ids.apid}
 		this.instance = function(creator_ids, hostCluster){
-            console.log("HostAsPair.instance(): creator type is ",creator_ids.ag_type);
+            console.log("HostAsPair.instance(): creator=",creator_ids.ag_type);
             const ag_type = creator_ids.ag_type;
 			return new HostAsPair(
 				this.launcher.instance((ag_type==="launcher"?creator_ids:undefined), this),
@@ -932,10 +892,8 @@
 		this.welcomeAgent = (agent_socket, agent_ids, manifest_snapshot, mapped_mans_snapshot)=>{
             this.manifest_snapshot = manifest_snapshot;
             this.mapped_mans_snapshot = mapped_mans_snapshot;
-            console.log("HostAsPair.welcomeAgent(): manifest_snapshot=",manifest_snapshot)
             if(this.connectedAgentsThrottle.adaptConnectedAgent(agent_ids).isAllowed()){
                 const ag_type = agent_ids.ag_type;
-                console.log("HostAsPair.welcomeAgent() agent",ag_type,"passed!");
                 if(ag_type=="launcher"){
                     this[ag_type].welcomeAgent(agent_socket, agent_ids, this.manifest_snapshot, this.controller);
                 }else if(ag_type=="controller"){
@@ -1305,9 +1263,9 @@
                 this.gui_news("doing mapped manifestos changes");
                 const EV_NAME = "updateMappedPaths";
                 const resolve_handler = function(res){resolve(res);}
-                socket.emit(EV_NAME, mans_diff).once(EV_NAME, resolve_handler);
+                this.agent_socket.emit(EV_NAME, mans_diff).once(EV_NAME, resolve_handler);
                 setTimeout(()=>{
-                    socket.removeListener(EV_NAME, resolve_handler);
+                    this.agent_socket.removeListener(EV_NAME, resolve_handler);
                     reject(EV_NAME+" timeout. ");
                 }, 5000);
             });
@@ -1326,7 +1284,6 @@
     }
     //@----------------AgentUpdateChain------------------------
     function AgentUpdateChain(creator, manifest){
-        console.log("AgentUpdateChain.constr(): manifest=", JSON.stringify(manifest));
         this.manifest=manifest;
         this.instance=(creator, manifest)=>{return new AgentUpdateChain(creator, manifest)}
         this.short_names = ["start", "update", "kill", "compare"];
@@ -1641,6 +1598,7 @@
             this.jobs.run(controller, this.agent_socket);
         }
     }
+    //@ ----CONTROLLER'S JOBS--------------
     function Jobs(jobs_schedule){
         this.schedule = jobs_schedule;
         this.agent_socket=undefined; //run()
@@ -1649,28 +1607,23 @@
             this.agent_socket = agent_socket;
             this.controller = controller;
             if(!this.schedule){
-                console.error("No global var 'jobs_schedule_temp' !");
+                console.error("No schedule!");
                 return [];
             }else{
-                new JobsMon(
-                    new JobsRightAway(
-                        new JobsOnResponce()
-                    )
+                new JobsChaining(
+                    new JobsInit(),
+                    new JobsAdding(),
+                    new ExtendedJob(),
+                    new IntervalJobs()
                 ).run(this.schedule, this.controller, this.agent_socket);
             }
 		}
-		this.sort_jobs=()=>{
-			//@ coupling jobs with same names
-		}
 	}
-    function JobsMon(jobsRightAway){
-        this.jobsRightAway = jobsRightAway;
-        this.run=(schedule, controller, agent_socket)=>{
-            this.jobsRightAway.run(schedule, controller, agent_socket);
-        }
-    }
-    function JobsRightAway(jobsOnResponce){
-        this.jobsOnResponce = jobsOnResponce;
+    function JobsChaining(jobsInit, jobsAdding, extendedJob, intervalJobs){
+        this.jobsInit = jobsInit;
+        this.jobsAdding = jobsAdding;
+        this.extendedJob = extendedJob;
+        this.intervalJobs = intervalJobs;
         this.jobConditionChecking = new JobConditionChecking();
         this.schedule = undefined;//run
         this.controller = undefined;//run
@@ -1679,66 +1632,207 @@
             this.schedule = schedule;
             this.controller = controller;
             this.agent_socket = agent_socket;
-            this.jobsOnResponce.run(schedule, controller, agent_socket);
-            schedule.throw_right_away.forEach(job=>{
-                send_one_job(job);
-            })
-        }
-        const send_one_job=(job)=>{
-            this.controller.gui_news("doing '"+job.name+"' job");
-            this.agent_socket.emit(job.name, job).once(job.name, res=>{
-                this.controller.gui_news("'"+job.name+"' job done");
-                console.log("Jobs.run(): socketio answer: ",JSON.stringify(res));
-                if(this.jobConditionChecking.check(job, res)){
-                    console.log("Jobs checking condition = true");
-                    this.jobsOnResponce.do(job.action);
-                }else{
-                    console.log("Jobs checking condition = false");
-                }
+            this.jobsAdding.onAdd((job, is_run_immediatly)=>{});
+            this.jobsInit.run(schedule, controller, agent_socket, this.extendedJob, this.intervalJobs).onNext(next_job_id=>{
+                console.log("JobsChaining.run(): onNext(): next_job_id=",next_job_id);
+                send_next_job(next_job_id);
             });
-            if(job.interval){
-                if(typeof job.interval== "number"&& job.interval > 100){
-                    setTimeout(()=>{
-                        send_one_job(job);
-                    }, job.interval)
-                }else{
-                    console.error("JobsRightAway.send_one_job() Error: job.interval = ", job.interval);
-                }
+        }
+        const send_next_job=(next_job_id)=>{
+            console.log("JobsChaining.send_next_job(): next_job_id=",next_job_id);
+            const next_job_tuple = this.schedule.jobs[next_job_id];
+            console.log("JobsChaining.send_next_job(): next_job_tuple=",next_job_tuple);
+            if(!next_job_tuple) return console.error("JobsChaining.send_next_job(): No such job",next_job_id );
+            if(next_job_tuple.type == "stop"){
+                //@ delete this.schedule.jobs[next_job_tuple.type_param].interval;
+                const job_id_to_stop = next_job_tuple.type_param;
+                const job_to_stop = this.schedule.jobs[job_id_to_stop];
+                if(typeof job_to_stop == 'object'){
+                    delete job_to_stop.interval;
+                    this.intervalJobs.stopIntervalJob(next_job_id);
+                }else console.error("JobsChaining.send_next_job()");
+            }else{
+                console.log("JobsChaining.send_next_job(): calling to new job...");
+                this.extendedJob.instance()
+                .run(next_job_id, this.schedule.jobs[next_job_id], this.controller, this.agent_socket, this.intervalJobs)
+                .onAnswer(ans=>{
+                    if(ans.is_socket_answered){
+                        if(ans.next_action){
+                            send_next_job(ans.next_action);
+                        }
+                    }else{
+                        //@ most likely - socket response timeout
+                        console.error("JobsChaining.send_next_job(): oneJob.onAnswer() error:", ans.err_type);
+                    }
+                });
             }
         }
     }
-    function JobsOnResponce(){
+    function JobsInit(){
         this.schedule=undefined;//run
-        this.agent_socket=undefined;//run
         this.controller=undefined;//run
+        this.agent_socket=undefined;//run
+        this.extendedJob=undefined;//run
+        this.intervalJobs=undefined;//run
         this.jobConditionChecking = new JobConditionChecking();
-        this.run=(schedule, controller, agent_socket)=>{
+        this.cbNext=()=>{console.error("JobsInit.cbNext() not implemented")}
+        this.run=(schedule, controller, agent_socket, extendedJob, intervalJobs)=>{
             this.schedule = schedule;
-            this.agent_socket = agent_socket;
             this.controller = controller;
+            this.agent_socket = agent_socket;
+            this.extendedJob = extendedJob;
+            this.intervalJobs = intervalJobs;
+            start_initial_jobs(schedule, controller, agent_socket, extendedJob, intervalJobs);
+            return this;
         }
-        this.do=(rightaway_job_action)=>{
-            const matched_response_jobs = this.schedule.reaction_on_response.filter(job=>job.name == rightaway_job_action);
-            //const on_response_job_names = this.schedule.reaction_on_response.map(job=>job.name);
-            console.log("JobsMon.do() matched_response_jobs=", JSON.stringify(matched_response_jobs));
-            //@ most likely it will be onejob, althought user can write more
-            matched_response_jobs.forEach(job=>{
-                this.agent_socket.emit(job.name).once(job.name, res=>{
-                    this.controller.gui_news("'"+job.name+"' job done");
-                    if(this.jobConditionChecking.check(job, res)){
-                        console.log("Jobs checking condition = true");
-                        this.do(job.action);
+        this.onNext=(cb)=>{
+            if(typeof cb == 'function'){
+                this.cbNext = cb;
+            }else{
+                console.error("JobsInit.onNext(): callback is not a function!");
+            }
+        }
+        const start_initial_jobs=(schedule, controller, agent_socket, extendedJob, intervalJobs)=>{
+            if(!Array.isArray(schedule.init)) return console.error("ERROR: NO 'init' key in jobs_config! ");
+            schedule.init.forEach(job_id=>{
+                //console.log("JobsInit.start_initial_jobs() job_id=", job_id);
+                extendedJob.instance()
+                .run(job_id, schedule.jobs[job_id], controller, agent_socket, intervalJobs)
+                .onAnswer(ans=>{
+                    if(ans.is_socket_answered){
+                        console.log("JobsInit.start_initial_jobs(): socket answered");
+                        if(ans.next_action){
+                            console.log("JobsInit.start_initial_jobs(): next action=", ans.next_action);
+                            this.cbNext(ans.next_action);
+                        }
                     }else{
-                        console.log("Jobs checking condition = false");
+                        console.error("JobsInit.start_initial_jobs(): oneJob.onAnswer() error:", ans.err_type);
                     }
-                })
+                });
             });
+        }
+    }
+    function JobsAdding(){
+        this.add=(job, is_run_immediatly)=>{
+            cbArray.forEach(cb=>{
+                cb(job, is_run_immediatly);
+            });
+        }
+        const cbArray = [];
+        this.onAdd=(cb)=>{
+            cbArray.push(cb);
+        }
+    }
+    function ExtendedJob(){
+        this.instance=()=>{
+            return new ExtendedJob();
+        }
+        this.run=(job_id, job_tuple, controller, agent_socket, intervalJobs)=>{
+            console.log("ExtendedJob.run() job_id=", job_id);
+            console.log("ExtendedJob.run() job_tuple=", job_tuple);
+            let oneTypedJob;
+            if(job_tuple.interval){
+                oneTypedJob = new OneIntervalJob(job_id, job_tuple, controller, agent_socket);
+                intervalJobs.add(job_id, oneTypedJob);
+            }else{
+                oneTypedJob = new OneJob(job_id, job_tuple, controller, agent_socket);
+            }
+            console.log("ExtendedJob.run() returning oneJob=", oneTypedJob);
+            return oneTypedJob.run();
+        }
+    }
+    function IntervalJobs(){
+        const _interval_jobs = {};
+        this.add=(job_key, oneJob)=>{
+            _interval_jobs[job_key] = job;
+        }
+        this.stopIntervalJob=(job_id)=>{
+            if(_interval_jobs[job_id]){
+                _interval_jobs[job_id].break_interval();
+            }
+        }
+    }
+    //function OneIntervalJob(job_id, job, controller, agent_socket){}
+    function OneIntervalJob(oneJob){
+        this.job_id = job_id;
+        let _job_timeout_ref = undefined;
+        this.oneJob = new OneJob();
+        this.instance=(job_id, job, controller, agent_socket)=>{
+            return new OneIntervalJob(job_id, job, controller, agent_socket);
+        }
+        this.break_interval=()=>{
+            clearTimeout(_job_timeout_ref);
+        }
+        this.run=()=>{
+            this.oneJob.instance(job_id, job, controller, agent_socket).run();
+            _job_timeout_ref = setTimeout(()=>{
+                this.oneJob.instance(job_id, job, controller, agent_socket).run();
+            }, job_info.interval)
+            return this;
+        }
+        this.onAnswer=(cb)=>{
+            this.oneJob.onAnswer(cb);
+            return this;
+        }
+    }
+    //@ oneJob object is binding to one job from jobs_config(aka schedule) by its id
+    function OneJob(job_id, job_tuple, controller, agent_socket){
+        this.job_id = job_id;
+        this.job_tuple = job_tuple;
+        this.controller = controller;
+        this.agent_socket = agent_socket;
+        this.is_job_minimal_done = false;
+        this.cbUnit = new CbUnit();
+        this.instance=(job_id, job, controller, agent_socket)=>{
+            return new OneJob(job_id, job, controller, agent_socket);
+        }
+        this.onAnswer=(cb)=>{
+            this.cbUnit.mem(cb);
+            return this;
+        }
+        this.run=()=>{
+            const job_type = this.job_tuple.type;
+            console.log("OneJob.run(): emitting event=", job_type);
+            this.agent_socket.emit(job_type).once(job_type, res=>{
+                console.log("OneJob.run(): controller answer =", res);
+                this.controller.gui_news("'"+job_type+"' job done");
+                this.is_job_minimal_done = true;
+                const jobConditionChecking = new JobConditionChecking();
+                if(jobConditionChecking.check(this.job_tuple, res)){
+                    //console.log("Jobs checking condition = true");
+                    this.cbUnit.summ({is_socket_answered: true, next_action: this.job_tuple.action});
+                }else{
+                    this.cbUnit.summ({is_socket_answered: true});
+                }
+            });
+            setTimeout(()=>{
+                if(this.is_job_minimal_done == false){
+                    this.cbUnit.summ({is_socket_answered: false, err_type: "timeout"});
+                }
+            }, 5000)
+            return this;
+        }
+    }
+    function CbUnit(){
+        this.instance=()=>{
+            return new cbUnit();
+        }
+        this.summ=()=>{
+            console.error("cbUnit.summ() not implemented")
+        }
+        this.mem=(cb)=>{
+            if(typeof cb == 'function'){
+                this.summ = cb;
+            }else{
+                console.error("OneJob.onAnswer(): callback is not a function!");
+            }
         }
     }
     function JobConditionChecking(){
         this.check=(job, res)=>{
+            const job_type = job.type;
             console.log("JobConditionChecking.check() job=", JSON.stringify(job));
-            if(job.name=='disk_space'){
+            if(job_type=='disk_space'){
                 const GB = 1000000000;
                 if(job.condition == 'lte 1 gb'){
                     if(res.free < GB) return true;
@@ -1749,19 +1843,19 @@
                     else return false;
                 }
             }
-            else if(job.name=='nvidia_smi'){
+            else if(job_type=='nvidia_smi'){
                 if(job.condition == 'is_exist'){
                     return Boolean(res.is_exist);
                 }else return true;
             }
-            else if(job.name == 'do_render'){
+            else if(job_type == 'do_render'){
                 if(job.condition == 'is_started_render'){
                     return Boolean(res.is_started_render);
                 }
             }
         }
     }
-
+    //@------------------------------------
     function Microtask(name){
         this.name = name;
         this.done=false;
@@ -1790,7 +1884,7 @@
 		}
 	}
 
-    function IoConfig(){
+    function IoConfig(SETTINGS){
         let io_addr;
         this.io_address =()=>{ 
             if(!io_addr){
@@ -1898,7 +1992,32 @@
     }
     
 
-
+// ----------- TEST -----------
+function mainTest(){
+    const http = require('http').createServer(webRequest).listen(55999);
+    this.io = require('socket.io')(http);
+    this.io.on('connection', agent => {
+        console.log("io.connection event: agent="+Object.keys(agent));
+    });
+}
+function dirStructureSyncTest(){
+    const dirStructure = new DirStructure();
+    const res = dirStructure.manOfDirSync("./update");
+    console.log(res);
+}
+function dirsComparingTest(){
+    const glob_update_path = SETTINGS.update_folder || "./update";
+    const launcher_update_path = glob_update_path + "\\launcher";
+    const controller_update_path = glob_update_path + "\\controller";
+    const other_update_path = glob_update_path + "\\other";
+    const dirStructure = new DirStructure();
+    const res= dirStructure.allMansSync([
+        {name:"controller", path:controller_update_path},
+        {name:"launcher", path:launcher_update_path},
+        {name:"other", path:other_update_path}
+    ]);
+    setTimeout(()=>{console.log("res=",res);}, 1000)
+}
 
   
 
@@ -4650,5 +4769,3 @@ function read_json_sync(json_path)
 		return {error: e};
 	}
 }
-
-

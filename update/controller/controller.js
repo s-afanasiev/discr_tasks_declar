@@ -7,10 +7,10 @@ const {spawn, exec} = require('child_process');
 const EventEmitter = require('events');
 const io = require('socket.io-client');
 //const socket = require('./socket.io.dev.js')(SETT.client_socket);
-const $checkDiskSpace = require('check-disk-space');
+const checkDiskSpace = require('check-disk-space');
 var ps = require('ps-node');
 const { emit } = require('process');
-const AGENT_SETTINGS_PATH = __dirname+"/../other/c_settings.json";
+const AGENT_SETTINGS_PATH = __dirname+"/c_settings.json";
 //@ ---------------------------------
 function mainTest(){
 	const settings = read_settings("../c_settings.json");
@@ -805,14 +805,14 @@ function UpdateMappedPaths(){
     }
     //@ FOR MAPPED PATHS !
     const sync_dirs=(mans_diff_struct, src_path, is_keep_old_files)=>{
-        //@ mans_diff = {new_files:[[],[]], files_to_change:[[],[],[]], old_files:[[]]}
+        //@ mans_diff_struct = {new_files:[[],[]], files_to_change:[[],[],[]], old_files:[[]]}
         //@ dst_path = "C:/TEMP"
         return new Promise((resolve, reject)=>{
-            let files_to_write = concat_filelist_to_update(mans_diff[src_path].comparing, is_keep_old_files);
+            let files_to_write = concat_filelist_to_update(mans_diff_struct[src_path].comparing, is_keep_old_files);
             console.log("UpdateMappedPaths.sync_dirs(): files_to_write=",files_to_write);
             if(files_to_write.length==0){ return resolve(); }
-            createEmptyDirs(files_to_write, mans_diff[src_path].dst_path).then(err_names=>{
-                return copy_files(files_to_write, src_path, mans_diff[src_path].dst_path, err_names);
+            createEmptyDirs(files_to_write, mans_diff_struct[src_path].dst_path).then(err_names=>{
+                return copy_files(files_to_write, src_path, mans_diff_struct[src_path].dst_path, err_names);
             }).then(res=>{
 
             }).catch(err=>{});
@@ -1057,12 +1057,12 @@ function DiskSpace(){
             }else if(disk_letter.length==1){
                 disk_letter=disk_letter+":/"
             }
-			$checkDiskSpace(disk_letter).then((disk_space) => {
+			checkDiskSpace(disk_letter).then((disk_space) => {
                 // { free: 12345678, size: 98756432 }
                 console.log("disk_space =",disk_space);
                 socket.emit(ev_name, {disk_space:disk_space});
             }).catch((ex)=>{
-                console.log("DiskSpace.run(): $checkDiskSpace Error: ",ex);
+                console.log("DiskSpace.run(): checkDiskSpace Error: ",ex);
                 _socket.emit(ev_name, {is_error:true, error:ex});
             }); 
         });
@@ -1899,7 +1899,6 @@ const GS = {
             
         });
         socket.on(GS.EVS.EXEC_CMD, function(data){
-
             console.log('>>>>>>>arbitrary_cmd:', data);
             let {tid, jid, payload} = GS.extract_socketio_data(data);
             console.log("socket 'exec_cmd' event: data=", tid, jid, payload);

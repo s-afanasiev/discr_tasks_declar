@@ -14,17 +14,15 @@
 		
 	</head>
 	
-	<body style = 'margin:0px;' >
-		
-		<div id = "nav_main" style = "position:relative; overflow:hidden; border:1px solid blue;">
-			<div id = "nav_transition" style = "position:relative; overflow:hidden; border:1px solid red;">
-				nav_transition
+	<body style = 'margin:0px;' >	
+		<div id = "nav_main" style = "position:relative; overflow:hidden; ">
+			<div id = "nav_transition" style = "position:relative; overflow:hidden;">
+				main menu
 			</div>
 			<div id = "nav_board" style = "position:relative; overflow:hidden; ">
 			</div>
 		</div>
 		<div id = "main_div" style = "position:relative; overflow:hidden; text-align: center; display: table-cell; vertical-align: middle;"></div>
-		
 		<script>
 			//document.body.onselectstart = function(){return false;}
 			//document.body.ondragstart = function(){return false;}			
@@ -46,7 +44,7 @@
 				//- connect to server by socket.io and listen 'agent_table' event to receive info about agents and their tasks
 				connect_to_server();
 				//- place 2 DIV blocks:
-				//-		'nav_main' - navigation panel occupying the 5% part from the top
+				//-		'nav_main' - navigation panel occupying the 10% part from the top
 				//-		'main_div' - to display Agents table
 				var ww = $(window).width();
 				var wh = $(window).height();
@@ -54,7 +52,7 @@
 
 				//.css("border","1px solid orange")
 				//ui_fill_nav_menu({id:"nav_main", hang_listeners_on_inputs: true});
-				$("#"+"main_div").width(parseInt(ww)).height(parseInt(wh*.9)).css("left", parseInt(0)+"px").css("top", parseInt(0)+"px");
+				$("#"+"main_div").width(ww).height(parseInt(wh*.9)).css("left", parseInt(0)+"px").css("top", parseInt(0)+"px");
 				$("#"+"main_div").bind({
 					click: function() {},
 					mouseenter: function() 
@@ -71,7 +69,7 @@
 				var ww = $(window).width();
 				var wh = $(window).height();
 				$("#"+"nav_main").width(ww).height(wh*.1).css("left", 0+"px").css("top", 0+"px");
-				$("#"+"main_div").width(parseInt(ww)).height(parseInt(wh*.9)).css("left", parseInt(0)+"px").css("top", parseInt(0)+"px");
+				$("#"+"main_div").width(parseInt(ww*.9)).height(parseInt(wh*.9)).css("left", parseInt(0)+"px").css("top", parseInt(0)+"px");
 			};
 			function get_socket_io_address(){
 				// 1. Create new XMLHttpRequest object
@@ -122,6 +120,10 @@
 					server_.emit('get_socket_id',"");
 					mainMenu.init("#nav_board");
 					$("#"+"main_div").append(hostTable.init());
+					server_.emit('gui_ctrl', {type:'host_table'});
+				});
+				server_.on('disconnect', function(){
+					$("#"+"main_div").empty();
 				});
 				server_.on('id_assigned', function(msg)
 				{
@@ -189,14 +191,12 @@
 					a += "</table>";
 					$("#"+"main_div").empty().append(a);
 				});
-				server_.emit('gui_ctrl', {type:'host_table'});
 				server_.on('gui_news', function(data){
 					if(data.msg == 'host_table'){
 						const a = this.host_table(data);
 					}
 					else if(data.msg == "host_born"){
-						const a = this.host_born(data);
-						$(".current").append(a);
+						this.host_born(data);
 					}
 					else if(data.msg == "agent_online"){
 						this.agent_online(data);
@@ -313,7 +313,7 @@
 					//console.log("ApplyUpdatesIndicator.draw() is_apply_updates=",is_apply_updates);
 					const status_color = (is_apply_updates) ? "#1e4" : "#f26";
 					//console.log("ApplyUpdatesIndicator.draw() status_color=",status_color);
-					const a = "<span style='background-color:"+status_color+";'>&emsp;</span>";
+					const a = "<span style='background-color:"+status_color+";'>&emsp;&emsp;</span>";
 					this.$a = $(a);
 					//return a;
 					return this.$a;
@@ -358,7 +358,7 @@
 				}
 				this.init=()=>{
 					let a = "";
-					a += "<table>";
+					a += "<table id='host_table' style = 'width:100%; height:100%'>";
 					a += "<tr class='base'></tr>"
 					a += "</table>";
 					return a;

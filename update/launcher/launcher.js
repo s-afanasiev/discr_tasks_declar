@@ -6,7 +6,7 @@ const os = require('os');
 const {spawn, exec} = require('child_process');
 const EventEmitter = require('events');
 const { settings } = require('cluster');
-const AGENT_SETTINGS_PATH = __dirname+"/../other/c_settings.json";
+const AGENT_SETTINGS_PATH = __dirname+"/l_settings.json";
 const glob = {};
 //============IMPLEMENTATION========================
 (function main(){ new App().run(); })();
