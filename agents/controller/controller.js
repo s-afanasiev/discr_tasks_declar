@@ -21,6 +21,10 @@ function mainTest(){
 }
 //@-------IMPLEMENTATION------------
 const glob = {}; //global var
+glob.fuita = function(){
+    console.log("FUITA!");
+}
+
 main();
 function main(){
 	new App().run();
@@ -33,7 +37,8 @@ function App(){
             new SocketIoHandlers(
                 new IoWrap(
                     new IoSettings(AGENT_SETTINGS_PATH).as("settings_"),
-                    new StringifiedJson()
+                    new StringifiedJson(),
+                    new DisconnectFunc("settings_")
                 )
             )
                 .with('compareManifest',
@@ -152,7 +157,7 @@ function Identifiers(){
         });
     }
 }
-function IoWrap(ioSettings, stringifiedJson){
+function IoWrap(ioSettings, stringifiedJson, disconnectFunc){
 	this.socket = undefined;
     this.ioSettings= ioSettings;
     this.stringifiedJson= stringifiedJson;
@@ -162,13 +167,37 @@ function IoWrap(ioSettings, stringifiedJson){
 		const settings = this.ioSettings.read(); //sync
         console.log("IoWrap.run(): settings=", settings);
 		//@ At this moment connection happens
-		this.socket = io(settings.client_socket, {query:{
+        this.socket = io(settings.client_socket, {query:{
             "browser_or_agent": "agent",
             "agent_identifiers": this.stringifiedJson.run(agent_ids)
         }});
         this.socket.on('connect',()=>{console.log(">>>connected to server!")})
-        this.socket.on('disconnect',()=>{console.log(">>>disconnected from server!")})
+        this.socket.on('disconnect',()=>{
+            console.log(">>>disconnected from server!");
+            disconnectFunc.instance().run();
+        })
 		return this;
+    }
+}
+function DisconnectFunc(settings_){
+    this.settings = glob[settings_].read() || {}
+    const wait_timer_after_disconnect = this.settings.if_disconnect_wait_before_spec_fu;
+    const special_fu_after_timeout = this.settings.if_disconnect_spec_fu;
+    const special_fu_attempts = this.settings.if_disconnect_spec_fu_attempts;
+    let timer_is_over = false;
+    this.instance=()=>{
+        return new DisconnectFunc(settings_);
+    }
+    this.run=()=>{
+        setTimeout(()=>{
+            if(!timer_is_over){
+                try{
+                    glob[special_fu_after_timeout]();
+                }catch(er){
+                    console.log("DisconnectFunc.run(): no such function: ", special_fu_after_timeout);
+                }
+            }
+        }, wait_timer_after_disconnect)
     }
 }
 function StringifiedJson(){
@@ -418,7 +447,7 @@ function ComparedManifest(dirStructure, dirsComparing, settings_){
             }).finally(()=>{this.is_timeout = false;});
             setTimeout(()=>{ if(this.is_timeout){
                 socket.emit(ev_name, {is_error: true, error: "ComparedManifest TIMEOUT"});
-            } }, 5000);
+            } }, 3000);
         })
         return this;
     }
@@ -1060,7 +1089,7 @@ function DiskSpace(){
 			checkDiskSpace(disk_letter).then((disk_space) => {
                 // { free: 12345678, size: 98756432 }
                 console.log("disk_space =",disk_space);
-                socket.emit(ev_name, {disk_space:disk_space});
+                socket.emit(ev_name, disk_space);
             }).catch((ex)=>{
                 console.log("DiskSpace.run(): checkDiskSpace Error: ",ex);
                 _socket.emit(ev_name, {is_error:true, error:ex});
@@ -1071,10 +1100,10 @@ function DiskSpace(){
 function NvidiaSmi(){
     this.run=(ev_name, socket)=>{
         socket.on(ev_name, function(data){
-            console.log("NvidiaSmi.run() data=", data);
+            //console.log("NvidiaSmi.run() data=", data);
             let NVIDIA_PATH = '"C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvidia-smi.exe"';
             let NVIDIA_PATH_NORMALIZED = "C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvidia-smi.exe";
-            console.log("NvidiaSmi.run() checking NVIDIA_PATH:", NVIDIA_PATH);
+            //console.log("NvidiaSmi.run() checking NVIDIA_PATH:", NVIDIA_PATH);
             let is_path_exist = true;
             fs.stat(NVIDIA_PATH_NORMALIZED, function(err) {
                 if(err){
@@ -1105,12 +1134,15 @@ function ExecuteCommand(){
         socket.on(ev_name, function(data){
             console.log("ExecuteCommand.run(): socket data=",data);
             //@ data = {name:"exec_cmd", cmd:"notepad.exe", condition: "exec_done", action:"write data: hi"}
-            if(data.cmd=="notepad.exe" || data.cmd=="notepad"){
-                data.cmd = "wmic process call create notepad.exe";
+            let _cmd = "";
+            if(data.type_param=="notepad.exe" || data.type_param=="notepad"){
+                _cmd = "wmic process call create notepad.exe";
+            }else if(data.type_param=="clean.bat"){
+                console.log("CLEAN.BAT !");
             }
-            execute_command(data.cmd + '\r\n').then(cmd_out=>{
+            execute_command(_cmd + '\r\n').then(cmd_out=>{
                 const process_id = parse_process_pid(cmd_out);
-                console.log("ExecuteCommand.run(): process id of ",data.cmd,"=",process_id);
+                console.log("ExecuteCommand.run(): process id of ",_cmd,"=",process_id);
                 socket.emit(ev_name, {info:process_id});
             }).catch(ex=>{
                 console.log("ExecuteCommand.run(): fail to execute_command:",ex);
@@ -1132,23 +1164,32 @@ function ProcCount(){
     this.run=(ev_name, socket)=>{
         //@ ev_name == "do_render"
         socket.on(ev_name, (proc_name)=>{
+            const searchable = proc_name.type_param;
             console.log("proc_count event! proc_name =",proc_name);
-            this.by_name(proc_name).then(res=>{
+            if(typeof searchable != 'string'){return socket.emit(ev_name, {is_error: true, error: "no process name for searching"});}
+            //if(!searchable.endsWith(".exe")){searchable = searchable + '.exe'}
+            this.by_name(searchable).then(res=>{
                 console.log("proc_count event! res =",res);
-                socket.emit(ev_name, {info: res});
+                const COUNT = res.length;
+                socket.emit(ev_name, {count: COUNT, detailed: res});
             }).catch(err=>{
                 socket.emit(ev_name, {is_error: true, error: err});
             });
         });
     }	
     this.by_name=(proc_name)=>{
+        console.log("ProcCount.by_name(): proc_name=",proc_name);
         return new Promise( (resolve, reject) => {
+            let is_timeout = true;
             //const prcs = [];
-            ps.lookup({	command: proc_name, psargs: 'ux'}, 
-                function(err, resultList ) {
-                    if (err) reject(err);
-                    else resolve(resultList);			
+            ps.lookup({	command: proc_name, psargs: 'ux'}, function(err, resultList ) {
+                is_timeout = false;
+                if (err) reject(err);
+                else resolve(resultList);
             });
+            setTimeout(()=>{
+                if(is_timeout) reject("timeout")
+            }, 5000);
         });
     }
 }
@@ -1305,9 +1346,13 @@ function execute_command(command){
             else { stderr += data.toString(); }
         });
         CMD.on('exit', function () {
-            resolve(stdout);
+            if(stderr) reject(stderr)
+            else resolve(stdout);
         });
-        setTimeout(()=>{resolve({})},1000)
+        setTimeout(()=>{
+            CMD = null;
+            reject({});
+        },5000)
         //CMD.stdin.write('wmic process get ProcessId,ParentProcessId,CommandLine \n');
         //CMD.stdin.write(command+'\r\n');
         //CMD.stdin.end();

@@ -113,7 +113,8 @@
 			function connect_to_server()
 			{
 				server_ = io.connect(endvr_server_address, {query:{browser_or_agent:"browser"}});
-				const hostTable = new HostTable();
+				//server_ = io.connect(endvr_server_address);
+				const hostTable = new HostTable(server_);
 				const mainMenu = new MainMenu(server_);
 				server_.on('connect', function(){
 					console.log("connected");
@@ -337,8 +338,24 @@
 					server_.emit("gui_ctrl", {type:"apply_updates", value: value_for_server});
 				}
 			}
-			function HostTable(){
+			function FutureJobsButton(server_socket, host_md5){
+				this.pressed = false;
+				this.$a = undefined;
+				this.draw=()=>{
+					const a = "<div id='future_jobs_btn' style='width:90%; height:90%; background-color:lightgrey; cursor:pointer;'>"+"get future jobs"+"</div>";
+					this.$a = $(a);
+					this.$a.click(this.button_handler);
+					//return a;
+					return this.$a;
+				}
+				this.button_handler=()=>{
+					server_.emit("gui_ctrl", {type:"list_future_jobs", host_id: host_md5});
+				}
+			}
+			function HostTable(server_){
+				this.server_ = server_;
 				this.MAX_WIDTH = 4;
+				this.all_tr_counter = 0;
 				this.cur_row_index = 0;
 				this.cur_col_index = 0;
 				this.messages = {
@@ -388,15 +405,22 @@
 					//@ data={msg: "host_born", md5: "6e8bc6f1e3ef10adf9dd98617c133110", creator_type:"launcher", creator_pid:7742, creator_apid:0}
 					console.log("host_born()...");
 					const a_host = one_host(data);
+					const $a_host = $(a_host);
+					const $futureJobsBtn = new FutureJobsButton(this.server_, data.md5).draw();
+					console.log("futureJobsBtn="+JSON.stringify($futureJobsBtn));
+					$("div#future_jobs_btn_dock", $a_host).empty().append($futureJobsBtn);
 					//@-----Add TD with Host info to Current or New Line of Table----------
 					this.cur_col_index = this.cur_col_index + 1;
 					if(this.cur_col_index >= this.MAX_WIDTH){
 						console.log("move to the new line");
 						this.cur_col_index = 1;
-						$('#host_table').append("<tr class='base'>"+a_host+"</tr>");
+						this.all_tr_counter = this.all_tr_counter + 1;
+						const tr_class = "base_"+this.all_tr_counter;
+						$('#host_table').append("<tr class='"+tr_class+"'></tr>");
+						$('table#host_table tr.'+tr_class).empty().append($a_host);
 					}else{
 						console.log("add on the current line");
-						$('#host_table tr.base:last').append(a_host);
+						$('#host_table tr.base:last').append($a_host);
 					}
 					//@-----Append Agent info to The Host info--------------------------------------------------------
 					$('td#md5__'+data.md5+' td.'+data.creator_type).append(host_agent_creator(data));
@@ -407,6 +431,7 @@
 						a +="<table style = 'border:1px solid red; width:100%;'>";
 							a +="<tr><td colspan = '2'>";
 								a += "host : <b>"+data.md5+"</b>";
+								a += "<div id='future_jobs_btn_dock' style='width:100px; height:30px; background-color:#ddf; cursor:pointer;'></div>";
 							a +="</td></tr>";
 							a +="<tr class = 'agents'>";
 								a +="<td class = 'agent_type__launcher'>"
@@ -468,7 +493,7 @@
 					$agent_td.empty().append(a);
 				}
 				this.agent_work=(data)=>{
-					console.log("working data=", data)
+					console.log("working data=", JSON.stringify(data))
 					const $agent_work_div = $('td#md5__'+data.md5+' td.agent_type__'+data.agent_type+' div.agent_work');
 					//const $agent_md5_td = $('td#'+data.md5+' td.'+data.agent_type+' div.work');
 					$agent_work_div.append("<div>"+data.msg+"</div>");

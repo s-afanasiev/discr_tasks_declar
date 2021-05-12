@@ -199,21 +199,23 @@ function SocketIoHandlers(ioWrap){
 	this.tech_events = ['connect', 'disconnect', 'compareManifest', 'same_md5_agents', 'updateFiles', 'startPartner', 'killPartner', 'identifiers', 'update_folder', 'partner_leaved', 'partner_appeared'];
 }
 //@-------------------------------
+//@ run method of this Object listening to 'compareManifest' event, which receives 'remote_mans' structure. After getting this structure, the method 'run' accesses the object 'dirStructure' to receive to get the structure of the local manifest. Then, we using the object 'dirsComparing' to compare the manifests. The ultimate goal is to inform the Master.js about the presence or absence of changes.
 function ComparedManifest(dirStructure, dirsComparing, settings_){
     this.dirStructure = dirStructure;
     this.dirsComparing = dirsComparing;
     this.curMans = [];
     this.is_keep_old_files = true;
     this.settings = glob[settings_].read() || {}
+    console.log("ComparedManifest this.settings=",this.settings);
     let loc_contr = this.settings.local_dir_controller
     loc_contr = (loc_contr.startsWith("/")) ? loc_contr : "/"+loc_contr;
-    let loc_other = this.settings.local_dir_other
-    loc_other = (loc_other.startsWith("/")) ? loc_other : "/"+loc_other;
+    //let loc_other = this.settings.local_dir_other
+    //loc_other = (loc_other.startsWith("/")) ? loc_other : "/"+loc_other;
     this.CONTROLLER_DIR =  __dirname + loc_contr;
-    this.OTHER_DIR =  __dirname + loc_other;
+    //this.OTHER_DIR =  __dirname + loc_other;
     const PATHS_DATA = [
-        {name: "controller", path: this.CONTROLLER_DIR},
-        {name: "other", path: this.OTHER_DIR}
+        {name: "controller", path: this.CONTROLLER_DIR}//,
+        //{name: "other", path: this.OTHER_DIR}
     ];
     this.is_timeout = true;
     //console.log("ComparedManifest.constr(): PATHS_DATA=",PATHS_DATA);
@@ -444,10 +446,10 @@ function UpdatedFiles(settings_, comparedManifest_){
     this.settings = glob[settings_].read() || {}
     let loc_contr = this.settings.local_dir_controller;
     loc_contr = loc_contr.startsWith('/') ? loc_contr : '/'+loc_contr;
-    let loc_other = this.settings.local_dir_other;
-    loc_other = loc_other.startsWith('/') ? loc_other : '/'+loc_other;
+    //let loc_other = this.settings.local_dir_other;
+    //loc_other = loc_other.startsWith('/') ? loc_other : '/'+loc_other;
     const CONTROLLER_DIR = __dirname + loc_contr;
-    const OTHER_DIR = __dirname + loc_other;
+    //const OTHER_DIR = __dirname + loc_other;
     const REMOTE_DIR = this.settings.remote_dir;
     this.is_keep_old_files = true;
     this.is_timeout = true;
@@ -549,7 +551,7 @@ function UpdatedFiles(settings_, comparedManifest_){
                     //@ Ignore Empty Dirs
                     if (!--pending) { resolve(err_names); }
                 }else{
-                    const loc_file = (update_fold_lvl2.endsWith("controller")) ? CONTROLLER_DIR+file_info[FNAME] : OTHER_DIR+file_info[FNAME];
+                    const loc_file = (update_fold_lvl2.endsWith("controller")) ? CONTROLLER_DIR+file_info[FNAME] : "./"+file_info[FNAME];
                     const rem_file = REMOTE_DIR+update_fold_lvl2+file_info[FNAME] ;
                     console.log("copy_files() loc_file=",loc_file);
                     console.log("copy_files() rem_file=",rem_file);
@@ -609,10 +611,10 @@ function UpdatedDiffFiles(settings_){
     this.settings = glob[settings_].read() || {}
     let loc_contr = this.settings.local_dir_controller;
     loc_contr = loc_contr.startsWith('/') ? loc_contr : '/'+loc_contr;
-    let loc_other = this.settings.local_dir_other;
-    loc_other = loc_other.startsWith('/') ? loc_other : '/'+loc_other;
+    //let loc_other = this.settings.local_dir_other;
+    //loc_other = loc_other.startsWith('/') ? loc_other : '/'+loc_other;
     const CONTROLLER_DIR = __dirname + loc_contr;
-    const OTHER_DIR = __dirname + loc_other;
+    //const OTHER_DIR = __dirname + loc_other;
     const REMOTE_DIR = this.settings.remote_dir;
     this.is_keep_old_files = true;
     this.is_timeout = true;
@@ -708,7 +710,7 @@ function UpdatedDiffFiles(settings_){
                     //@ Ignore Empty Dirs
                     if (!--pending) { resolve(err_names); }
                 }else{
-                    const loc_file = (update_fold_lvl2.endsWith("controller")) ? CONTROLLER_DIR+file_info[FNAME] : OTHER_DIR+file_info[FNAME];
+                    const loc_file = (update_fold_lvl2.endsWith("controller")) ? CONTROLLER_DIR+file_info[FNAME] : "./"+file_info[FNAME];
                     const rem_file = REMOTE_DIR+update_fold_lvl2+file_info[FNAME] ;
                     console.log("copy_files() loc_file=",loc_file);
                     console.log("copy_files() rem_file=",rem_file);

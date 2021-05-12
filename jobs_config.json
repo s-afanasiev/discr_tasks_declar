@@ -1,19 +1,21 @@
 {
-    "init": ["disk_space_1", "disk_space_2", "nvidia_1"],
+    "init": ["disk_space_lte_25", "disk_space_lte_30", "nvidia_exist"],
     "jobs": {
-        "disk_space_1": {"type":"disk_space", "condition": "lte 1 gb", "action":"clean_space_1"},
-        "disk_space_2": {"type":"disk_space", "condition": "gte 100 gb", "action":"increase_traffic"},
-        "disk_space_3": {"type":"disk_space", "condition": "gte 100 gb", "action":"increase_traffic", "interval":9999999},
-        "nvidia_1":{"type":"nvidia_smi", "condition": "is_exist", "action":"do_render"},
+        "disk_space_lte_25": {"type":"disk_space", "condition": "lte 20 gb", "action":"proc_count_calc", "interval":30000},
+        "disk_space_lte_30": {"type":"disk_space", "condition": "lte 30 gb", "action":"proc_count_notepad", "interval":40000},
         "clean_space_1":{"type":"exec_cmd", "type_param":"clean.bat", "condition": "is_done", "action":"proc_count_1"},
-        "proc_count_1": {"type":"proc_count_by_name", "type_param":"notepad", "condition": "is_one", "action":"do_render_2", "delay":50000},
+        "increase_traffic":{},
+        "nvidia_exist":{"type":"nvidia_smi", "condition": "is_exist", "action":"do_render"},
+        "proc_count_notepad": {"type":"proc_count", "type_param":"notepad", "condition": "is_1", "action":"stop_lte_25"},
+        "proc_count_calc": {"type":"proc_count", "type_param":"calc.exe", "condition": "is_1", "action":"disk_space_lte_25", "delay": 60000},
+        "do_render": {},
         "do_render_2": {"type":"exec_cmd", "type_param":"3dmax.exe"},
         "proc_count_2": {"type":"proc_count", "condition": "gte", "action":"stop_1", "interval":30000},
-        "stop_1": {"type":"stop", "type_param":"disk_space_1"}
+        "stop_lte_25": {"type":"stop", "type_param":"disk_space_lte_25"}
     },
-    "JOBS_DICTIONARY":[
+    "jobs_dictionary":[
         "this is description block",
-        {"disk_space":"return disk space on disk by disk letter. Answer keys: {free, size}"},
+        {"disk_space":"return disk space on disk by disk letter. Answer = {free: 7123123, size: 100000000}"},
         {"proc_count":"count of some processess by name, e.g. 'notepad'"},
         {"exec_cmd":"execute arbitrary command"},
         {"nvidia_smi":"info about nvidia cards. ANswer is: info={gpu_id, gpu_name, bus_id, fan, temp, mem_use}"},

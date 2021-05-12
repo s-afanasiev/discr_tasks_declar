@@ -1,5 +1,5 @@
 /node_modules/
-/agents/node_modules/
+/agents/
 /sql mm test/
 /log/
 *.pptx
