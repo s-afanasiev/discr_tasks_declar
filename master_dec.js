@@ -145,12 +145,18 @@
             })
             //@ msg from external source to host cluster
             this.socket.on('kick', (msg)=>{
-                console.log("ExternalSource control_msg: ",msg);
-                this.updatableHostCluster.gui_ctrl(msg);
+                //console.log("ExternalSource control_msg: ",msg);
+                this.updatableHostCluster.gui_ctrl(msg, true);
             })
         }
         //@ msg from inside host cluster to external source
         this.outcome_burp=(data)=>{
+            //@ from HostCluster: data={ msg:'host_table', table: [{md5:""},{md5:""}] };
+            if(this.socket){
+                this.socket.emit('burp', data);
+            }
+        }
+        this.gui_news=(data)=>{
             //@ from HostCluster: data={ msg:'host_table', table: [{md5:""},{md5:""}] };
             if(this.socket){
                 this.socket.emit('burp', data);
@@ -186,6 +192,7 @@
         this.gui_news=(data)=>{
             //@ from HostCluster: data={ msg:'host_table', table: [{md5:""},{md5:""}] };
             if(this.socket){
+                //console.error("AAAAAAAAAAAAA", data)
                 this.socket.emit('gui_news', data);
             }
         }
@@ -246,11 +253,12 @@
         this.propagateManifestDiff=(mans_diff)=>{
             this.hostCluster.propagateManifestDiff(mans_diff);
         }
-        this.gui_ctrl=(msg)=>{
+        this.gui_ctrl=(msg, is_ext_kick)=>{
+            //console.log("UpdatableHostCluster.gui_ctrl(): msg=", msg);  
             if(msg == "switch_manifest_off"){
                 this.manifest.switch_off();
             }else{
-                this.hostCluster.gui_ctrl(msg);
+                this.hostCluster.gui_ctrl(msg, is_ext_kick);
             }
         }
     }
@@ -659,7 +667,8 @@
             _hosts_list.push(agentObj);
             return agentObj;
         }
-        this.gui_ctrl=(msg)=>{
+        this.gui_ctrl=(msg, is_ext_kick)=>{
+            const recipient = (is_ext_kick) ? this.externalSource : this.browserIoClients;
             if(typeof msg != "object"){
                 return console.error("HostCluster.gui_ctrl() msg is not an Object: ",msg);
             }
@@ -671,10 +680,10 @@
                     res = Object.assign(res, add_info);
                     return res;
                 });
-                this.browserIoClients.gui_news({msg:'host_table', table: result});
+                recipient.gui_news({msg:'host_table', table: result});
             }else if(msg.type=="apply_updates"){
                 if(msg.value == "check"){
-                    this.browserIoClients.gui_news({msg:'apply_updates', value: this.SETTINGS.apply_updates});
+                    recipient.gui_news({msg:'apply_updates', value: this.SETTINGS.apply_updates});
                 }else{
                     let is_apply = this.SETTINGS.apply_updates;
                     if(msg.value == "off"){
@@ -689,19 +698,23 @@
                             if (err){
                                 console.log("HostCluster.gui_ctrl(): fail to rewrite settings file:",err);
                             }
-                            this.browserIoClients.gui_news({msg:'apply_updates', value: this.SETTINGS.apply_updates});
+                            recipient.gui_news({msg:'apply_updates', value: this.SETTINGS.apply_updates});
                         });
                     }
                 }
-            }else if(msg.type=="list_future_jobs"||msg.type=="drop_future_jobs"){
-                console.log("HostCluster.gui_ctrl(): msg=",msg);    
+            }else if(msg.type=="list_future_jobs"||msg.type=="drop_future_jobs"){    
                 let host_matched = _hosts_list.filter(host=>{
+                    console.log("HostCluster.gui_ctrl(): host md5=", host.commonMd5());
+                    console.log("HostCluster.gui_ctrl(): msg.host_id=", msg.host_id);
                     return host.commonMd5() == msg.host_id;
                 });
+                if(host_matched.length == 0){
+                    const existing_hosts = _hosts_list.map(host=>host.commonMd5());
+                    console.error("HostCluster.gui_ctrl(): no matches hosts by md5, existing_hosts =", existing_hosts);}
                 if(host_matched.length > 1){console.error("HostCluster.gui_ctrl(): on external cmd about future jobs there are more than one match with md5=", msg.host_id);}
                 console.log("HostCluster.gui_ctrl(): host_matched=",host_matched);
                 host_matched.forEach(host=>{
-                    host.gui_ctrl(msg);
+                    host.gui_ctrl(msg, is_ext_kick);
                 });
             }
         }
@@ -797,7 +810,7 @@
                 hostCluster
 			);
 		}
-        this.gui_ctrl=(msg)=>{
+        this.gui_ctrl=(msg, is_ext_kick)=>{
             if(msg == 'host_table'){
                 const result = {};
                 if(this.launcher.isOnline()){
@@ -817,7 +830,7 @@
                 return result;
             }else if(msg.type=="list_future_jobs"||msg.type=="drop_future_jobs"){
                 if(this.controller){
-                    this.controller.gui_ctrl(msg);
+                    this.controller.gui_ctrl(msg, is_ext_kick);
                 }
             }else return {};
         }
@@ -1230,7 +1243,7 @@
                 this.host.gui_news(agent_msg);
             }
         }
-        this.gui_ctrl=(msg)=>{
+        this.gui_ctrl=(msg, is_ext_kick)=>{
             console.log("Controller.gui_ctrl(): msg=", msg);
             if(msg.type=="list_future_jobs"){
                 this.normalControllerMode.list_future_jobs(list=>{
@@ -1658,7 +1671,7 @@
                     new JobsInit(),
                     new ExtendedJob(),
                     new IntervalJobs(),
-                    new DelayedJobs()
+                    new DelayedJobs().init()
                 ).run(this.schedule, this.controller, this.agent_socket);
             }
 		}
@@ -1698,12 +1711,13 @@
         this.list_future_jobs=(cb)=>{
             const interval_list = this.intervalJobs.list_future_jobs();
             const delayed_list = this.delayedJobs.list_delayed_jobs();
-            console.error("JobsChaining.list_future_jobs(): delayed_list=",delayed_list, "typeof=", typeof delayed_list);
+            console.log("JobsChaining.list_future_jobs(): delayed_list=",delayed_list, "typeof=", typeof delayed_list);
             console.log("JobsChaining.list_future_jobs(): interval and delay list lengths=",interval_list.length, delayed_list.length);
             const list = interval_list.concat(delayed_list);
             console.log("JobsChaining.list_future_jobs(): future jobs list=",list);
             //@ answer to 'Jobs' object
             if(typeof cb == 'function'){cb(list)}
+            else{console.error("JobsChaining.list_future_jobs(): cb is not a function!")}
         }
         const send_next_job=(next_job_id)=>{
             //@ e.g. next_job_id = 'stop_lte_25'
@@ -1868,7 +1882,21 @@
         }
     }
     function DelayedJobs(){
-        let _delayed_jobs = [];
+        const _delayed_jobs = [];
+        const check_interval = 5000;
+        this.init=()=>{
+            setInterval(()=>{
+                for(let i=0, l=_delayed_jobs.length; i<l; i++){
+                    const job_key= Object.keys(_delayed_jobs[i])[0];
+                    //console.error("DelayedJobs.init(): job=",_delayed_jobs[i][job_key].delay_now())
+                    if(_delayed_jobs[i][job_key].delay_now() < 0){
+                        _delayed_jobs.splice(i,1);
+                        i--; l--;
+                    }
+                }
+            }, check_interval);
+            return this;
+        }
         this.add=(job_key, Job)=>{
             const temp = {}
             temp[job_key] = Job;
@@ -1976,6 +2004,7 @@
         this.delay_now=()=>{
             if(this.job_tuple.delay){
                 const timelapse = new Date().getTime() - _timeout_start_date;
+                console.log("OneJob: delay_now(): _timeout_start_date=",_timeout_start_date,"timelapse=",timelapse,"this.job_tuple.delay=",this.job_tuple.delay);
                 return this.job_tuple.delay - timelapse;
             }else{
                 return 0;

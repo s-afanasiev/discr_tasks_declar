@@ -29,6 +29,7 @@
 			var endvr_server_address = "http://192.168.15.240:55999";
 			var global_agent_table;
 			var server_;
+			var htCon = new HtmlConstr();
 			//FRESH:0, SENT:1, GOT:2, DONE:3, EXTRA:4, ERR:5, BLOCKED:6, T_OUT:7,
 			var TSTATES = ["FRESH", "SENT", "GOT", "DONE", "EXTRA", "ERR", "BLOCKED", "T_OUT", "T_OUT2", "DROPPED"];
 			onload = function()
@@ -194,7 +195,8 @@
 				});
 				server_.on('gui_news', function(data){
 					if(data.msg == 'host_table'){
-						const a = this.host_table(data);
+						console.log("on 'host_table' data=",data);
+						this.host_table(data);
 					}
 					else if(data.msg == "host_born"){
 						this.host_born(data);
@@ -341,15 +343,15 @@
 			function FutureJobsButton(server_socket, host_md5){
 				this.pressed = false;
 				this.$a = undefined;
-				this.draw=()=>{
-					const a = "<div id='future_jobs_btn' style='width:90%; height:90%; background-color:lightgrey; cursor:pointer;'>"+"get future jobs"+"</div>";
+				this.make=()=>{
+					const a = "<div class='future_jobs_btn' style='width:90%; height:90%; background-color:lightgrey; cursor:pointer;'>"+"get future jobs"+"</div>";
 					this.$a = $(a);
 					this.$a.click(this.button_handler);
 					//return a;
 					return this.$a;
 				}
 				this.button_handler=()=>{
-					server_.emit("gui_ctrl", {type:"list_future_jobs", host_id: host_md5});
+					server_socket.emit("gui_ctrl", {type:"list_future_jobs", host_id: host_md5});
 				}
 			}
 			function HostTable(server_){
@@ -399,16 +401,40 @@
 					a += "</tr>";
 					a += "</table>";
 					$("#"+"main_div").empty().append(a);
+					$("#"+"main_div").on('click', (ev)=>{
+						let td_parent = ev.target.parentElement;
+						while(td_parent.className != "host"){
+							td_parent = td_parent.parentElement
+						}
+						if(td_parent.tagName == "TD" && td_parent.id){
+							const host_id = String(td_parent.id).split("__")[1];
+							console.log("host_id: ", host_id);
+							this.server_.emit('gui_ctrl', {type:'list_future_jobs', host_id:host_id});
+						}
+						//const $parent = $(ev.target.parentElement);
+						//console.log("$parent: ", $parent);
+						//console.log("THIS: ", this);
+					})
 				}
-				//@ event 'host_born' because new launcher or controller has connected
+				this.host_table_2=(data)=>{
+					this.cur_row = 0;
+					this.cur_col_index = 0;
+					const trs = htCon.trs({max_td_in_tr: 3});
+					$("#"+"main_div").empty().append(
+						htCon.table().append(
+
+						)
+					);
+				}
+				//@ event 'host_born' happens when new launcher or controller has connected
 				this.host_born=(data)=>{
 					//@ data={msg: "host_born", md5: "6e8bc6f1e3ef10adf9dd98617c133110", creator_type:"launcher", creator_pid:7742, creator_apid:0}
 					console.log("host_born()...");
 					const a_host = one_host(data);
 					const $a_host = $(a_host);
-					const $futureJobsBtn = new FutureJobsButton(this.server_, data.md5).draw();
+					const $futureJobsBtn = new FutureJobsButton(this.server_, data.md5).make();
 					console.log("futureJobsBtn="+JSON.stringify($futureJobsBtn));
-					$("div#future_jobs_btn_dock", $a_host).empty().append($futureJobsBtn);
+					$("div.future_jobs_btn_dock", $a_host).empty().append($futureJobsBtn);
 					//@-----Add TD with Host info to Current or New Line of Table----------
 					this.cur_col_index = this.cur_col_index + 1;
 					if(this.cur_col_index >= this.MAX_WIDTH){
@@ -427,11 +453,12 @@
 				}
 				const one_host=(data)=>{
 					let a = "";
+
 					a += "<td valign='top' class = 'host' id='md5__"+data.md5+"'>";
 						a +="<table style = 'border:1px solid red; width:100%;'>";
 							a +="<tr><td colspan = '2'>";
 								a += "host : <b>"+data.md5+"</b>";
-								a += "<div id='future_jobs_btn_dock' style='width:100px; height:30px; background-color:#ddf; cursor:pointer;'></div>";
+								a += "<div class='future_jobs_btn_dock' style='width:100px; height:30px; background-color:#ddf; cursor:pointer;'>get future jobs</div>";
 							a +="</td></tr>";
 							a +="<tr class = 'agents'>";
 								a +="<td class = 'agent_type__launcher'>"
@@ -501,6 +528,30 @@
 			}
 			function ControllerOps(){
 				//@ this is new window caused by click on controller <TD> in GUI
+			}
+			function HtmlConstr(){
+				this.table=()=>{
+					const a = "<table border='1'></table>";
+					return $(a);
+				}
+				this.tr=()=>{
+					const a = "<tr></tr>";
+					return $(a);
+				}
+				this.td=()=>{
+					const a = "<td></td>";
+					return $(a);
+				}
+				this.btn=(name)=>{
+					name = name || "this is button";
+					const a = "<button style='height:100px; width:200px; cursor:pointer;'>"+name+"</button>";
+					const $a = $(a);
+					$a.click(button_handler);
+					return $a;
+					function button_handler(){
+						alert("hy");
+					}
+				}
 			}
 		</script>
 		<style type="text/css">

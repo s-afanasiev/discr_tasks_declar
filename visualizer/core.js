@@ -8,7 +8,7 @@
 	//------------------------------------
 	function page_constructor(data_pointer)
 	{
-		console.log("page_constructor");
+		//console.log("page_constructor");
 		//$("#main_div").empty().append(a);
 		RENDER.ww = $(window).width();
 		RENDER.wh = $(window).height();
@@ -23,7 +23,7 @@
 		//@-----------------------------------------
 		$(document).bind("mousedown", function(mouse_ev){
 			window["document_last_ms"] = new Date().getTime();
-			console.log("mousedown: ID =", mouse_ev.target.id, ", ClassName =", mouse_ev.target.className);
+			//console.log("mousedown: ID =", mouse_ev.target.id, ", ClassName =", mouse_ev.target.className);
 			window["curr_elem_id"] = mouse_ev.target.id;
 			//- if not such class - then return empty string ""
 			window["curr_elem_class"] = mouse_ev.target.className;
@@ -47,7 +47,7 @@
 						window[custom_function](window["curr_elem_id"]);
 					}else{ console.log("couldn't find function: "+ custom_function); }
 				}
-				console.log("mouseup:", e.target.id);
+				//console.log("mouseup:", e.target.id);
 			}
 		});
 	}
@@ -69,7 +69,7 @@
 	
 	function main_bind(namespace)
 	{
-		console.log("main_bind");
+		//console.log("main_bind");
 		var {use_touch, use_mouse} = define_touch_and_mouse();
 		
 		window[namespace+"_last_ms"] = (new Date).getTime();
@@ -192,7 +192,7 @@
             if(window["nav-id_nav_input-agent_index"])
             {
               let agent_index = window["nav-id_nav_input-agent_index"];
-              console.log("AGENT INDEX = "+ agent_index + ", type = " + typeof agent_index);
+              //console.log("AGENT INDEX = "+ agent_index + ", type = " + typeof agent_index);
 
               make_agent_uniq_id_and_send_to_server(agent_index);
               

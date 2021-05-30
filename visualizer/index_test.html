@@ -1,0 +1,78 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" 
+							"http://www.w3.org/TR/html4/loose.dtd">
+		  
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+		<meta http-equiv="content-type" content="text/html;charset=UTF-8" />
+		<meta name="viewport" content="width=320, user-scalable=0, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0" />
+		<script type="text/javascript" src="core.js"></script>
+		<script type="text/javascript" src="engine.js"></script>
+		<title>Relay_Control</title>
+		
+	</head>
+	
+	<body style = 'margin:0px;' >	
+		<div id = "main_div" style = "position:relative; overflow:hidden; text-align: center; display: table-cell; vertical-align: middle;"></div>
+		<script>
+			function make_table(){
+				const a = "<table border='1'></table>";
+				return $(a);
+			}
+			function make_tr(){
+				 const a = "<tr></tr>";
+				 return $(a);
+			}
+			function make_td(){
+				const a = "<td></td>";
+				return $(a);
+			}
+			function make_btn(name){
+				name = name || "this is button";
+				const a = "<button style='height:100px; width:200px; cursor:pointer;'>"+name+"</button>";
+				const $a = $(a);
+				$a.click(button_handler);
+				return $a;
+				function button_handler(){
+					alert("hy");
+				}
+			}
+			
+			const $h = make_table().append(
+				make_tr().append(
+					make_td().append(
+						make_btn()
+					),
+					make_td().append(
+						"sdfgkljg"
+					)
+				),
+				make_tr().append(
+					make_td().append(
+						"ahuitelno"
+					)
+				),
+				make_tr().append(
+					for(let i=0; i<5; i++){
+						make_td().append(
+							"ahuitelno"
+						)
+					}
+				)
+			)
+			$("div#main_div").empty().append($h);
+			//$("div#main_div").empty().append(make_table());
+		</script>
+		<style type="text/css">
+			TABLE {
+			 /*border-collapse: collapse; */
+			 width: 90%; 
+			 height: 90%; 
+			}
+			TD {
+			 /*border: 1px solid black;*/
+			 text-align: center; /* Выравнивание по центру */
+			 padding: 4px; /* Поля вокруг текста */
+			}
+		</style>
+	</body>
+</html>
