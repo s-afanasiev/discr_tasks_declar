@@ -1,5 +1,5 @@
 'use strict'
-
+	console.log("file core.js connected!")
 	const EVENT_NAME = 'browser_commands';
 	const grey_pixel = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABAQMAAAAl21bKAAAAA1BMVEUAAACnej3aAAAAAXRSTlMz/za5cAAAAA pJREFUCNdjYAAAAAIAAeIhvDMAAAAASUVORK5CYII=";
 
@@ -14,6 +14,9 @@
 		RENDER.wh = $(window).height();
 		
 		bind_mouse_events_for_document();
+	}
+	function test_in_core_fu(){
+		console.log("test_in_core_fu test")
 	}
 	//привязка к элементу document
 	function bind_mouse_events_for_document(namespace){

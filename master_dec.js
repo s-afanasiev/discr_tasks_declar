@@ -64,6 +64,8 @@
                                 .with("/engine.js", new Page("/engine.js"))
                                 .with("/core.js", new Page("/core.js"))
                                 .with("/browser_detect.js", new Page("/browser_detect.js"))
+                                .with("/mytable.js", new Page("/mytable.js"))
+                                .with("/src/app.js", new Page("/src/app.js"))
                         ),
                         SETTINGS
                     )
@@ -1092,14 +1094,14 @@
             console.log("Launcher.welcomeAgent(): partner online:",partner.isOnline());
             //@------------------------------------
             this.switchOnline(true);
-            this.gui_news("agent_online");
+            this.gui_news({msg:"agent_work", value:"agent_online"});
 			this.listenForDisconnect();
 		}
         this.listenForDisconnect=()=>{
             this.agent_socket.once('disconnect', ()=>{
                 this.switchOnline(false);
                 console.log("LAUNCHER DISCONNECTED");
-                this.gui_news("agent_offline");
+                this.gui_news({msg:"agent_work", value:"agent_offline"});
                 this.host.agent_disconnected(this.agent_ids.ag_type);
                 this.agent_socket = undefined;
             });
@@ -1108,7 +1110,7 @@
             console.log("Launcher.compareCurManifest(): man=", man);
             return new Promise((resolve,reject)=>{
                 this.switchUpdateMode(true);
-                this.gui_news("update mode on");
+                this.gui_news({msg:"agent_work", value:"update mode on"});
                 const man_for_launcher = {};
                 man_for_launcher.controller = man.controller;
                 man_for_launcher.other = man.other;
@@ -1119,7 +1121,7 @@
                     reject(err);
                 }).finally(()=>{
                     this.switchUpdateMode(false);
-                    this.gui_news("update mode off");
+                    this.gui_news({msg:"agent_work", value:"update mode off"});
                 })
             });
         }
@@ -1129,7 +1131,7 @@
             return new Promise((resolve,reject)=>{
                 if(this.partner && !this.partner.isSpecialMode()){
                     this.switchUpdateMode(true);
-                    this.gui_news("update mode on");
+                    this.gui_news({msg:"agent_work", value:"update mode on"});
                     const mans_diff_for_launcher = {};
                     mans_diff_for_launcher.controller = mans_diff.controller;
                     mans_diff_for_launcher.other = mans_diff.other;
@@ -1140,11 +1142,11 @@
                         reject({is_patched: false, error: err});
                     }).finally(()=>{
                         this.switchUpdateMode(false);
-                        this.gui_news("update mode off");
+                        this.gui_news({msg:"agent_work", value:"update mode off"});
                     })
                 }else{
                     console.log("Launcher.propagateManifestDiff(): can not update the Controller in Special mode");
-                    this.gui_news("can not update the Controller in Special mode");
+                    this.gui_news({msg:"agent_work", value:"can not update the Controller in Special mode"});
                     resolve({is_patched: false, details: "special mode"});
                 }
             });
@@ -1204,7 +1206,7 @@
             this.mapped_mans_snapshot = mapped_mans_snapshot;
             this.partner = partner;
             this.switchOnline(true);
-            this.gui_news("agent_online");
+            this.gui_news({msg:"agent_work", value:"agent_online"});
             this.listenForDisconnect();
             this.firstComparingMappedMans(agent_socket, mapped_mans_snapshot).then(res=>{
                 console.log("Controller.firstComparingMappedMans() res =", res);
@@ -1217,7 +1219,7 @@
                 this.switchOnline(false);
                 console.log("CONTROLLER with md5=",this.agent_ids.md5,", DISCONNECTED");
                 //@ Todo: higher at the host level - notify externalSource object
-                this.gui_news("agent_offline");
+                this.gui_news({msg:"agent_work", value:"agent_offline"});
                 this.host.agent_disconnected(this.agent_ids.ag_type);
                 this.normalControllerMode.drop_future_jobs();
                 //this.specialControllerMode.drop_future_jobs();
@@ -1259,7 +1261,7 @@
             console.log("Controller.compareCurManifest(): man=", man);
             return new Promise((resolve,reject)=>{
                 this.switchUpdateMode(true);
-                this.gui_news("update mode on");
+                this.gui_news({msg:"agent_work", value:"update mode on"});
                 const man_for_controller = {};
                 man_for_controller.launcher = man.launcher;
                 this.agentUpdateChain.instance(this, man_for_controller).run(this.socketio(), this.partner).then(res=>{
@@ -1268,7 +1270,7 @@
                     reject(err);
                 }).finally(()=>{
                     this.switchUpdateMode(false);
-                    this.gui_news("update mode off");
+                    this.gui_news({msg:"agent_work", value:"update mode off"});
                     //this.doNormalWork();
                 })
             });
@@ -1276,7 +1278,7 @@
         this.propagateManifestDiff=(mans_diff)=>{
             return new Promise((resolve,reject)=>{
                 this.switchUpdateMode(true);
-                this.gui_news("update mode on");
+                this.gui_news({msg:"agent_work", value:"update mode on"});
                 const mans_diff_for_controller = {};
                 mans_diff_for_controller.launcher = mans_diff.launcher;
                 new AgentUpdateWithoutCompare(this, mans_diff_for_controller).run(this.socketio(), this.partner).then(res=>{
@@ -1285,7 +1287,7 @@
                     reject({is_patched: false, error: err});
                 }).finally(()=>{
                     this.switchUpdateMode(false);
-                    this.gui_news("update mode off");
+                    this.gui_news({msg:"agent_work", value:"update mode off"});
                     //this.doNormalWork();
                 })
             });
@@ -1293,7 +1295,7 @@
         this.firstComparingMappedMans=(agent_socket, mapped_mans_snapshot)=>{
             //@ {"x":{dst_path:"C:/Temp", man:[[f1], [f2]]}}
             return new Promise((resolve,reject)=>{
-                this.gui_news("first doing mapped manifestos changes");
+                this.gui_news({msg:"agent_work", value:"first doing mapped manifestos changes"});
                 const EV_NAME = "firstComparingMappedMans";
                 const resolve_handler = function(res){resolve(res);}
                 agent_socket.emit(EV_NAME, mapped_mans_snapshot).once(EV_NAME, resolve_handler);
@@ -1305,7 +1307,7 @@
         }
         this.propagateMappedMansDiff=(mans_diff)=>{
             return new Promise((resolve,reject)=>{
-                this.gui_news("doing mapped manifestos changes");
+                this.gui_news({msg:"agent_work", value:"doing mapped manifestos changes"});
                 const EV_NAME = "updateMappedPaths";
                 const resolve_handler = function(res){resolve(res);}
                 this.agent_socket.emit(EV_NAME, mans_diff).once(EV_NAME, resolve_handler);
@@ -1318,11 +1320,11 @@
         this.doNormalWork=()=>{
             if(this.isSpecialMode()){
                 //@ Special Mode: for example some Render operation.
-                this.gui_news("resume doing work in a special mode");
+                this.gui_news({msg:"agent_work", value:"resume doing work in a special mode"});
                 this.specialControllerMode.run(this, this.agent_socket);
             }else{
                 //@ Normal Mode: 'diskSpace' and so on...
-                this.gui_news("resume doing work in a normal mode");
+                this.gui_news({msg:"agent_work", value:"resume doing work in a normal mode"});
                 this.normalControllerMode.run(this, this.agent_socket);
             }
         }
@@ -1377,17 +1379,17 @@
                         if(partner && partner.isOnline()){
                             //@ TODO: May be TIMEOUT HERE on 100 ms ???
                             const extended_msg = Object.assign(chain_msg, {updated_msg:"partner is already started"});
-                            creator.gui_news("partner is already started");
+                            creator.gui_news({msg:"agent_work", value:"partner is already started"});
                             resolve(extended_msg);
                         }else{
-                            creator.gui_news("starting the partner...");
+                            creator.gui_news({msg:"agent_work", value:"starting the partner..."});
                             this.start_partner(socket).then(start_msg=>{
                                 console.log("StartingPartner.run(): start_partner().then: res= ",start_msg);
                                 const extended_msg = Object.assign(chain_msg, start_msg);
-                                creator.gui_news("the partner is started");
+                                creator.gui_news({msg:"agent_work", value:"the partner is started"});
                                 resolve(extended_msg);
                             }).catch(err=>{
-                                creator.gui_news("fail to start the partner: "+err);
+                                creator.gui_news({msg:"agent_work", value:"fail to start the partner: "+err});
                                 reject("StartingPartner: cant start partner. "+err);
                             });
                         }
@@ -1424,17 +1426,17 @@
             console.log("UpdatedDiffFiles.run() creator is ", creator.agentType());
             return new Promise((resolve,reject)=>{
                 this.killingPartner.run(socket, creator, partner, mans_diff).then(chain_msg=>{
-                    creator.gui_news("Starting update the files");
+                    creator.gui_news({msg:"agent_work", value:"Starting update the files"});
                     console.log("UpdatedDiffFiles.run() before update_files() calling");
                     this.update_diff_files(socket, mans_diff).then(update_msg=>{
                         console.log("UpdatedDiffFiles.run() after update_files update_msg=",update_msg);
-                        creator.gui_news("the updating files was replaced");
+                        creator.gui_news({msg:"agent_work", value:"the updating files was replaced"});
                         //@ expect that update_msg will be equals {is_updated:true}
                         const extended_msg = Object.assign(chain_msg, update_msg);
                         console.log("UpdatedDiffFiles.run() extended_msg=",extended_msg);
                         resolve(extended_msg);
                     }).catch(err=>{
-                        creator.gui_news("fail to update the files: "+err);
+                        creator.gui_news({msg:"agent_work", value:"fail to update the files: "+err});
                         reject("UpdatedDiffFiles: "+err);
                     });
                 }).catch(err=>{
@@ -1462,16 +1464,16 @@
             return new Promise((resolve,reject)=>{
                 this.killingPartner.run(socket, creator, partner, manifest).then(chain_msg=>{
                     if(chain_msg.is_changes){
-                        creator.gui_news("Starting update the files");
+                        creator.gui_news({msg:"agent_work", value:"Starting update the files"});
                         console.log("UpdatingFiles.run() before update_files() calling");
                         this.update_files(socket, manifest).then(update_msg=>{
                             console.log("UpdatingFiles.run() after update_files update_msg=",update_msg);
-                            creator.gui_news("the updating files was replaced");
+                            creator.gui_news({msg:"agent_work", value:"the updating files was replaced"});
                             const extended_msg = Object.assign(chain_msg, update_msg);
                             console.log("UpdatingFiles.run() extended_msg=",extended_msg);
                             resolve(extended_msg);
                         }).catch(err=>{
-                            creator.gui_news("fail to update the files: "+err);
+                            creator.gui_news({msg:"agent_work", value:"fail to update the files: "+err});
                             reject("UpdatingFiles: "+err);
                         });
                     } else{
@@ -1527,14 +1529,14 @@
                 const cond2 = (partner) ? partner.isOnline() : false; //partner must be online, otherwise nothing to kill
                 const cond3 = (creator.agentType()=="launcher") ? partner.isSpecialMode() : false; // if special mode kinda 'render' when we can't kill
                 if(cond2 & !cond3){
-                    creator.gui_news("sending kill signal with pid "+partner.agentPid());
+                    creator.gui_news({msg:"agent_work", value:"sending kill signal with pid "+partner.agentPid()});
                     console.log("KillingPartner: sending kill signal, pid=",partner.agentPid());
                     this.kill_partner(socket, partner.agentPid(), partner.agentPpid()).then(kill_msg=>{
-                        creator.gui_news("the partner was killed");
+                        creator.gui_news({msg:"agent_work", value:"the partner was killed"});
                         resolve(kill_msg);
                         //resolve(Object.assign(kill_msg, {is_changes: true}));
                     }).catch(err=>{
-                        creator.gui_news("fail to kill the partner: "+err);
+                        creator.gui_news({msg:"agent_work", value:"fail to kill the partner: "+err});
                         reject(err);
                     })
                 }else{
@@ -1571,15 +1573,15 @@
                     const cond3 = (creator.agentType()=="launcher") ? partner.isSpecialMode() : false; // if special mode kinda 'render' when we can't kill
                     console.log("KillingPartner: conditions:",cond1,cond2,!cond3);
                     if(cond1 & cond2 & !cond3){
-                        creator.gui_news("sending kill signal with pid "+partner.agentPid());
+                        creator.gui_news({msg:"agent_work", value:"sending kill signal with pid "+partner.agentPid()});
                         console.log("KillingPartner: sending kill signal, pid=",partner.agentPid());
                         this.kill_partner(socket, partner.agentPid(), partner.agentPpid()).then(kill_msg=>{
                             //@ TODO: data like 'is_error' can get lost by next chained msg
-                            creator.gui_news("the partner was killed");
+                            creator.gui_news({msg:"agent_work", value:"the partner was killed"});
                             const extended_msg = Object.assign(compare_msg, kill_msg);
                             resolve(extended_msg);
                         }).catch(err=>{
-                            creator.gui_news("fail to kill the partner: "+err);
+                            creator.gui_news({msg:"agent_work", value:"fail to kill the partner: "+err});
                             reject(err);
                         })
                     }else{
@@ -1616,11 +1618,11 @@
                     is_ok = true;
                     resolve(compare_msg);
                 }
-                creator.gui_news("sending Manifest to compare...");
+                creator.gui_news({msg:"agent_work", value:"sending Manifest to compare..."});
                 socket.emit('compareManifest', manifest).once('compareManifest', resolve_handler);
                 setTimeout(()=>{
                     if(!is_ok){ 
-                        creator.gui_news("CompareManifest: timeout while comparing the Manifest"); 
+                        creator.gui_news({msg:"agent_work", value:"CompareManifest: timeout while comparing the Manifest"}); 
                         socket.removeListener("compareManifest",resolve_handler);
                         reject("CompareManifest timeout. ");
                     }
@@ -1882,7 +1884,7 @@
         }
     }
     function DelayedJobs(){
-        const _delayed_jobs = [];
+        let _delayed_jobs = [];
         const check_interval = 5000;
         this.init=()=>{
             setInterval(()=>{
@@ -1973,7 +1975,8 @@
             if(typeof this.controller.gui_news != 'function'){
                 console.error("OneJob.answer_handler(): this.controller.gui_news =", this.controller.gui_news);
             }
-            this.controller.gui_news("'"+this.job_id+"' job done");
+            const msg_for_controller = "'"+this.job_id+"' job done";
+            this.controller.gui_news({msg:"agent_work", value:msg_for_controller});
             console.log("OneJob.run(): this.is_job_minimal_done =", this.is_job_minimal_done);
             this.is_job_minimal_done = true;
             console.log("OneJob.run(): this.is_job_minimal_done(2) =", this.is_job_minimal_done);
@@ -2153,7 +2156,6 @@
             return this;
         }
         this.asText=async function(request_path, response){
-            
             let _body = "404: page not found";
             for(let r in _map){
                 if(request_path === r){

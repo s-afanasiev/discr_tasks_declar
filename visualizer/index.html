@@ -11,7 +11,8 @@
 		<script type="text/javascript" src="engine.js"></script>
 		<script type="text/javascript" src="core.js"></script>
 		<script type="text/javascript" src="browser_detect.js"></script>
-		
+		<script type="text/javascript" src="mytable.js"></script>
+		<script type="text/javascript" src="/src/app.js"></script>
 	</head>
 	
 	<body style = 'margin:0px;' >	
@@ -27,50 +28,28 @@
 			//document.body.onselectstart = function(){return false;}
 			//document.body.ondragstart = function(){return false;}			
 			var endvr_server_address = "http://192.168.15.240:55999";
-			var global_agent_table;
 			var server_;
+			//@ нигде не используется, просто тестирование динамического создания dom-объектов
 			var htCon = new HtmlConstr();
 			//FRESH:0, SENT:1, GOT:2, DONE:3, EXTRA:4, ERR:5, BLOCKED:6, T_OUT:7,
 			var TSTATES = ["FRESH", "SENT", "GOT", "DONE", "EXTRA", "ERR", "BLOCKED", "T_OUT", "T_OUT2", "DROPPED"];
-			onload = function()
-			{
+			onload = function(){
 				console.log("onload");
 				//- syncronous function that connect to the web server by HTTP where it is running, for example localhost:55999
 				//-  and ask him about his socket.io address throw ajax and then assign it to endvr_server_address
-				get_socket_io_address()
+				endvr_server_address = get_socket_io_address()
 				//- define user browser
 				BrowserDetect.init();
 				//- function in core.js file, which bind mouse events 'mousedown', 'mouseup' for document
 				page_constructor();
-				//- connect to server by socket.io and listen 'agent_table' event to receive info about agents and their tasks
-				connect_to_server();
-				//- place 2 DIV blocks:
-				//-		'nav_main' - navigation panel occupying the 10% part from the top
-				//-		'main_div' - to display Agents table
-				var ww = $(window).width();
-				var wh = $(window).height();
-				$("#"+"nav_main").width(ww).height(wh*.1).css("left", 0+"px").css("top", 0+"px");
-
-				//.css("border","1px solid orange")
-				//ui_fill_nav_menu({id:"nav_main", hang_listeners_on_inputs: true});
-				$("#"+"main_div").width(ww).height(parseInt(wh*.9)).css("left", parseInt(0)+"px").css("top", parseInt(0)+"px");
-				$("#"+"main_div").bind({
-					click: function() {},
-					mouseenter: function() 
-					{
-						$("#"+"main_div").css("backgroundColor", "#fafafa");
-					},
-					mouseleave: function() 
-					{
-						$("#"+"main_div").css("backgroundColor", "#ffffff");
-					}
-				});
+				set_main_divs_sizes();
+				bind_mouse_enter_on_main_div();
+				//@ connect to server by socket.io and listen 'agent_table' event to receive info about agents and their tasks
+				//connect_to_server();
+				app_run({window:this, socket_io_address: endvr_server_address, parent_id: "main_div"}); //app.js
 			}
 			window.onresize = function(){
-				var ww = $(window).width();
-				var wh = $(window).height();
-				$("#"+"nav_main").width(ww).height(wh*.1).css("left", 0+"px").css("top", 0+"px");
-				$("#"+"main_div").width(parseInt(ww*.9)).height(parseInt(wh*.9)).css("left", parseInt(0)+"px").css("top", parseInt(0)+"px");
+				set_main_divs_sizes();
 			};
 			function get_socket_io_address(){
 				// 1. Create new XMLHttpRequest object
@@ -86,6 +65,7 @@
 					console.log("master address:" + xhr.responseText );
 					endvr_server_address = xhr.responseText;
 				}
+				return endvr_server_address;
 			}
 			function get_socket_io_address_async(){
 				return new Promise((resolve, reject)=>{
@@ -110,18 +90,45 @@
 					}
 				});
 			}
+			function set_main_divs_sizes(){
+				//- place 2 DIV blocks:
+				//-		'nav_main' - navigation panel occupying the 10% part from the top
+				//-		'main_div' - to display Agents table
+				var ww = $(window).width();
+				var wh = $(window).height();
+				$("#"+"nav_main").width(ww).height(wh*.1).css("left", 0+"px").css("top", 0+"px");
+				//.css("border","1px solid orange")
+				//ui_fill_nav_menu({id:"nav_main", hang_listeners_on_inputs: true});
+				$("#"+"main_div").width(ww).height(parseInt(wh*.9)).css("left", parseInt(0)+"px").css("top", parseInt(0)+"px");
+				
+			}
+			function bind_mouse_enter_on_main_div(main_div_id){
+				$("#"+main_div_id).bind({
+					click: function() {},
+					mouseenter: function(){
+						$("#"+main_div_id).css("backgroundColor", "#fafaff");
+					},
+					mouseleave: function(){
+						$("#"+main_div_id).css("backgroundColor", "#ffffff");
+					}
+				});
+			}
 			var my_socket_id = "";
 			function connect_to_server()
 			{
 				server_ = io.connect(endvr_server_address, {query:{browser_or_agent:"browser"}});
 				//server_ = io.connect(endvr_server_address);
+				
 				const hostTable = new HostTable(server_);
 				const mainMenu = new MainMenu(server_);
+				const mainDiv = new MainDiv(server_);
 				server_.on('connect', function(){
 					console.log("connected");
 					server_.emit('get_socket_id',"");
 					mainMenu.init("#nav_board");
+					mainDiv.init();
 					$("#"+"main_div").append(hostTable.init());
+					set_listener_on_main_div(server_);
 					server_.emit('gui_ctrl', {type:'host_table'});
 				});
 				server_.on('disconnect', function(){
@@ -133,70 +140,10 @@
 					//alert("got_socket_id: " + msg);
 					my_socket_id = msg;
 				});
-				server_.on('agent_table', function(agent_table){
-					global_agent_table = agent_table;
-					var max_width = 4;
-					var cur_row_index = 0;
-					var cur_col_index = 0;
-					var a = "";
-					a += "<table style = 'width:100%; height:100%'>";
-					a += "<tr>";
-					for(var i = 0; i<agent_table.length; i++){
-						let agent_type = agent_table[i][0];
-						let agent_sid = agent_table[i][1];
-						let agent_md5 = agent_table[i][2];;
-						cur_col_index = cur_col_index + 1;
-						if(cur_col_index == max_width){
-							cur_col_index = 1;
-							a += "</tr><tr>";
-						}
-						a += "<td valign = 'top'>";
-							a +="<table style = 'border:1px solid red; width:100%;'>";
-								a +="<tr><td colspan = '3'>";
-									a += "agent : "+ i;
-								a +="</td></tr>";
-								a +="<tr><td colspan = '3' style = 'border-bottom:1px solid black;'>";
-									a += agent_table[i][0];
-								a +="</td></tr>";
-								a +="<tr><td colspan = '3' style='align: center'>";
-									a += RENDER.center_button("'disk_space'", agent_md5, agent_type);
-								a +="</td></tr>";
-								a +="<tr><td colspan = '3' style = 'border-bottom:1px solid black;'>";
-									let agent_tasklist = agent_table[i][7];
-								for(var j = 0; j< agent_tasklist.length; j++){
-									a +="<tr>";
-									a +="<td>";
-										let task_repeated = agent_tasklist[j][14];
-										let t_name = agent_tasklist[j][1];
-										if (task_repeated > 1){
-											let task_id = agent_tasklist[j][0];
-											let task_stage = agent_tasklist[j][2];
-											if ((task_stage == 0)||(task_stage == '0')){
-												a += RENDER.stop_button('stop', agent_md5, agent_type, task_id, t_name);
-											}
-										}
-									a +="</td>"
-									a +="<td>";
-										let task_name = agent_tasklist[j][1];
-										a += task_name + ": ";
-									a +="</td>"
-									a +="<td>";
-										let state = TSTATES[agent_tasklist[j][2]];
-										a += state;
-									a +="</td>"
-									a +="</tr>";
-								}
-							a +="</table>";
-						a += "</td>";	
-					}
-					a += "</tr>";
-					a += "</table>";
-					$("#"+"main_div").empty().append(a);
-				});
 				server_.on('gui_news', function(data){
 					if(data.msg == 'host_table'){
-						console.log("on 'host_table' data=",data);
-						this.host_table(data);
+						//console.log("on 'host_table' data=",data);
+						this.draw_host_table(data);
 					}
 					else if(data.msg == "host_born"){
 						this.host_born(data);
@@ -214,6 +161,27 @@
 						this.agent_work(data);
 					}
 				}.bind(hostTable));
+			}
+			function MainDiv(server_){
+				this.init=()=>{}
+			}
+			function set_listener_on_main_div(server_){
+				$("#"+"main_div").on('click', (ev)=>{
+						const target = ev.target;
+						if(target.className == "future_jobs_btn_dock"){
+							let td_parent = target.parentElement;
+							while(td_parent.className != "host"){
+								td_parent = td_parent.parentElement
+							}
+							if(td_parent.tagName == "TD" && td_parent.id){
+								const host_id = String(td_parent.id).split("__")[1];
+								console.log("host_id: ", host_id);
+								server_.emit('gui_ctrl', {type:'list_future_jobs', host_id:host_id});
+							}
+						}else{
+							console.log("target class=",target.className); 
+						}
+					});
 			}
 			function MainMenu(server_){
 				this.mainMenuTable=undefined;//draw
@@ -344,7 +312,7 @@
 				this.pressed = false;
 				this.$a = undefined;
 				this.make=()=>{
-					const a = "<div class='future_jobs_btn' style='width:90%; height:90%; background-color:lightgrey; cursor:pointer;'>"+"get future jobs"+"</div>";
+					const a = "<div class='future_jobs_btn' style='width:90%; height:90%; background-color:lightgrey; cursor:pointer;'>"+"future jobs"+"</div>";
 					this.$a = $(a);
 					this.$a.click(this.button_handler);
 					//return a;
@@ -401,29 +369,17 @@
 					a += "</tr>";
 					a += "</table>";
 					$("#"+"main_div").empty().append(a);
-					$("#"+"main_div").on('click', (ev)=>{
-						let td_parent = ev.target.parentElement;
-						while(td_parent.className != "host"){
-							td_parent = td_parent.parentElement
-						}
-						if(td_parent.tagName == "TD" && td_parent.id){
-							const host_id = String(td_parent.id).split("__")[1];
-							console.log("host_id: ", host_id);
-							this.server_.emit('gui_ctrl', {type:'list_future_jobs', host_id:host_id});
-						}
-						//const $parent = $(ev.target.parentElement);
-						//console.log("$parent: ", $parent);
-						//console.log("THIS: ", this);
-					})
+					
 				}
-				this.host_table_2=(data)=>{
-					this.cur_row = 0;
-					this.cur_col_index = 0;
-					const trs = htCon.trs({max_td_in_tr: 3});
+				this.draw_host_table=(host_list)=>{
 					$("#"+"main_div").empty().append(
-						htCon.table().append(
-
-						)
+						new MyTable(
+							{max_td_count: 3},
+							host_list,
+							new MyTr(
+								new MyTd()
+							)
+						).run()
 					);
 				}
 				//@ event 'host_born' happens when new launcher or controller has connected
@@ -477,6 +433,7 @@
 					return a;
 				}
 				const agent_data=(agent_data, status)=>{
+					console.log("index.html agent_data()")
 					//@ 1. check if such host exist. For example, event 'agent online' coomes faster than 'host_born'
 					//@ 2. check is such agent already appended to this host
 					status = status || "online";
