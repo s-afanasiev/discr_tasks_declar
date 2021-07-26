@@ -48,7 +48,9 @@
 					var custom_function = this_id_decode[1];
 					if(typeof window[custom_function] == 'function') {
 						window[custom_function](window["curr_elem_id"]);
-					}else{ console.log("couldn't find function: "+ custom_function); }
+					}else{ 
+						//console.log("couldn't find function: "+ custom_function); 
+					}
 				}
 				//console.log("mouseup:", e.target.id);
 			}

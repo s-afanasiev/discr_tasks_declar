@@ -1048,17 +1048,15 @@
         this.browserIoClients =undefined; //run
         this.host =undefined; //run
         //@ input param 'msg' must be String type
-        this.gui_news=(msg)=>{
+        this.gui_news=(data)=>{
             if(this.host){
-                const agent_msg = {};
-                agent_msg.msg = msg;
-                agent_msg.agent_type = this.agentType();
-                if(msg == 'agent_online'){
-                    agent_msg.agent_pid = this.agentPid();
-                    agent_msg.agent_ppid = this.agentPpid();
-                    agent_msg.agent_apid = this.agentApid();
+                data.agent_type = this.agentType();
+                if(data.msg == 'agent_online'){
+                    data.agent_pid = this.agentPid();
+                    data.agent_ppid = this.agentPpid();
+                    data.agent_apid = this.agentApid();
                 }
-                this.host.gui_news(agent_msg);
+                this.host.gui_news(data);
             }
         }
         this.run=function(browserIoClients, host){
@@ -1094,14 +1092,14 @@
             console.log("Launcher.welcomeAgent(): partner online:",partner.isOnline());
             //@------------------------------------
             this.switchOnline(true);
-            this.gui_news({msg:"agent_work", value:"agent_online"});
+            this.gui_news({msg:"agent_online"});
 			this.listenForDisconnect();
 		}
         this.listenForDisconnect=()=>{
             this.agent_socket.once('disconnect', ()=>{
                 this.switchOnline(false);
                 console.log("LAUNCHER DISCONNECTED");
-                this.gui_news({msg:"agent_work", value:"agent_offline"});
+                this.gui_news({msg:"agent_offline"});
                 this.host.agent_disconnected(this.agent_ids.ag_type);
                 this.agent_socket = undefined;
             });
@@ -1110,7 +1108,7 @@
             console.log("Launcher.compareCurManifest(): man=", man);
             return new Promise((resolve,reject)=>{
                 this.switchUpdateMode(true);
-                this.gui_news({msg:"agent_work", value:"update mode on"});
+                this.gui_news({msg:"update_mode", value:"on"});
                 const man_for_launcher = {};
                 man_for_launcher.controller = man.controller;
                 man_for_launcher.other = man.other;
@@ -1121,7 +1119,7 @@
                     reject(err);
                 }).finally(()=>{
                     this.switchUpdateMode(false);
-                    this.gui_news({msg:"agent_work", value:"update mode off"});
+                    this.gui_news({msg:"update_mode", value:"off"});
                 })
             });
         }
@@ -1131,7 +1129,7 @@
             return new Promise((resolve,reject)=>{
                 if(this.partner && !this.partner.isSpecialMode()){
                     this.switchUpdateMode(true);
-                    this.gui_news({msg:"agent_work", value:"update mode on"});
+                    this.gui_news({msg:"update_mode", value:"on"});
                     const mans_diff_for_launcher = {};
                     mans_diff_for_launcher.controller = mans_diff.controller;
                     mans_diff_for_launcher.other = mans_diff.other;
@@ -1142,7 +1140,7 @@
                         reject({is_patched: false, error: err});
                     }).finally(()=>{
                         this.switchUpdateMode(false);
-                        this.gui_news({msg:"agent_work", value:"update mode off"});
+                        this.gui_news({msg:"update_mode", value:"off"});
                     })
                 }else{
                     console.log("Launcher.propagateManifestDiff(): can not update the Controller in Special mode");
@@ -1206,7 +1204,7 @@
             this.mapped_mans_snapshot = mapped_mans_snapshot;
             this.partner = partner;
             this.switchOnline(true);
-            this.gui_news({msg:"agent_work", value:"agent_online"});
+            this.gui_news({msg:"agent_online"});
             this.listenForDisconnect();
             this.firstComparingMappedMans(agent_socket, mapped_mans_snapshot).then(res=>{
                 console.log("Controller.firstComparingMappedMans() res =", res);
@@ -1219,7 +1217,7 @@
                 this.switchOnline(false);
                 console.log("CONTROLLER with md5=",this.agent_ids.md5,", DISCONNECTED");
                 //@ Todo: higher at the host level - notify externalSource object
-                this.gui_news({msg:"agent_work", value:"agent_offline"});
+                this.gui_news({msg:"agent_offline"});
                 this.host.agent_disconnected(this.agent_ids.ag_type);
                 this.normalControllerMode.drop_future_jobs();
                 //this.specialControllerMode.drop_future_jobs();
@@ -1231,18 +1229,16 @@
                 this.agent_socket = undefined;
             });
         }
-        this.gui_news=(msg, payload)=>{
+        this.gui_news=(data, payload)=>{
             if(this.host){
-                const agent_msg = {};
-                agent_msg.msg = msg;
-                agent_msg.payload = payload;
-                agent_msg.agent_type = this.agentType();
-                if(msg == 'agent_online'){
-                    agent_msg.agent_pid = this.agentPid();
-                    agent_msg.agent_ppid = this.agentPpid();
-                    agent_msg.agent_apid = this.agentApid();
+                data.payload = payload;
+                data.agent_type = this.agentType();
+                if(data.msg == 'agent_online'){
+                    data.agent_pid = this.agentPid();
+                    data.agent_ppid = this.agentPpid();
+                    data.agent_apid = this.agentApid();
                 }
-                this.host.gui_news(agent_msg);
+                this.host.gui_news(data);
             }
         }
         this.gui_ctrl=(msg, is_ext_kick)=>{
@@ -1261,7 +1257,7 @@
             console.log("Controller.compareCurManifest(): man=", man);
             return new Promise((resolve,reject)=>{
                 this.switchUpdateMode(true);
-                this.gui_news({msg:"agent_work", value:"update mode on"});
+                this.gui_news({msg:"update_mode", value:"on"});
                 const man_for_controller = {};
                 man_for_controller.launcher = man.launcher;
                 this.agentUpdateChain.instance(this, man_for_controller).run(this.socketio(), this.partner).then(res=>{
@@ -1270,7 +1266,7 @@
                     reject(err);
                 }).finally(()=>{
                     this.switchUpdateMode(false);
-                    this.gui_news({msg:"agent_work", value:"update mode off"});
+                    this.gui_news({msg:"update_mode", value:"off"});
                     //this.doNormalWork();
                 })
             });
@@ -1278,7 +1274,7 @@
         this.propagateManifestDiff=(mans_diff)=>{
             return new Promise((resolve,reject)=>{
                 this.switchUpdateMode(true);
-                this.gui_news({msg:"agent_work", value:"update mode on"});
+                this.gui_news({msg:"update_mode", value:"on"});
                 const mans_diff_for_controller = {};
                 mans_diff_for_controller.launcher = mans_diff.launcher;
                 new AgentUpdateWithoutCompare(this, mans_diff_for_controller).run(this.socketio(), this.partner).then(res=>{
@@ -1287,7 +1283,7 @@
                     reject({is_patched: false, error: err});
                 }).finally(()=>{
                     this.switchUpdateMode(false);
-                    this.gui_news({msg:"agent_work", value:"update mode off"});
+                    this.gui_news({msg:"update_mode", value:"off"});
                     //this.doNormalWork();
                 })
             });

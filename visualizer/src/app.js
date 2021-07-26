@@ -10,17 +10,20 @@ function app_run(args){
                     new StoppedJob()
                 ),
                 new OneHostPrivateInterface()
-            ).as("selectedHost")
+            ).as("selectedHost"),
+            new NavStructure()
         ),
         new HTApiForNavMenu(),
         new HostTable2(
-            new HTRequestsToServer(
-                new HTClickListening(
+            new HTRequestsByClick(
+                new HTAnyClickListening(
                     new HTHostsVisualLocation(
                         new HTStructure(
                             new HostTr(
                                 new HostTd(
-                                    new HostHeader(),
+                                    new HostHeader(
+                                        new HostBtnFutureJobs()
+                                    ),
                                     new HostLauncher(
                                         new TaskList()
                                     ),
@@ -52,8 +55,9 @@ function App(navMenu, hTApiForNavMenu, hostTable){
     //@ param {Object} args = app_run({window:this, socket_io_address: endvr_server_address, parent_id: "main_div"}); //app.js
     this.run=(args)=>{
         const server_socket = io(args.socket_io_address, {query:{browser_or_agent:"browser"}});
+        navMenu.run(server_socket, hTApiForNavMenu, args.parent_nav_id);
+        hTApiForNavMenu.run(navMenu);
         hostTable.run(server_socket, hTApiForNavMenu, args.parent_id)
-        navMenu.run(server_socket, hTApiForNavMenu);
         const parent_div_id = args.parent_id;
         //new AnyClickProcess().run(_window)
         //hostTable.run(config={}).dom();
@@ -71,8 +75,17 @@ function AnyClickProcess(){
     }
 }
 //@---------------------------------
-function NavMenu(selectedHost){
-    this.run=(server_socket, hTApiForNavMenu)=>{}
+function NavMenu(selectedHost, navStructure){
+    let _a = "";
+    let _$a = undefined;
+    this.run=(server_socket, hTApiForNavMenu, parent_div_id)=>{
+        _a = "<div style='height:80px; border:1px solid blue;'>nav menu!<div>"
+        _$a = $(_a);
+        $("#"+parent_div_id).append(_$a);
+    }
+    this.click_on_host=(host_md5)=>{
+        _$a.empty().append("<div style='background-color:yellow;'>"+host_md5+"</div>")
+    }
 }
 function SelectedHost(hostActions, oneHostPrivateInterface){
     this.as=(name)=>{
@@ -86,45 +99,72 @@ function FutureJobs(){}
 function AddedJob(){}
 function StoppedJob(){}
 function OneHostPrivateInterface(){}
+function NavStructure(){
+
+}
 //@---------------------------------
-function HTApiForNavMenu(){}
-//@---------------------------------
-function HostTable2(hTRequestsForServer){
-    this.run=(server_socket, hTApiForNavMenu, parent_div_id)=>{
-        hTRequestsForServer.run(server_socket, hTApiForNavMenu, parent_div_id);
+function HTApiForNavMenu(){
+    this.navMenu = undefined;//run
+    this.run=(navMenu)=>{
+        this.navMenu = navMenu;
+    }
+    this.click_on_host=(host_md5)=>{
+        this.navMenu.click_on_host(host_md5)
     }
 }
-function HTRequestsToServer(hTClickListening){
+//@---------------------------------
+function HostTable2(hTRequestsByClick){
     this.run=(server_socket, hTApiForNavMenu, parent_div_id)=>{
-        hTClickListening.run(server_socket, hTApiForNavMenu, parent_div_id)
+        hTRequestsByClick.run(server_socket, hTApiForNavMenu, parent_div_id);
     }
 }
-function HTClickListening(hTHostsVisualLocation){
+function HTRequestsByClick(hTAnyClickListening){
     this.run=(server_socket, hTApiForNavMenu, parent_div_id)=>{
-        hTHostsVisualLocation.run(server_socket, hTApiForNavMenu, parent_div_id)
+        hTAnyClickListening.run(server_socket, hTApiForNavMenu, parent_div_id, this)
+    }
+}
+function HTAnyClickListening(hTHostsVisualLocation){
+    this.hTRequestsByClick=undefined;//run
+    this.hTApiForNavMenu=undefined;//run
+    this.run=(server_socket, hTApiForNavMenu, parent_div_id, hTRequestsByClick)=>{
+        this.hTRequestsByClick = hTRequestsByClick;
+        this.hTApiForNavMenu = hTApiForNavMenu;
+        hTHostsVisualLocation.run(server_socket, hTApiForNavMenu, parent_div_id, this)
+    }
+    this.click_on_host=(host_md5)=>{
+        hTHostsVisualLocation.click_on_host(host_md5);
+        this.hTApiForNavMenu.click_on_host(host_md5);
     }
 }
 function HTHostsVisualLocation(hTStructure, hTSocketResponses, windowEvents){
     let _parent_div_id = ""; //run
-    this.run=(server_socket, hTApiForNavMenu, parent_div_id)=>{
+    this.run=(server_socket, hTApiForNavMenu, parent_div_id, hTAnyClickListening)=>{
         console.log("HTHostsVisualLocation.run()");
         _parent_div_id = parent_div_id;
-        hTStructure.run(this)
+        hTStructure.run(this, hTAnyClickListening)
         hTSocketResponses.run(server_socket, hTApiForNavMenu, hTStructure, this);
-        windowEvents.run(hTStructure)
+        windowEvents.run(hTStructure);
+        
     }
     this.append_table=(_$a)=>{
         console.log("HTHostsVisualLocation.draw_table()");
         //console.log("HTHostsVisualLocation.draw_table(): _a =", _a)
         //console.log("HTHostsVisualLocation.draw_table(): _parent_div_id =", _parent_div_id)
-        $("#"+_parent_div_id).empty().append(_$a);
+        $("#"+_parent_div_id).append(_$a);
+    }
+    this.click_on_host=(host_md5)=>{
+        //@ to reset selection from other hosts
+        hTStructure.click_on_host(host_md5);
     }
 }
 //@ Renamed from 'HostTable' to 'HostTable2', because in other js-file already exists name 'HostTable'
 function HTStructure(hostTr, hTHostsVisualLocation){
     this.hostTr = hostTr;
     this.hTHostsVisualLocation = hTHostsVisualLocation;
-    let _max_td_count = 3;
+    let _max_td_count = 1;
+    this.change_max_td_count=(count)=>{
+        _max_td_count = count;
+    }
     const _table_id = "host_table";
     let _trStor = undefined; //run
     let _a = "";
@@ -191,33 +231,45 @@ function HTStructure(hostTr, hTHostsVisualLocation){
             }   
         }
     }
+    //@ E.g. server_msg_dto = { msg: "agent_work", value: "'disk_space_lte_25' job done", agent_type: "controller", md5: "fc59692915b9b0afd602ed573ee7deff" }
+    this.agent_work=(server_msg_dto)=>{
+        _trStor.all().forEach(_hostTr=>{
+            _hostTr.agent_work(server_msg_dto);
+        })
+    }
     //this.run=(host_table_config, host_list)=>{}
-    this.run=(hTHostsVisualLocation)=>{
+    this.run=(hTHostsVisualLocation, hTAnyClickListening)=>{
         console.log("HTStructure.run()");
         this.hTHostsVisualLocation = hTHostsVisualLocation;
         _a += "<table id='"+_table_id+"'>";
         _$a = $(_a);
         if(this.hTHostsVisualLocation){this.hTHostsVisualLocation.append_table(_$a);}
-        _trStor = new HT_TrStor().init(this.hostTr);
+        _trStor = new HT_TrStor().init(this.hostTr, hTAnyClickListening);
         this.minimal_table("not requested data");
         return this;
+    }
+    this.click_on_host=(host_md5)=>{
+        _trStor.all().forEach(_tr=>{
+            _tr.click_on_host(host_md5);
+        })
     }
 }
 function HT_TrStor(){
     const _all_trs = {};
     let _tr_counter = 0;
     let hostTrFactory = undefined; //init
+    this.hTAnyClickListening = undefined;//init
     this.instance=()=>{return new HT_TrStor();}
-    this.init=(hostTr)=>{
+    this.init=(hostTr, hTAnyClickListening)=>{
+        this.hTAnyClickListening = hTAnyClickListening;
         hostTrFactory = hostTr;
         return this;
     }
     this.len=()=>{return Object.keys(_all_trs).length}
-    this.add=(_hostTr)=>{_all_trs[_tr_counter++] = _hostTr}
     this.all=()=>{return Object.values(_all_trs);}
     this.alone_minimal_tr=()=>{return _all_trs[Object.keys(_all_trs)[0]]}
     this.new_tr=(parent_width)=>{
-        const new_tr = hostTrFactory.instance(_tr_counter++).init(parent_width);
+        const new_tr = hostTrFactory.instance(_tr_counter++).init(parent_width, this.hTAnyClickListening);
         _all_trs[_tr_counter] = new_tr;
         return new_tr;
     }
@@ -228,17 +280,18 @@ function HT_TrStor(){
             const one_tr_key = trs_keys[i];
             if(_all_trs[one_tr_key].host_count() < _max_td_count){
                 not_crowded_tr = _all_trs[one_tr_key];
+                break;
             }
         }
-        if(!not_crowded_tr){
-            not_crowded_tr = hostTrFactory.instance(_tr_counter++).init(parent_width);
-            _all_trs[_tr_counter] = not_crowded_tr;
+        if(not_crowded_tr == undefined){
+            not_crowded_tr = this.new_tr(parent_width);
         }
         return not_crowded_tr;
     }
 }
 function HostTr(hostTd, order_number){
     this.hostTd = hostTd;
+    this.hTAnyClickListening = undefined;//init
     this.id=()=>{return order_number}
     const any_tr_id_begin_with = "host_table_tr__";
     let _a = "";
@@ -246,17 +299,20 @@ function HostTr(hostTd, order_number){
     const _hosts_td = {};
     let _parent_width;
     this.instance=(order_number)=>{return new HostTr(hostTd, order_number);}
-    this.init=(parent_width)=>{
+    this.init=(parent_width, hTAnyClickListening)=>{
+        console.log("HostTr.init() id=", this.id())
+        this.hTAnyClickListening = hTAnyClickListening;
         _parent_width = parent_width;
         _a = "<tr>"
         _$a = $("<tr>")
         _$a.attr('id', any_tr_id_begin_with+this.id());
-        console.log("HostTr.init(): _$a =", _$a)
+        //console.log("HostTr.init(): _$a =", _$a)
         return this;
     }
     this.html=()=>{return _a}
     this.dom=()=>{return _$a}
     this.hosts=()=>{return _hosts_td}
+    this.host_count=()=>{return Object.keys(_hosts_td).length}
     //@param server_msg_dto = {msg: "host_born", creator_type: "launcher", creator_pid: 6252, creator_apid: -1, md5: "6e8bc6f1e3ef10adf9dd98617c133110"}
     //@param {Number} _max_td_count - max count of td in one tr
     //@param {Function} if_overhead_callback - callback in case when this TR already overloaded (has max count of TD inside)
@@ -269,7 +325,7 @@ function HostTr(hostTd, order_number){
                 //@ очистить строку от первого тестового td, который содержит надпись "no hosts loaded"
                 _$a.empty();
             }
-            const _hostTd = hostTd.instance(server_msg_dto.md5).init(_$a.width());
+            const _hostTd = _create_host_td(server_msg_dto);
             _$a.append(_hostTd.dom())
             _hosts_td[server_msg_dto.md5] =_hostTd;
             _hostTd.host_born(server_msg_dto)
@@ -293,9 +349,9 @@ function HostTr(hostTd, order_number){
             if(md5 == server_msg_dto.md5){
                 console.log("HostTr.agent_offline(): _hostTd.id() =", md5);
                 _hosts_td[md5].agent_offline(server_msg_dto, (is_host_offline)=>{
-                    if(is_host_offline, host_md5){
+                    if(is_host_offline){
                         //@ it means both agents on one host are offline and host visualisation should be removed
-                        delete _hosts_td[host_md5];
+                        delete _hosts_td[md5];
                         //@ TODO: УДалять строку?
                         if(Object.keys(_hosts_td).length == 0){
                             cb_if_tr_empty(true)
@@ -309,19 +365,37 @@ function HostTr(hostTd, order_number){
     }
     this.minimal_table=(msg_to_show)=>{
         console.log("HostTr.minimal_table()");
-        const _hostTd = hostTd.instance(0).init(_$a.width(), msg_to_show)
+        const _hostTd = hostTd.instance(0).init(_$a.width()).show_msg(msg_to_show)
         _$a.empty().append(_hostTd.dom());
         return this;
+    }
+    //@ E.g. server_msg_dto = { msg: "agent_work", value: "'disk_space_lte_25' job done", agent_type: "controller", md5: "fc59692915b9b0afd602ed573ee7deff" }
+    this.agent_work=(server_msg_dto)=>{
+        for (let md5 in _hosts_td){
+            if(md5 == server_msg_dto.md5){
+                _hosts_td[md5].agent_work(server_msg_dto);
+            }
+        }
+    }
+    const _create_host_td=(server_msg_dto)=>{
+        return hostTd.instance(server_msg_dto.md5).init(_$a.width(), this.hTAnyClickListening);
     }
     this.run=(host_list_of_one_row)=>{
         console.log("HostTr.run()")
         for(let i=0; i<host_list_of_one_row.length; i++){
-            const _hostTd = this.hostTd.instance(i).init(_$a.width());
+            const _hostTd = _create_host_td(host_list_of_one_row[i]);
             _$a.append(_hostTd.dom());
             _hosts_td[host_list_of_one_row[i].md5] =_hostTd;
             _hostTd.run(host_list_of_one_row[i]);
         }
         return this;
+    }
+    this.click_on_host=(host_md5)=>{
+        for(let i in _hosts_td){
+            if(_hosts_td[i].md5() != host_md5){
+                _hosts_td[i].set_highlight('1px solid red')
+            }
+        }
     }
 }
 function HostTd(hostHeader, hostLauncher, hostController, md5_id){
@@ -331,19 +405,33 @@ function HostTd(hostHeader, hostLauncher, hostController, md5_id){
     this.curHeader = undefined;
     this.curLauncher = undefined;
     this.curController = undefined;
+    this.hTAnyClickListening = undefined;//init
     this.md5=()=>{return md5_id;}
     let _parent_width;
     let _a = "";
     let _$a = undefined;
     let $agents_wrapper;
     let _agents_wrapper_height = 72;
+    this.set_highlight=(border_params)=>{
+        _$a.css('border', border_params);
+    }
     this.id=()=>{return _id;}
     this.instance=(md5_id)=>{return new HostTd(hostHeader, hostLauncher, hostController, md5_id);}
-    this.init=(parent_width, msg_to_show)=>{
+    this.init=(parent_width, hTAnyClickListening)=>{
+        console.log("HostTr.init() md5=", this.md5())
+        this.hTAnyClickListening = hTAnyClickListening;
         _parent_width = parent_width;
         _a += "<td valign='top' class = 'host' style='border:1px solid red;'>";
         _$a = $(_a);
-        if(msg_to_show){_$a.append(msg_to_show)}
+        _$a.on('click', (evt)=>{
+            console.log("clicked!");
+            _$a.css('border', '2px solid #f2f');
+            this.hTAnyClickListening.click_on_host(this.md5())
+        })
+        return this;
+    }
+    this.show_msg=(msg)=>{
+        if(_$a){_$a.append(msg)}
         return this;
     }
     this.html=()=>{return _a}
@@ -384,6 +472,10 @@ function HostTd(hostHeader, hostLauncher, hostController, md5_id){
             console.log("WARNING: HostTd.agent_online() server_msg_dto =", server_msg_dto)
         }
     }
+    //@ E.g. server_msg_dto = { msg: "agent_work", value: "'disk_space_lte_25' job done", agent_type: "controller", md5: "fc59692915b9b0afd602ed573ee7deff" }
+    this.agent_work=(server_msg_dto)=>{
+        this.curController.agent_work(server_msg_dto.value, this)
+    }
     const _after_agent_offline=(cb)=>{
         const is_launcher_offline = !this.curLauncher.online();
         const is_controller_offline = !this.curController.online();
@@ -397,16 +489,19 @@ function HostTd(hostHeader, hostLauncher, hostController, md5_id){
         
     }
     this.set_dom_height=(height)=>{
-        console.log("HostTd.set_dom_height =", height)
         if(height > _agents_wrapper_height){
+            console.log("HostTd.set_dom_height():", height)
             $agents_wrapper.height(height+"px");
         }
     }
+    this.add_to_dom_height=(height)=>{
+        const total_height = _agents_wrapper_height + height;
+        $agents_wrapper.height(total_height+"px");
+    }
     this.run=(data)=>{
-        console.log("HostTd.run() data =", data);
+        console.log("HostTd.run()");
         _$a.attr("id", "host_td__"+data.md5)
         _$a.append(hostHeader.instance(data).run().dom())
-        _$a.append("<div class='future_jobs_btn_dock' style='width:150px; height:20px; background-color:#ddf; cursor:pointer;'>get future jobs</div>")
         $agents_wrapper = $("<div style='height:"+_agents_wrapper_height+"px; position:relative;'>");
         _$a.append($agents_wrapper);
         //setTimeout(()=>{$agents_wrapper.height("1px")}, 1000)
@@ -419,17 +514,30 @@ function HostTd(hostHeader, hostLauncher, hostController, md5_id){
         return this;
     }
 }
-function HostHeader(data){
+function HostHeader(hostBtnFutureJobs, data){
     const _data = data;
     let _a = "";
     let _$a = undefined;
-    this.instance=(data)=>{return new HostHeader(data)}
+    this.instance=(data)=>{return new HostHeader(hostBtnFutureJobs, data)}
     this.html=()=>{return _a}
     this.dom=()=>{return _$a}
     this.run=()=>{
         console.log("HostHeader.run()");
-        _a += "<div id='host_header_md5__"+data.md5+"' style='height:20px; border:1px solid green;'><b>"+data.md5+"</b></div>"
+        _a += "<div id='host_header_md5__"+data.md5+"' style='border:1px solid green;'></div>"
         _$a = $(_a);
+        _$a.append("<div><b>"+data.md5+"</b></div>")
+        _$a.append(hostBtnFutureJobs.instance(data.md5).init().dom())
+        return this;
+    }
+}
+function HostBtnFutureJobs(md5){
+    let _$a = undefined;
+    this.instance=(md5)=>{
+        return new HostBtnFutureJobs(md5);
+    }
+    this.dom=()=>{return _$a}
+    this.init=()=>{
+        _$a = $("<div class='future_jobs_btn_dock' style='width:150px; background-color:#ddf; cursor:pointer;'>get future jobs</div>")
         return this;
     }
 }
@@ -439,7 +547,8 @@ function HostLauncher(data){
     let _$a = undefined;    
     this.instance=(data)=>{return new HostLauncher(data)}
     this.init=(parent_width, hostTd)=>{
-        _$a = $("<div id='host_launcher__"+data.md5+"' style='width:"+(parent_width/2)+"px; height:auto; border:1px solid blue; position:absolute;'></div>");
+        console.log("HostLauncher.init() ", data.md5, "parent_width/2 =", parent_width/2)
+        _$a = $("<div id='host_launcher__"+data.md5+"' style='width:50%; height:auto; border:1px solid blue; position:absolute; top:0; left:0;'></div>");
         return this;
     }
     let _online = false;
@@ -467,14 +576,16 @@ function HostLauncher(data){
         return this;
     }
 }
-function HostController(data){
+function HostController(taskList, data){
+    this.taskList = taskList;
+    this.curTaskList = undefined;
     const _data = data;
     //console.log("HostController: data =", data)
     let _a = "";
     let _$a = true;
-    this.instance=(data)=>{return new HostController(data)}
+    this.instance=(data)=>{return new HostController(this.taskList, data)}
     this.init=(parent_width, hostTd)=>{
-        _$a = $("<div id='host_controller__"+data.md5+"' style='width:"+(parent_width/2)+"px; height:auto; border:1px solid orange; position:absolute; left:"+(parent_width/2)+"px;'></div>");
+        _$a = $("<div id='host_controller__"+data.md5+"' style='width:50%; height:auto; border:1px solid orange; position:absolute; left:50%;'></div>");
         return this;
     }
     let _online = false;
@@ -484,24 +595,46 @@ function HostController(data){
     this.dom_height=()=>{return _$a.height()}
     //@param server_msg_dto = {msg: "agent_online", agent_type: "controller", agent_pid: 4904, agent_ppid: 5144, agent_apid: 5864, md5: "6e8bc6f1e3ef10adf9dd98617c133110"}
     this.agent_online=(server_msg_dto)=>{
+        console.log("HostController.agent_online()")
         _online = true;
         _$a.empty().append(agent_data_html(server_msg_dto));
+        this.curTaskList = this.taskList.instance().init();
+        _$a.append(this.curTaskList.dom());
     }
     this.agent_offline=(server_msg_dto, cb)=>{
         _online = false;
         _$a.empty();
         cb(true);
     }
+    this.agent_work=(value, hostTd)=>{
+        console.log("HostController.agent_work()")
+        this.curTaskList.agent_work(value, hostTd)
+    }
     this.run=()=>{
         console.log("HostController.run()");
         if(_data.controller){
             _online = true;
             _$a.append(agent_data_html(_data.controller))
+            this.curTaskList = this.taskList.instance().init();
+            _$a.append(this.curTaskList.dom());
         }
         return this;
     }
 }
-function TaskList(){}
+function TaskList(){
+    let _$a = undefined;
+    this.instance=()=>{return new TaskList()}
+    this.dom=()=>{return _$a}
+    this.init=()=>{
+        _$a = $("<div class='agent_work' style='background-color:#ccddee; width:100%; max-height: 120px; overflow: auto;'>");
+        return this;
+    }
+    this.agent_work=(value, hostTd)=>{
+        _$a.append("<div>"+value+"</div>");
+        //console.log("TaskList.agent_work() height=", _$a.height())
+        hostTd.add_to_dom_height(_$a.height())
+    }
+}
 function HTSocketResponses(hTSocketReqHosts){
     const _handlers = {}
     this.with=(name, obj)=>{
@@ -516,7 +649,7 @@ function HTSocketResponses(hTSocketReqHosts){
                 try{
                     responseObject.instance().run(hTStructure, server_msg_dto)
                 }catch(er){
-                    console.log("Error HTSocketResponses.run(): server_msg_dto =", er)
+                    console.log("Error HTSocketResponses.run(): ", er)
                 }
             }
         });
@@ -619,7 +752,11 @@ function HTSocketRespAgentOffline(){
     }
 }
 function HTSocketRespAgentWork(){
-    this.run=(hTStructure)=>{}
+    this.instance=()=>{return new HTSocketRespAgentWork();}
+    this.run=(hTStructure, server_msg_dto)=>{
+        //console.log("HTSocketRespAgentWork.run() not implemented");
+        hTStructure.agent_work(server_msg_dto);
+    }
 }
 function WindowEvents(_window){
     this.run=(hTStructure)=>{

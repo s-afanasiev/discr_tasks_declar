@@ -16,13 +16,7 @@
 	</head>
 	
 	<body style = 'margin:0px;' >	
-		<div id = "nav_main" style = "position:relative; overflow:hidden; ">
-			<div id = "nav_transition" style = "position:relative; overflow:hidden;">
-				main menu
-			</div>
-			<div id = "nav_board" style = "position:relative; overflow:hidden; ">
-			</div>
-		</div>
+		<div id="nav_main" style="height:100px; border:1px solid black;"></div>
 		<div id = "main_div" style = "position:relative; overflow:hidden; text-align: center; display: table-cell; vertical-align: middle;"></div>
 		<script>
 			//document.body.onselectstart = function(){return false;}
@@ -46,7 +40,7 @@
 				bind_mouse_enter_on_main_div();
 				//@ connect to server by socket.io and listen 'agent_table' event to receive info about agents and their tasks
 				//connect_to_server();
-				app_run({window:this, socket_io_address: endvr_server_address, parent_id: "main_div"}); //app.js
+				app_run({window:this, socket_io_address: endvr_server_address, parent_id: "main_div", parent_nav_id:"nav_main"}); //app.js
 			}
 			window.onresize = function(){
 				set_main_divs_sizes();
