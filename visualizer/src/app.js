@@ -79,6 +79,7 @@ function NavMenu(selectedHost, navCommonBtns){
     let _a = "";
     let _$a = undefined;
     this.run=(server_socket, hTApiForNavMenu, parent_div_id)=>{
+        selectedHost.init(server_socket)
         _a = "<div style='height:100%; width:100%; border:1px solid blue; display:table;'>"
         _$a = $(_a);
         $("#"+parent_div_id).append(_$a);
@@ -89,14 +90,23 @@ function NavMenu(selectedHost, navCommonBtns){
     this.click_on_host=(host_info)=>{
         selectedHost.click_on_host(host_info)
     }
+    this.future_jobs=(host_md5)=>{
+        selectedHost.future_jobs(host_md5)
+    }
 }
 function SelectedHost(hostActions, oneHostPrivateInterface){
     let _$a = undefined//run
+    let _server_socket = undefined//init
     this.as=(name)=>{
         _global_stor[name] = this;
         return this;
     }
     this.dom=()=>{return _$a;}
+    this.init=(server_socket)=>{
+        _server_socket = server_socket;
+        hostActions.init(_server_socket);
+        return this;
+    }
     this.run=()=>{
         _$a = $("<div style='height:100%; width:50%; border:1px dashed orange; display:table-cell;'>")
         _$a.append("<div>selected host</div>");
@@ -105,14 +115,45 @@ function SelectedHost(hostActions, oneHostPrivateInterface){
     this.click_on_host=(host_info)=>{
         _$a.empty();
         _$a.append("<div>selected host:</div>");
-        _$a.append("<div>"+host_info.md5+"</div>");
+        _$a.append("<div><span>md5: </span>"+host_info.md5+"</div>");
         const _hostTd = host_info.hostTd;
-        _$a.append(_hostTd.html())
+        _$a.append("<div><span>controller pid: </span>"+_hostTd.curController.apid+"</div>")
+        _$a.append(hostActions.dom())
+    }
+    this.future_jobs=(host_md5)=>{
+        hostActions.future_jobs(host_md5)
     }
 }
-function HostActions(futureJobs, addedJob, stoppedJob){    
+function HostActions(futureJobs, addedJob, stoppedJob){ 
+    //this.curFutureJobs=undefined;//init
+    let _server_socket = undefined;//init
+    let _$a = undefined;//init
+    this.instance=()=>{return new HostActions(futureJobs, addedJob, stoppedJob);}
+    this.dom=()=>{return _$a}
+    this.init=(server_socket)=>{
+        _$a = $("<div>");
+        _server_socket = server_socket;
+        futureJobs.init(server_socket)
+        _$a.append(futureJobs.dom())
+    }
+    this.future_jobs=(host_md5)=>{
+        futureJobs.future_jobs(host_md5)
+    }
 }
-function FutureJobs(){}
+function FutureJobs(){
+    this.instance=()=>{return new FutureJobs();}
+    this.init=(server_socket)=>{
+        console.log("FutureJobs.init()")
+        server_socket.on("gui_news", data=>{
+            if(data.msg == 'list_future_jobs'){
+                console.log("FutureJobs.init() sokcetdata=", data )
+                const future_jobs_list = data.value;
+            }
+        })
+        return this;
+    }
+    this.future_jobs=(host_md5)=>{}
+}
 function AddedJob(){}
 function StoppedJob(){}
 function OneHostPrivateInterface(){}
@@ -133,6 +174,9 @@ function HTApiForNavMenu(){
     this.click_on_host=(host_info)=>{
         this.navMenu.click_on_host(host_info)
     }
+    this.future_jobs=(host_md5)=>{
+        this.navMenu.future_jobs(host_md5)
+    }
 }
 //@---------------------------------
 function HostTable2(hTRequestsByClick){
@@ -141,8 +185,13 @@ function HostTable2(hTRequestsByClick){
     }
 }
 function HTRequestsByClick(hTAnyClickListening){
+    let _server_socket=undefined;//run
     this.run=(server_socket, hTApiForNavMenu, parent_div_id)=>{
+        _server_socket = server_socket;
         hTAnyClickListening.run(server_socket, hTApiForNavMenu, parent_div_id, this)
+    }
+    this.future_jobs=(host_md5)=>{
+        _server_socket.emit('gui_ctrl', {type:'list_future_jobs', host_id:host_md5});
     }
 }
 function HTAnyClickListening(hTHostsVisualLocation){
@@ -157,6 +206,10 @@ function HTAnyClickListening(hTHostsVisualLocation){
     this.click_on_host=(host_md5)=>{
         hTHostsVisualLocation.click_on_host(host_md5);
         this.hTApiForNavMenu.click_on_host(host_md5);
+    }
+    this.future_jobs=(host_md5)=>{
+        this.hTApiForNavMenu.future_jobs(host_md5);
+        this.hTRequestsByClick.future_jobs(host_md5)
     }
 }
 function HTHostsVisualLocation(hTStructure, hTSocketResponses, windowEvents){
@@ -527,7 +580,9 @@ function HostTd(hostHeader, hostLauncher, hostController, md5_id){
     this.run=(data)=>{
         console.log("HostTd.run()");
         _$a.attr("id", "host_td__"+data.md5)
-        _$a.append(hostHeader.instance(data).run().dom())
+        //_$a.append(hostHeader.instance(data).run().dom())
+        this.curHeader = hostHeader.instance(data).init(this.hTAnyClickListening);
+        _$a.append(this.curHeader.dom());
         $agents_wrapper = $("<div style='height:"+_agents_wrapper_height+"px; position:relative;'>");
         _$a.append($agents_wrapper);
         //setTimeout(()=>{$agents_wrapper.height("1px")}, 1000)
@@ -544,26 +599,31 @@ function HostHeader(hostBtnFutureJobs, data){
     const _data = data;
     let _a = "";
     let _$a = undefined;
+    this.hTAnyClickListening = undefined;//init
     this.instance=(data)=>{return new HostHeader(hostBtnFutureJobs, data)}
     this.html=()=>{return _a}
     this.dom=()=>{return _$a}
-    this.run=()=>{
-        console.log("HostHeader.run()");
-        _a += "<div id='host_header_md5__"+data.md5+"' style='border:1px solid green;'></div>"
-        _$a = $(_a);
+    this.init=(hTAnyClickListening)=>{
+        this.hTAnyClickListening = hTAnyClickListening;
+        //console.log("HostHeader.run()");
+        _$a = $("<div id='host_header_md5__"+data.md5+"' style='border:1px solid green;'></div>");
         _$a.append("<div><b>"+data.md5+"</b></div>")
-        _$a.append(hostBtnFutureJobs.instance(data.md5).init().dom())
+        _$a.append(hostBtnFutureJobs.instance(data.md5).init(hTAnyClickListening).dom())
         return this;
     }
 }
 function HostBtnFutureJobs(md5){
+    const _md5 = md5;
     let _$a = undefined;
     this.instance=(md5)=>{
         return new HostBtnFutureJobs(md5);
     }
     this.dom=()=>{return _$a}
-    this.init=()=>{
-        _$a = $("<div class='future_jobs_btn_dock' style='width:150px; background-color:#ddf; cursor:pointer;'>get future jobs</div>")
+    this.init=(hTAnyClickListening)=>{
+        _$a = $("<div class='future_jobs_btn_dock' style='width:150px; background-color:#ddf; cursor:pointer;'>future jobs</div>");
+        _$a.on("click", (evt)=>{
+            hTAnyClickListening.future_jobs(_md5)
+        })
         return this;
     }
 }
@@ -605,6 +665,8 @@ function HostLauncher(data){
 function HostController(taskList, data){
     this.taskList = taskList;
     this.curTaskList = undefined;
+    this.pid = ""
+    this.apid = ""
     const _data = data;
     //console.log("HostController: data =", data)
     let _a = "";
@@ -621,7 +683,7 @@ function HostController(taskList, data){
     this.dom_height=()=>{return _$a.height()}
     //@param server_msg_dto = {msg: "agent_online", agent_type: "controller", agent_pid: 4904, agent_ppid: 5144, agent_apid: 5864, md5: "6e8bc6f1e3ef10adf9dd98617c133110"}
     this.agent_online=(server_msg_dto)=>{
-        console.log("HostController.agent_online()")
+        console.log("HostController.agent_online() server_msg =",server_msg_dto)
         _online = true;
         _$a.empty().append(agent_data_html(server_msg_dto));
         this.curTaskList = this.taskList.instance().init();
@@ -637,8 +699,10 @@ function HostController(taskList, data){
         this.curTaskList.agent_work(value, hostTd)
     }
     this.run=()=>{
-        console.log("HostController.run()");
+        console.log("HostController.run() _data=",_data);
         if(_data.controller){
+            this.pid = _data.controller.agent_pid;
+            this.apid = _data.controller.agent_apid;
             _online = true;
             _$a.append(agent_data_html(_data.controller))
             this.curTaskList = this.taskList.instance().init();

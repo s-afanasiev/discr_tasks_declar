@@ -812,6 +812,7 @@
                 hostCluster
 			);
 		}
+        //@param {Boolean} is_ext_kick - if this event come from some external source or from browser
         this.gui_ctrl=(msg, is_ext_kick)=>{
             if(msg == 'host_table'){
                 const result = {};
@@ -1246,7 +1247,7 @@
             if(msg.type=="list_future_jobs"){
                 this.normalControllerMode.list_future_jobs(list=>{
                     console.log("Controller.gui_ctrl(): list_future_jobs=",list);
-                    this.gui_news("list_future_jobs", list);
+                    this.gui_news({msg:"list_future_jobs", value:list});
                 });
             }else if(msg.type=="drop_future_jobs"){
                 this.normalControllerMode.drop_future_jobs();
