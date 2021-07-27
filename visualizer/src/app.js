@@ -11,7 +11,7 @@ function app_run(args){
                 ),
                 new OneHostPrivateInterface()
             ).as("selectedHost"),
-            new NavStructure()
+            new NavCommonBtns()
         ),
         new HTApiForNavMenu(),
         new HostTable2(
@@ -75,22 +75,39 @@ function AnyClickProcess(){
     }
 }
 //@---------------------------------
-function NavMenu(selectedHost, navStructure){
+function NavMenu(selectedHost, navCommonBtns){
     let _a = "";
     let _$a = undefined;
     this.run=(server_socket, hTApiForNavMenu, parent_div_id)=>{
-        _a = "<div style='height:80px; border:1px solid blue;'>nav menu!<div>"
+        _a = "<div style='height:100%; width:100%; border:1px solid blue; display:table;'>"
         _$a = $(_a);
         $("#"+parent_div_id).append(_$a);
+        _$a.append("<div style='display:table-cell; width:10%;'>nav menu!</div>")
+        _$a.append(navCommonBtns.run().dom())
+        _$a.append(selectedHost.run().dom())
     }
-    this.click_on_host=(host_md5)=>{
-        _$a.empty().append("<div style='background-color:yellow;'>"+host_md5+"</div>")
+    this.click_on_host=(host_info)=>{
+        selectedHost.click_on_host(host_info)
     }
 }
 function SelectedHost(hostActions, oneHostPrivateInterface){
+    let _$a = undefined//run
     this.as=(name)=>{
         _global_stor[name] = this;
         return this;
+    }
+    this.dom=()=>{return _$a;}
+    this.run=()=>{
+        _$a = $("<div style='height:100%; width:50%; border:1px dashed orange; display:table-cell;'>")
+        _$a.append("<div>selected host</div>");
+        return this;
+    }
+    this.click_on_host=(host_info)=>{
+        _$a.empty();
+        _$a.append("<div>selected host:</div>");
+        _$a.append("<div>"+host_info.md5+"</div>");
+        const _hostTd = host_info.hostTd;
+        _$a.append(_hostTd.html())
     }
 }
 function HostActions(futureJobs, addedJob, stoppedJob){    
@@ -99,8 +116,13 @@ function FutureJobs(){}
 function AddedJob(){}
 function StoppedJob(){}
 function OneHostPrivateInterface(){}
-function NavStructure(){
-
+function NavCommonBtns(){
+    let _$a = undefined//run
+    this.dom=()=>{return _$a;}
+    this.run=()=>{
+        _$a = $("<div style='height:100%; width:20%; border:1px dashed grey; display:table-cell;'>update mode<div>");
+        return this;
+    }
 }
 //@---------------------------------
 function HTApiForNavMenu(){
@@ -108,8 +130,8 @@ function HTApiForNavMenu(){
     this.run=(navMenu)=>{
         this.navMenu = navMenu;
     }
-    this.click_on_host=(host_md5)=>{
-        this.navMenu.click_on_host(host_md5)
+    this.click_on_host=(host_info)=>{
+        this.navMenu.click_on_host(host_info)
     }
 }
 //@---------------------------------
@@ -131,6 +153,7 @@ function HTAnyClickListening(hTHostsVisualLocation){
         this.hTApiForNavMenu = hTApiForNavMenu;
         hTHostsVisualLocation.run(server_socket, hTApiForNavMenu, parent_div_id, this)
     }
+    //@ click_on_host service
     this.click_on_host=(host_md5)=>{
         hTHostsVisualLocation.click_on_host(host_md5);
         this.hTApiForNavMenu.click_on_host(host_md5);
@@ -390,9 +413,10 @@ function HostTr(hostTd, order_number){
         }
         return this;
     }
-    this.click_on_host=(host_md5)=>{
+    //@param host_info = {md5, hostTd}
+    this.click_on_host=(host_info)=>{
         for(let i in _hosts_td){
-            if(_hosts_td[i].md5() != host_md5){
+            if(_hosts_td[i].md5() != host_info.md5){
                 _hosts_td[i].set_highlight('1px solid red')
             }
         }
@@ -406,6 +430,7 @@ function HostTd(hostHeader, hostLauncher, hostController, md5_id){
     this.curLauncher = undefined;
     this.curController = undefined;
     this.hTAnyClickListening = undefined;//init
+    this.html=()=>{return _$a.html()}
     this.md5=()=>{return md5_id;}
     let _parent_width;
     let _a = "";
@@ -426,7 +451,9 @@ function HostTd(hostHeader, hostLauncher, hostController, md5_id){
         _$a.on('click', (evt)=>{
             console.log("clicked!");
             _$a.css('border', '2px solid #f2f');
-            this.hTAnyClickListening.click_on_host(this.md5())
+            if(this.hTAnyClickListening){
+                this.hTAnyClickListening.click_on_host({md5:this.md5(), hostTd: this})
+            }
         })
         return this;
     }
@@ -434,7 +461,6 @@ function HostTd(hostHeader, hostLauncher, hostController, md5_id){
         if(_$a){_$a.append(msg)}
         return this;
     }
-    this.html=()=>{return _a}
     this.dom=()=>{return _$a}
     //@param server_msg_dto = {msg: "host_born", creator_type: "launcher", creator_pid: 6252, creator_apid: -1, md5: "6e8bc6f1e3ef10adf9dd98617c133110"}
     this.host_born=(server_msg_dto)=>{
