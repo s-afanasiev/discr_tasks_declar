@@ -131,7 +131,7 @@ function HostActions(futureJobs, addedJob, stoppedJob){
     this.instance=()=>{return new HostActions(futureJobs, addedJob, stoppedJob);}
     this.dom=()=>{return _$a}
     this.init=(server_socket)=>{
-        _$a = $("<div>");
+        _$a = $("<div id='host_actions'>");
         _server_socket = server_socket;
         futureJobs.init(server_socket)
         _$a.append(futureJobs.dom())
@@ -146,11 +146,13 @@ function FutureJobs(){
     this.dom=()=>{return _$a;}
     this.init=(server_socket)=>{
         console.log("FutureJobs.init()")
-        _$a = $("<div></div>")
+        _$a = $("<div id='future_jobs'></div>")
         server_socket.on("gui_news", data=>{
             if(data.msg == 'list_future_jobs'){
                 console.log("FutureJobs.init() sokcetdata=", data )
-                const future_jobs_list = data.value;
+                const future_jobs_list = JSON.stringify(data.value);
+                console.log("FutureJobs.init() future_jobs_list=", future_jobs_list )
+                _$a.empty().append(future_jobs_list)
             }
         })
         return this;
@@ -240,6 +242,7 @@ function HTHostsVisualLocation(hTStructure, hTSocketResponses, windowEvents){
 function HTStructure(hostTr, hTHostsVisualLocation){
     this.hostTr = hostTr;
     this.hTHostsVisualLocation = hTHostsVisualLocation;
+    this.hTAnyClickListening = undefined;//run
     let _max_td_count = 1;
     this.change_max_td_count=(count)=>{
         _max_td_count = count;
@@ -283,7 +286,8 @@ function HTStructure(hostTr, hTHostsVisualLocation){
         let _hostTr;
         if(_trStor.is_empty()){
             console.log("HTStructure.minimal_table(00)");
-            _hostTr = _trStor.not_crowded(_max_td_count, _$a.width());
+            //_hostTr = _trStor.not_crowded(_max_td_count, _$a.width());
+            _hostTr = hostTr.instance().init(_$a.width()).minimal_table(msg_to_show);
             _$a.append(_hostTr.dom());
         }else{
             console.log("HTStructure.minimal_table(01)");
@@ -322,6 +326,7 @@ function HTStructure(hostTr, hTHostsVisualLocation){
     }
     //this.run=(host_table_config, host_list)=>{}
     this.run=(hTHostsVisualLocation, hTAnyClickListening)=>{
+        this.hTAnyClickListening = hTAnyClickListening;
         console.log("HTStructure.run()");
         this.hTHostsVisualLocation = hTHostsVisualLocation;
         _$a = $("<table id='"+_table_id+"'>");
@@ -365,6 +370,7 @@ function HT_TrStor(){
         const trs_keys = Object.keys(_all_trs);
         for(let i=0; i<trs_keys.length; i++){
             const one_tr_key = trs_keys[i];
+            console.log("HT_TrStor.not_crowded() one_tr_key=",one_tr_key)
             if(_all_trs[one_tr_key].host_count() < _max_td_count){
                 not_crowded_tr = _all_trs[one_tr_key];
                 _is_last_tr_new = false;
@@ -541,10 +547,10 @@ function HostTd(hostHeader, hostLauncher, hostController, md5_id){
     this.agent_online=(server_msg_dto)=>{
         console.log("HostTd.agent_online(1) _$a =",_$a)
         if(server_msg_dto.agent_type == "launcher"){
-            this.curLauncher = hostLauncher.instance(server_msg_dto).init(_$a.width(), this).run();
+            //this.curLauncher = hostLauncher.instance(server_msg_dto).init(_$a.width(), this).run();
             this.curLauncher.agent_online(server_msg_dto);
         }else if(server_msg_dto.agent_type == "controller"){
-            this.curController = hostController.instance(server_msg_dto).init(_$a.width(), this).run();
+            //this.curController = hostController.instance(server_msg_dto).init(_$a.width(), this).run();
             this.curController.agent_online(server_msg_dto);
         }else{
             console.log("WARNING: HostTd.agent_online() server_msg_dto =", server_msg_dto)
@@ -574,7 +580,7 @@ function HostTd(hostHeader, hostLauncher, hostController, md5_id){
         const is_controller_offline = !this.curController.online();
         if(is_launcher_offline && is_controller_offline){
             console.log("HostTd._after_agent_offline() both agents are offline")
-            _$a.empty();
+            _$a.remove();
             //@ После своих процедур передаём наверх, в HostTr, потому что ему может потребоваться удалить 
             cb(true, this.md5());//host IS empty, BOTH agents are left
         }else{
