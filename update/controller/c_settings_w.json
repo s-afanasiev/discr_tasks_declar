@@ -2,7 +2,7 @@
 	"client_socket": "http://ita52:55999",
 	"local_dir_controller": "../controller",
 	"local_dir_launcher": "../launcher",
-	"remote_dir": "\\\\seasea/discrete_tasks/discrete_tasks_current/update",
+	"remote_dir": "\\\\ita52/Users/safanasyev/Downloads/discrete_tasks_current/update",
 	"if_disconnect_wait_before_spec_fu": 30000,
 	"if_disconnect_spec_fu": "fuita",
 	"if_disconnect_spec_fu_attempts": 5

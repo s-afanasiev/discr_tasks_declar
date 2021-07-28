@@ -8,3 +8,7 @@
 *.txt
 *.sql
 *.rar
+/update/controller/*.json
+/update/launcher/*.json
+/agents/controller/*.json
+/agents/launcher/*.json

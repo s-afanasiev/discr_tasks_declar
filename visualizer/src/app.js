@@ -115,9 +115,9 @@ function SelectedHost(hostActions, oneHostPrivateInterface){
     this.click_on_host=(host_info)=>{
         _$a.empty();
         _$a.append("<div>selected host:</div>");
-        _$a.append("<div><span>md5: </span>"+host_info.md5+"</div>");
+        _$a.append("<div><span>md5: </span><span style='background-color:yellow'>"+host_info.md5+"</span></div>");
         const _hostTd = host_info.hostTd;
-        _$a.append("<div><span>controller pid: </span>"+_hostTd.curController.apid+"</div>")
+        _$a.append("<div><span>controller pid: </span><span>"+_hostTd.curController.apid+"</span></div>")
         _$a.append(hostActions.dom())
     }
     this.future_jobs=(host_md5)=>{
@@ -141,9 +141,12 @@ function HostActions(futureJobs, addedJob, stoppedJob){
     }
 }
 function FutureJobs(){
+    let _$a = undefined;
     this.instance=()=>{return new FutureJobs();}
+    this.dom=()=>{return _$a;}
     this.init=(server_socket)=>{
         console.log("FutureJobs.init()")
+        _$a = $("<div></div>")
         server_socket.on("gui_news", data=>{
             if(data.msg == 'list_future_jobs'){
                 console.log("FutureJobs.init() sokcetdata=", data )
@@ -243,16 +246,19 @@ function HTStructure(hostTr, hTHostsVisualLocation){
     }
     const _table_id = "host_table";
     let _trStor = undefined; //run
-    let _a = "";
     let _$a = undefined;
-    this.html=()=>{return _a;}
+    this.html=()=>{return _$a.get(0).outerHTML;}
     this.dom=()=>{return _$a;}
     this.instance=()=>{return new HTStructure(this.hostTr, this.hTHostsVisualLocation)}
-    this.refresh=()=>{_a = ""}
     //@param server_msg_dto = {msg: "host_born", creator_type: "launcher", creator_pid: 6252, creator_apid: -1, md5: "6e8bc6f1e3ef10adf9dd98617c133110"}
     this.host_born=(server_msg_dto)=>{
         console.log("HTStructure.host_born()");
-        _trStor.not_crowded(_max_td_count, _$a.width()).host_born(server_msg_dto);
+        const _hostTr = _trStor.not_crowded(_max_td_count, _$a.width())
+        if(_trStor.is_last_new()){
+            console.log("HTStructure.host_born() new tr has created. OuterHtml before append = ", this.html())
+            _$a.append(_hostTr.dom())}
+            console.log("HTStructure.host_born() new tr has created. OuterHtml after append = ", this.html())
+        _hostTr.host_born(server_msg_dto);
     }
     //@param server_msg_dto = {msg: "host_born", creator_type: "launcher", creator_pid: 6252, creator_apid: -1, md5: "6e8bc6f1e3ef10adf9dd98617c133110"}
     this.agent_online=(server_msg_dto)=>{
@@ -266,27 +272,28 @@ function HTStructure(hostTr, hTHostsVisualLocation){
         _trStor.all().forEach(_hostTr=>{
             console.log("HTStructure.agent_offline(): _hostTr.id() =", _hostTr.id());
             _hostTr.agent_offline(server_msg_dto, (is_tr_empty)=>{
-                if(is_tr_empty){}
+                if(is_tr_empty){
+                    console.log("HTStructure.agent_offline() is_tr_empty=",is_tr_empty);
+                }
             });
         })
     }
     this.minimal_table=(msg_to_show)=>{
         console.log("HTStructure.minimal_table()");
-        this.refresh();
         let _hostTr;
-        if(_trStor.len() == 0){
-            console.log("HTStructure.minimal_table(0)");
-            _hostTr = _trStor.new_tr(_$a.width());
+        if(_trStor.is_empty()){
+            console.log("HTStructure.minimal_table(00)");
+            _hostTr = _trStor.not_crowded(_max_td_count, _$a.width());
             _$a.append(_hostTr.dom());
         }else{
+            console.log("HTStructure.minimal_table(01)");
             //@ случай, типа, если minimal уже был вызван (а значит, уже существует строка) и вдруг вызван ещё раз (значит надо взять эту одну созданную строку)
-            _hostTr = _trStor.alone_minimal_tr()
+            _hostTr = _trStor.zero_tr()
         }
         _hostTr.minimal_table(msg_to_show);
     }
     this.draw_table=(host_list)=>{
         console.log("HTStructure.draw_table(): host_list=", host_list);
-        this.refresh();
         if(host_list.length == 0){
             this.minimal_table("no hosts online");
         }else{
@@ -295,7 +302,7 @@ function HTStructure(hostTr, hTHostsVisualLocation){
             if(_$a){_$a.empty();}
             //if(this.hTHostsVisualLocation){this.hTHostsVisualLocation.draw_table(_$a);}
             for(let i=0; i<_tr_count; i++){
-                const _hostTr = _trStor.new_tr(_$a.width());
+                const _hostTr = _trStor.not_crowded(_max_td_count, _$a.width());
                 //console.log("HTStructure.draw_table(): _hostTr.dom()=", _hostTr.dom());
                 _$a.append(_hostTr.dom())
                 _hostTr.run(
@@ -317,8 +324,7 @@ function HTStructure(hostTr, hTHostsVisualLocation){
     this.run=(hTHostsVisualLocation, hTAnyClickListening)=>{
         console.log("HTStructure.run()");
         this.hTHostsVisualLocation = hTHostsVisualLocation;
-        _a += "<table id='"+_table_id+"'>";
-        _$a = $(_a);
+        _$a = $("<table id='"+_table_id+"'>");
         if(this.hTHostsVisualLocation){this.hTHostsVisualLocation.append_table(_$a);}
         _trStor = new HT_TrStor().init(this.hostTr, hTAnyClickListening);
         this.minimal_table("not requested data");
@@ -333,6 +339,7 @@ function HTStructure(hostTr, hTHostsVisualLocation){
 function HT_TrStor(){
     const _all_trs = {};
     let _tr_counter = 0;
+    let _is_last_tr_new = false;
     let hostTrFactory = undefined; //init
     this.hTAnyClickListening = undefined;//init
     this.instance=()=>{return new HT_TrStor();}
@@ -342,35 +349,41 @@ function HT_TrStor(){
         return this;
     }
     this.len=()=>{return Object.keys(_all_trs).length}
+    this.is_empty=()=>{return Object.keys(_all_trs).length == 0}
     this.all=()=>{return Object.values(_all_trs);}
-    this.alone_minimal_tr=()=>{return _all_trs[Object.keys(_all_trs)[0]]}
+    this.zero_tr=()=>{return _all_trs[Object.keys(_all_trs)[0]]}
     this.new_tr=(parent_width)=>{
         const new_tr = hostTrFactory.instance(_tr_counter++).init(parent_width, this.hTAnyClickListening);
+        console.log("HT_TrStor.new_tr() =", new_tr)
         _all_trs[_tr_counter] = new_tr;
         return new_tr;
     }
+    this.is_last_new=()=>{}
     this.not_crowded=(_max_td_count, parent_width)=>{
+        console.log("HT_TrStor.not_crowded() _all_trs =", _all_trs)
         let not_crowded_tr = undefined;
         const trs_keys = Object.keys(_all_trs);
         for(let i=0; i<trs_keys.length; i++){
             const one_tr_key = trs_keys[i];
             if(_all_trs[one_tr_key].host_count() < _max_td_count){
                 not_crowded_tr = _all_trs[one_tr_key];
+                _is_last_tr_new = false;
                 break;
             }
         }
         if(not_crowded_tr == undefined){
             not_crowded_tr = this.new_tr(parent_width);
+            _is_last_tr_new = true;
         }
         return not_crowded_tr;
     }
 }
 function HostTr(hostTd, order_number){
+    this.order_number = order_number;
     this.hostTd = hostTd;
     this.hTAnyClickListening = undefined;//init
     this.id=()=>{return order_number}
     const any_tr_id_begin_with = "host_table_tr__";
-    let _a = "";
     let _$a = undefined;
     const _hosts_td = {};
     let _parent_width;
@@ -379,13 +392,12 @@ function HostTr(hostTd, order_number){
         console.log("HostTr.init() id=", this.id())
         this.hTAnyClickListening = hTAnyClickListening;
         _parent_width = parent_width;
-        _a = "<tr>"
-        _$a = $("<tr>")
+        _$a = $("<tr style='background:#ddeeee;'>")
         _$a.attr('id', any_tr_id_begin_with+this.id());
         //console.log("HostTr.init(): _$a =", _$a)
         return this;
     }
-    this.html=()=>{return _a}
+    this.html=()=>{return _$a.get(0).outerHTML}
     this.dom=()=>{return _$a}
     this.hosts=()=>{return _hosts_td}
     this.host_count=()=>{return Object.keys(_hosts_td).length}
@@ -393,19 +405,23 @@ function HostTr(hostTd, order_number){
     //@param {Number} _max_td_count - max count of td in one tr
     //@param {Function} if_overhead_callback - callback in case when this TR already overloaded (has max count of TD inside)
     this.host_born=(server_msg_dto, _max_td_count, if_overload_callback)=>{
-        console.log("HostTr.host_born()")
-        if(Object.keys(_hosts_td).length >= _max_td_count){
+        const hosts_count = Object.keys(_hosts_td).length;
+        console.log("HostTr.host_born() _hosts_td.length = ", hosts_count)
+        if(hosts_count >= _max_td_count){
+            console.log("HostTr.host_born() _hosts_td >= max_td_count:",hosts_count, _max_td_count)
             if_overload_callback(true);
         }else{
-            if(Object.keys(_hosts_td).length == 0){
+            if(hosts_count == 0){
                 //@ очистить строку от первого тестового td, который содержит надпись "no hosts loaded"
+                console.log("HostTr.host_born() this html before emtpy =", this.html());
                 _$a.empty();
             }
-            const _hostTd = _create_host_td(server_msg_dto);
+            console.log("HostTr.host_born() this html =", this.html());
+            const _hostTd = hostTd.instance(server_msg_dto.md5).init(_$a.width(), this.hTAnyClickListening);
             _$a.append(_hostTd.dom())
             _hosts_td[server_msg_dto.md5] =_hostTd;
             _hostTd.host_born(server_msg_dto)
-            console.log("HostTr.host_born(): _$a =", _$a);
+            console.log("HostTr.host_born(): _$a =", this.html());
         }
     }
     //@param server_msg_dto = {msg: "host_born", creator_type: "launcher", creator_pid: 6252, creator_apid: -1, md5: "6e8bc6f1e3ef10adf9dd98617c133110"}
@@ -453,13 +469,11 @@ function HostTr(hostTd, order_number){
             }
         }
     }
-    const _create_host_td=(server_msg_dto)=>{
-        return hostTd.instance(server_msg_dto.md5).init(_$a.width(), this.hTAnyClickListening);
-    }
     this.run=(host_list_of_one_row)=>{
         console.log("HostTr.run()")
         for(let i=0; i<host_list_of_one_row.length; i++){
-            const _hostTd = _create_host_td(host_list_of_one_row[i]);
+            //const _hostTd = _create_host_td(host_list_of_one_row[i]);
+            const _hostTd = hostTd.instance(host_list_of_one_row[i].md5).init(_$a.width(), this.hTAnyClickListening);
             _$a.append(_hostTd.dom());
             _hosts_td[host_list_of_one_row[i].md5] =_hostTd;
             _hostTd.run(host_list_of_one_row[i]);
@@ -483,10 +497,10 @@ function HostTd(hostHeader, hostLauncher, hostController, md5_id){
     this.curLauncher = undefined;
     this.curController = undefined;
     this.hTAnyClickListening = undefined;//init
+    this.dom=()=>{return _$a}
     this.html=()=>{return _$a.html()}
     this.md5=()=>{return md5_id;}
     let _parent_width;
-    let _a = "";
     let _$a = undefined;
     let $agents_wrapper;
     let _agents_wrapper_height = 72;
@@ -496,11 +510,10 @@ function HostTd(hostHeader, hostLauncher, hostController, md5_id){
     this.id=()=>{return _id;}
     this.instance=(md5_id)=>{return new HostTd(hostHeader, hostLauncher, hostController, md5_id);}
     this.init=(parent_width, hTAnyClickListening)=>{
-        console.log("HostTr.init() md5=", this.md5())
+        console.log("HostTd.init() md5=", this.md5())
         this.hTAnyClickListening = hTAnyClickListening;
         _parent_width = parent_width;
-        _a += "<td valign='top' class = 'host' style='border:1px solid red;'>";
-        _$a = $(_a);
+        _$a = $("<td valign='top' class = 'host' style='border:1px solid red;'></td>");
         _$a.on('click', (evt)=>{
             console.log("clicked!");
             _$a.css('border', '2px solid #f2f');
@@ -514,7 +527,6 @@ function HostTd(hostHeader, hostLauncher, hostController, md5_id){
         if(_$a){_$a.append(msg)}
         return this;
     }
-    this.dom=()=>{return _$a}
     //@param server_msg_dto = {msg: "host_born", creator_type: "launcher", creator_pid: 6252, creator_apid: -1, md5: "6e8bc6f1e3ef10adf9dd98617c133110"}
     this.host_born=(server_msg_dto)=>{
         const _agent_type = server_msg_dto.creator_type;
@@ -529,8 +541,10 @@ function HostTd(hostHeader, hostLauncher, hostController, md5_id){
     this.agent_online=(server_msg_dto)=>{
         console.log("HostTd.agent_online(1) _$a =",_$a)
         if(server_msg_dto.agent_type == "launcher"){
+            this.curLauncher = hostLauncher.instance(server_msg_dto).init(_$a.width(), this).run();
             this.curLauncher.agent_online(server_msg_dto);
         }else if(server_msg_dto.agent_type == "controller"){
+            this.curController = hostController.instance(server_msg_dto).init(_$a.width(), this).run();
             this.curController.agent_online(server_msg_dto);
         }else{
             console.log("WARNING: HostTd.agent_online() server_msg_dto =", server_msg_dto)
@@ -538,10 +552,10 @@ function HostTd(hostHeader, hostLauncher, hostController, md5_id){
     }
     //@param server_msg_dto = {msg: "agent_offline", agent_type: "controller", md5: "6e8bc6f1e3ef10adf9dd98617c133110"}
     this.agent_offline=(server_msg_dto, cb)=>{
+        console.log("HostTd.agent_offline()")
         if(server_msg_dto.agent_type == "launcher"){
             this.curLauncher.agent_offline(server_msg_dto, (is_agent_offline)=>{
-                _after_agent_offline(cb);
-                
+                _after_agent_offline(cb);    
             });
         }else if(server_msg_dto.agent_type == "controller"){
             this.curController.agent_offline(server_msg_dto, (is_agent_offline)=>{
@@ -559,7 +573,8 @@ function HostTd(hostHeader, hostLauncher, hostController, md5_id){
         const is_launcher_offline = !this.curLauncher.online();
         const is_controller_offline = !this.curController.online();
         if(is_launcher_offline && is_controller_offline){
-            _$a.remove();
+            console.log("HostTd._after_agent_offline() both agents are offline")
+            _$a.empty();
             //@ После своих процедур передаём наверх, в HostTr, потому что ему может потребоваться удалить 
             cb(true, this.md5());//host IS empty, BOTH agents are left
         }else{
@@ -639,7 +654,7 @@ function HostLauncher(data){
     }
     let _online = false;
     this.online=()=>{return _online}
-    this.html=()=>{return _a}
+    this.html=()=>{return _$a.get(0).outerHTML}
     this.dom=()=>{return _$a}
     this.dom_height=()=>{return _$a.height()}
     //@param server_msg_dto = {msg: "agent_online", agent_type: "controller", agent_pid: 4904, agent_ppid: 5144, agent_apid: 5864, md5: "6e8bc6f1e3ef10adf9dd98617c133110"}
@@ -651,6 +666,7 @@ function HostLauncher(data){
     this.agent_offline=(server_msg_dto, cb)=>{
         _online = false;
         _$a.empty();
+        console.log("HostLauncher.agent_offline() outer html=", this.html())
         cb(true);
     }
     this.run=()=>{
@@ -678,7 +694,7 @@ function HostController(taskList, data){
     }
     let _online = false;
     this.online=()=>{return _online}
-    this.html=()=>{return _a}
+    this.html=()=>{return _$a.get(0).outerHTML}
     this.dom=()=>{return _$a}
     this.dom_height=()=>{return _$a.height()}
     //@param server_msg_dto = {msg: "agent_online", agent_type: "controller", agent_pid: 4904, agent_ppid: 5144, agent_apid: 5864, md5: "6e8bc6f1e3ef10adf9dd98617c133110"}
@@ -686,6 +702,7 @@ function HostController(taskList, data){
         console.log("HostController.agent_online() server_msg =",server_msg_dto)
         _online = true;
         _$a.empty().append(agent_data_html(server_msg_dto));
+        console.log("HostController.agent_online() outerHtml =",this.html())
         this.curTaskList = this.taskList.instance().init();
         _$a.append(this.curTaskList.dom());
     }
@@ -696,15 +713,18 @@ function HostController(taskList, data){
     }
     this.agent_work=(value, hostTd)=>{
         console.log("HostController.agent_work()")
-        this.curTaskList.agent_work(value, hostTd)
+        if(this.curTaskList){
+            this.curTaskList.agent_work(value, hostTd)
+        }
     }
     this.run=()=>{
         console.log("HostController.run() _data=",_data);
-        if(_data.controller){
-            this.pid = _data.controller.agent_pid;
-            this.apid = _data.controller.agent_apid;
+        if(_data.controller || _data.agent_type == "controller"){
+            const controller_ref = _data.controller ? _data.controller : _data;
             _online = true;
-            _$a.append(agent_data_html(_data.controller))
+            this.pid = controller_ref.agent_pid;
+            this.apid = controller_ref.agent_apid;
+            _$a.append(agent_data_html(controller_ref))
             this.curTaskList = this.taskList.instance().init();
             _$a.append(this.curTaskList.dom());
         }

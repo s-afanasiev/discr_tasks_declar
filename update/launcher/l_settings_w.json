@@ -2,5 +2,5 @@
 	"client_socket": "http://ita52:55999",
 	"local_dir_controller": "../controller",
 	"local_dir_launcher": "../launcher",
-	"remote_dir": "\\\\seasea/JAM/discrete_tasks/discrete_tasks_current/update"
+	"remote_dir": "\\\\ita52/Users/safanasyev/Downloads/discrete_tasks_current/update"
 }
