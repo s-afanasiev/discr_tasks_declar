@@ -166,7 +166,7 @@
         }
     }
     function BrowserIoClients(){
-        this.updatableHostCluster=undefined;
+        this.updatableHostCluster=undefined;//run
         this.socket = undefined;
         this.run=(updatableHostCluster)=>{
             this.updatableHostCluster=updatableHostCluster;
@@ -204,6 +204,7 @@
         this.httpServer = httpServer;
         this.updatableHostCluster=undefined;
         this.browserIoClients=undefined;
+        this.externalSource=undefined;
         this.run=(updatableHostCluster, browserIoClients, externalSource)=>{
             this.updatableHostCluster = updatableHostCluster;
             this.browserIoClients = browserIoClients;
@@ -243,7 +244,7 @@
             this.manifest.run(this.hostCluster, SETTINGS);
             this.SETTINGS = SETTINGS;
         }
-        //@ new socket connection from IoServer
+        //@ new socket (new host launcher or controller) connection from IoServer
         this.welcomeAgent=(io_srv_msg)=>{
             this.hostCluster.welcomeAgent(
                 io_srv_msg, 
@@ -255,9 +256,12 @@
         this.propagateManifestDiff=(mans_diff)=>{
             this.hostCluster.propagateManifestDiff(mans_diff);
         }
+        //@ command from outside browser or another external source
+        //@param {Object dto} msg - e.g. {type: 'list_future_jobs',host_id: '6e8bc6f1e3ef10adf9dd98617c133110'}
+        //@param {Boolean} is_ext_kick - menas its not from browser, but from another one external source
         this.gui_ctrl=(msg, is_ext_kick)=>{
-            //console.log("UpdatableHostCluster.gui_ctrl(): msg=", msg);  
-            if(msg == "switch_manifest_off"){
+            console.error("UpdatableHostCluster.gui_ctrl(): msg=", msg);  
+            if(msg.type == "switch_manifest_off"){
                 this.manifest.switch_off();
             }else{
                 this.hostCluster.gui_ctrl(msg, is_ext_kick);
@@ -669,6 +673,9 @@
             _hosts_list.push(agentObj);
             return agentObj;
         }
+        //@ command from outside browser or another external source
+        //@param {Object dto} msg - e.g. {type: 'list_future_jobs',host_id: '6e8bc6f1e3ef10adf9dd98617c133110'}
+        //@param {Boolean} is_ext_kick - menas its not from browser, but from another one external source
         this.gui_ctrl=(msg, is_ext_kick)=>{
             const recipient = (is_ext_kick) ? this.externalSource : this.browserIoClients;
             if(typeof msg != "object"){
@@ -678,7 +685,7 @@
                 const result = _hosts_list.map(host=>{
                     let res = {};
                     res.md5 = host.commonMd5();
-                    const add_info = host.gui_ctrl(msg.type);
+                    const add_info = host.gui_ctrl(msg);
                     res = Object.assign(res, add_info);
                     return res;
                 });
@@ -706,8 +713,6 @@
                 }
             }else if(msg.type=="list_future_jobs"||msg.type=="drop_future_jobs"){    
                 let host_matched = _hosts_list.filter(host=>{
-                    console.log("HostCluster.gui_ctrl(): host md5=", host.commonMd5());
-                    console.log("HostCluster.gui_ctrl(): msg.host_id=", msg.host_id);
                     return host.commonMd5() == msg.host_id;
                 });
                 if(host_matched.length == 0){
@@ -812,9 +817,10 @@
                 hostCluster
 			);
 		}
+        //@param {Object dto} msg - e.g. {type: 'host_table',host_id: '6e8bc6f1e3ef10adf9dd98617c133110'}
         //@param {Boolean} is_ext_kick - if this event come from some external source or from browser
         this.gui_ctrl=(msg, is_ext_kick)=>{
-            if(msg == 'host_table'){
+            if(msg.type == 'host_table'){
                 const result = {};
                 if(this.launcher.isOnline()){
                     result.launcher = {}
@@ -1191,6 +1197,7 @@
         //@ this in fact not some kind of initialization, but simply pass the object
 		this.init =(agentUpdateChain)=>{
             this.agentUpdateChain = agentUpdateChain;
+            this.normalControllerMode = this.normalControllerMode.instance()
             return this;
         }
         this.run=function(browserIoClients, host){
@@ -1243,7 +1250,7 @@
             }
         }
         this.gui_ctrl=(msg, is_ext_kick)=>{
-            console.log("Controller.gui_ctrl(): msg=", msg);
+            //console.log("Controller.gui_ctrl(): msg=", msg);
             if(msg.type=="list_future_jobs"){
                 this.normalControllerMode.list_future_jobs(list=>{
                     console.log("Controller.gui_ctrl(): list_future_jobs=",list);
@@ -1636,6 +1643,7 @@
     function NormalControllerMode(jobs){
         this.jobs=jobs;
         this.agent_socket=undefined; //run()
+        this.instance=()=>{return new NormalControllerMode(jobs)}
         this.drop_future_jobs=(cb)=>{
             this.jobs.drop_future_jobs(is_ok=>{
                 if(cb){cb(is_ok)}
@@ -1650,6 +1658,7 @@
         this.run=(controller, agent_socket)=>{
             this.agent_socket =agent_socket;
             console.log("NormalControllerMode.run()...");
+            this.jobs = this.jobs.instance();
             this.jobs.run(controller, this.agent_socket);
         }
     }
@@ -1659,19 +1668,20 @@
         this.agent_socket=undefined; //run()
         this.controller=undefined;//run
         this.jobsChaining=undefined;//run
+		this.instance=()=>{return new Jobs(jobs_schedule)}
 		this.run=(controller, agent_socket)=>{
             this.agent_socket = agent_socket;
             this.controller = controller;
-            if(!this.schedule){
-                console.error("No schedule!");
-                return [];
-            }else{
+            if(this.schedule){
                 this.jobsChaining = new JobsChaining(
                     new JobsInit(),
                     new ExtendedJob(),
                     new IntervalJobs(),
                     new DelayedJobs().init()
                 ).run(this.schedule, this.controller, this.agent_socket);
+            }else{
+                console.error("No schedule!");
+                return [];
             }
 		}
         this.drop_future_jobs=()=>{

@@ -3,64 +3,54 @@ function app_run(args){
     //@ param {Object} args = app_run({window:this, socket_io_address: endvr_server_address, parent_id: "main_div"}); //app.js
     return new App(
         new NavMenu(
-            new SelectedHost(
-                new HostActions(
-                    new FutureJobs(),
-                    new AddedJob(),
-                    new StoppedJob()
-                ),
-                new OneHostPrivateInterface()
-            ).as("selectedHost"),
-            new NavCommonBtns()
-        ),
-        new HTApiForNavMenu(),
-        new HostTable2(
-            new HTRequestsByClick(
-                new HTAnyClickListening(
-                    new HTHostsVisualLocation(
-                        new HTStructure(
-                            new HostTr(
-                                new HostTd(
-                                    new HostHeader(
-                                        new HostBtnFutureJobs()
-                                    ),
-                                    new HostLauncher(
-                                        new TaskList()
-                                    ),
-                                    new HostController(
-                                        new TaskList()
-                                    )
-                                )
-                            )
-                        ),
-                        new HTSocketResponses(
-                            new HTSocketReqHosts(
-                                new HTSocketConnListening()
-                            )
-                        ).with("host_table", new HTSocketRespHostTable())
-                        .with("host_born", new HTSocketRespHostBorn())
-                        .with("agent_online", new HTSocketRespAgentOnline())
-                        .with("agent_offline", new HTSocketRespAgentOffline())
-                        .with("agent_work", new HTSocketRespAgentWork()),
-                        new WindowEvents(args.window)
-                    )
+            new NavSelectedHost(
+                new NavFutureJobsPanel(),
+                new AddedJob(),
+                new StoppedJob(
+                    new ResumedJob(),
+                    new DeletedJob()
                 )
+            ),
+            new NavGlobalBtns()
+        ),
+        new HostTable2(
+            new HTHostsVisualLocation(
+                new HTStructure(
+                    new HostTr(
+                        new HostTd(
+                            new HostHeader(
+                                new HostBtnFutureJobs()
+                            ),
+                            new HostLauncher(
+                                new TaskList()
+                            ),
+                            new HostController(
+                                new TaskList()
+                            )
+                        )
+                    )
+                ),
+                new HTSocketResponses(
+                    new HTSocketReqHosts(
+                        new HTSocketConnListening()
+                    )
+                ).with("host_table", new HTSocketRespHostTable())
+                .with("host_born", new HTSocketRespHostBorn())
+                .with("agent_online", new HTSocketRespAgentOnline())
+                .with("agent_offline", new HTSocketRespAgentOffline())
+                .with("agent_work", new HTSocketRespAgentWork())
             )
         )
     ).run(args)
 }
-function App(navMenu, hTApiForNavMenu, hostTable){
+function App(navMenu, hostTable){
     this.dom=()=>{}
     this.html=()=>{}
     //@ param {Object} args = app_run({window:this, socket_io_address: endvr_server_address, parent_id: "main_div"}); //app.js
     this.run=(args)=>{
         const server_socket = io(args.socket_io_address, {query:{browser_or_agent:"browser"}});
-        navMenu.run(server_socket, hTApiForNavMenu, args.parent_nav_id);
-        hTApiForNavMenu.run(navMenu);
-        hostTable.run(server_socket, hTApiForNavMenu, args.parent_id)
-        const parent_div_id = args.parent_id;
-        //new AnyClickProcess().run(_window)
-        //hostTable.run(config={}).dom();
+        const navApi = navMenu.run(server_socket, args.parent_nav_id).api();
+        hostTable.run(server_socket, navApi, args.parent_id)
     }
 }
 function AnyClickProcess(){
@@ -75,94 +65,148 @@ function AnyClickProcess(){
     }
 }
 //@---------------------------------
-function NavMenu(selectedHost, navCommonBtns){
-    let _a = "";
-    let _$a = undefined;
-    this.run=(server_socket, hTApiForNavMenu, parent_div_id)=>{
-        selectedHost.init(server_socket)
-        _a = "<div style='height:100%; width:100%; border:1px solid blue; display:table;'>"
-        _$a = $(_a);
+function NavMenu(navSelectedHost, navGlobalBtns){
+    let _$a = undefined;//run
+    let _navApi = undefined;//run
+    this.run=(server_socket, parent_div_id)=>{
+        _navApi = new NavApi().init();
+        navSelectedHost.init(server_socket)
+        _$a = $("<div style='height:100%; width:100%; border:1px solid blue; display:table;'>");
         $("#"+parent_div_id).append(_$a);
         _$a.append("<div style='display:table-cell; width:10%;'>nav menu!</div>")
-        _$a.append(navCommonBtns.run().dom())
-        _$a.append(selectedHost.run().dom())
+        _$a.append(navGlobalBtns.run().dom())
+        _$a.append(navSelectedHost.init(server_socket, _navApi).run().dom());
+        return this;
     }
-    this.click_on_host=(host_info)=>{
-        selectedHost.click_on_host(host_info)
-    }
-    this.future_jobs=(host_md5)=>{
-        selectedHost.future_jobs(host_md5)
+    this.api=()=>{return _navApi}
+    function NavApi(){
+        const event_types = ["host_click", "future_jobs_click"];
+        const _target_list = {};
+        this.init=()=>{
+            event_types.forEach(event_type=>{_target_list[event_type] = [];})
+            return this;
+        }
+        this.notify=(event_type, data_dto)=>{
+            //console.log("NavApi.notify() event_type= ", event_type)
+            if(event_types.includes(event_type)){
+                console.log("NavApi.notify(): event_type= ", event_type);
+                _target_list[event_type].forEach(targ=>{
+                    targ.nav_api_notify(event_type, data_dto);
+                })
+            }else{
+                console.log("NavApi.notify(): no such event: ", event_type);
+            }
+        }
+        this.subscribe=(event_type, target)=>{
+            if(event_types.includes(event_type)){
+                _target_list[event_type].push(target);
+            }else{
+                console.log("NavApi.subscribe(): no such event: ", event_type);
+            }
+        }
+        this.unsubscribe=(event_type, target)=>{
+            const arr = _target_list[event_type];
+            for(let i=0; i<arr.length; i++){
+                const targ = arr[i];
+                if(target.id() == targ.id()){
+                    arr[i].splice(i,1);
+                    i--;
+                }
+            };
+        }
     }
 }
-function SelectedHost(hostActions, oneHostPrivateInterface){
+function NavSelectedHost(navFutureJobsPanel, addedJob, stoppedJob){
     let _$a = undefined//run
     let _server_socket = undefined//init
+    let _navApi = undefined;//init
+    this.id=()=>{return "navSelectedHost"}
     this.as=(name)=>{
         _global_stor[name] = this;
         return this;
     }
     this.dom=()=>{return _$a;}
-    this.init=(server_socket)=>{
+    this.init=(server_socket, navApi)=>{
+        _navApi = navApi;
         _server_socket = server_socket;
-        hostActions.init(_server_socket);
+        navFutureJobsPanel.init(server_socket, navApi);
         return this;
     }
     this.run=()=>{
         _$a = $("<div style='height:100%; width:50%; border:1px dashed orange; display:table-cell;'>")
-        _$a.append("<div>selected host</div>");
+        _$a.append("<div id='selected_host_md5_place'>selected host</div>");
+        _$a.append(navFutureJobsPanel.run().dom())
+        _navApi.subscribe("host_click", this);
         return this;
     }
-    this.click_on_host=(host_info)=>{
-        _$a.empty();
-        _$a.append("<div>selected host:</div>");
-        _$a.append("<div><span>md5: </span><span style='background-color:yellow'>"+host_info.md5+"</span></div>");
-        const _hostTd = host_info.hostTd;
-        _$a.append("<div><span>controller pid: </span><span>"+_hostTd.curController.apid+"</span></div>")
-        _$a.append(hostActions.dom())
-    }
-    this.future_jobs=(host_md5)=>{
-        hostActions.future_jobs(host_md5)
-    }
-}
-function HostActions(futureJobs, addedJob, stoppedJob){ 
-    //this.curFutureJobs=undefined;//init
-    let _server_socket = undefined;//init
-    let _$a = undefined;//init
-    this.instance=()=>{return new HostActions(futureJobs, addedJob, stoppedJob);}
-    this.dom=()=>{return _$a}
-    this.init=(server_socket)=>{
-        _$a = $("<div id='host_actions'>");
-        _server_socket = server_socket;
-        futureJobs.init(server_socket)
-        _$a.append(futureJobs.dom())
-    }
-    this.future_jobs=(host_md5)=>{
-        futureJobs.future_jobs(host_md5)
+    this.nav_api_notify=(eventType, data_dto)=>{
+        console.log("NavSelectedHost.nav_api_notify(): selected_host_md5_place =", selected_host_md5_place)
+        if(eventType == "host_click"){
+            if(data_dto.md5){
+                $("#selected_host_md5_place", _$a).html("<span>md5: "+data_dto.md5+"</span>");
+            }else{
+                console.log("NavSelectedHost.nav_api_notify(): no md5 data on 'host_click' event")
+            }
+        }
     }
 }
-function FutureJobs(){
+function NavFutureJobsPanel(){
     let _$a = undefined;
-    this.instance=()=>{return new FutureJobs();}
+    let _navApi = undefined;//init 'future_jobs_click' event from navApi source
+    let server_socket = undefined;//init
+    let _cur_clicked_host_md5 = ""//on 
+    const _id = "navFutureJobsPanel";
+    this.id=()=>{return _id}
+    this.instance=()=>{return new NavFutureJobsPanel();}
     this.dom=()=>{return _$a;}
-    this.init=(server_socket)=>{
-        console.log("FutureJobs.init()")
-        _$a = $("<div id='future_jobs'></div>")
+    this.init=(_server_socket, navApi)=>{
+        server_socket = _server_socket;
+        _navApi = navApi;
+        console.log("NavFutureJobsPanel.init()")
+        _$a = $("<div id='"+_id+"'></div>")
+        return this;
+    }
+    this.run=()=>{
+        _navApi.subscribe("future_jobs_click", this);
+        //@TODO: более правильно, чтобы на данное событие подписывались ячейки таблицы хостов - т.е. сами хосты
         server_socket.on("gui_news", data=>{
             if(data.msg == 'list_future_jobs'){
-                console.log("FutureJobs.init() sokcetdata=", data )
-                const future_jobs_list = JSON.stringify(data.value);
-                console.log("FutureJobs.init() future_jobs_list=", future_jobs_list )
-                _$a.empty().append(future_jobs_list)
+                console.log("NavFutureJobsPanel.init() sokcetdata=", data )
+                if(_cur_clicked_host_md5 == data.md5){
+                    const future_jobs_list = JSON.stringify(data.value);
+                    console.log("NavFutureJobsPanel.init() data.value=", data.value)
+                    _$a.empty();
+                    data.value.forEach(one_future_job=>{
+                        const $stop_future_job_btn = $("<span style='cursor:pointer; background:red;'>stop</span>");
+                        $stop_future_job_btn.on("click", (evt)=>{
+                            server_socket.emit('gui_ctrl', {type:'drop_future_jobs', host_id:_cur_clicked_host_md5});
+                        })
+                        _$a.append("<span>"+JSON.stringify(one_future_job)+"</span>")
+                        _$a.append($stop_future_job_btn)
+                    })
+                    if(data.value.length == 0){
+                        _$a.empty().append("no future jobs")
+                    }
+                }
             }
-        })
+        });
         return this;
     }
-    this.future_jobs=(host_md5)=>{}
+    this.nav_api_notify=(eventType, data_dto)=>{
+        console.log("NavFutureJobsPanel.nav_api_notify() eventType=",eventType);
+        if(data_dto.md5){
+            _cur_clicked_host_md5 = data_dto.md5;
+        }else{
+            console.log("NavFutureJobsPanel.nav_api_notify(): no md5 data on 'future_jobs_click' event")
+        }
+    }
 }
 function AddedJob(){}
-function StoppedJob(){}
+function StoppedJob(resumedJob, deletedJob){}
+function ResumedJob(){}
+function DeletedJob(){}
 function OneHostPrivateInterface(){}
-function NavCommonBtns(){
+function NavGlobalBtns(){
     let _$a = undefined//run
     this.dom=()=>{return _$a;}
     this.run=()=>{
@@ -171,96 +215,60 @@ function NavCommonBtns(){
     }
 }
 //@---------------------------------
-function HTApiForNavMenu(){
-    this.navMenu = undefined;//run
-    this.run=(navMenu)=>{
-        this.navMenu = navMenu;
-    }
-    this.click_on_host=(host_info)=>{
-        this.navMenu.click_on_host(host_info)
-    }
-    this.future_jobs=(host_md5)=>{
-        this.navMenu.future_jobs(host_md5)
+function HostTable2(hTHostsVisualLocation){
+    this.run=(server_socket, navApi, parent_div_id)=>{
+        hTHostsVisualLocation.run(server_socket, navApi, parent_div_id);
     }
 }
-//@---------------------------------
-function HostTable2(hTRequestsByClick){
-    this.run=(server_socket, hTApiForNavMenu, parent_div_id)=>{
-        hTRequestsByClick.run(server_socket, hTApiForNavMenu, parent_div_id);
-    }
-}
-function HTRequestsByClick(hTAnyClickListening){
-    let _server_socket=undefined;//run
-    this.run=(server_socket, hTApiForNavMenu, parent_div_id)=>{
-        _server_socket = server_socket;
-        hTAnyClickListening.run(server_socket, hTApiForNavMenu, parent_div_id, this)
-    }
-    this.future_jobs=(host_md5)=>{
-        _server_socket.emit('gui_ctrl', {type:'list_future_jobs', host_id:host_md5});
-    }
-}
-function HTAnyClickListening(hTHostsVisualLocation){
-    this.hTRequestsByClick=undefined;//run
-    this.hTApiForNavMenu=undefined;//run
-    this.run=(server_socket, hTApiForNavMenu, parent_div_id, hTRequestsByClick)=>{
-        this.hTRequestsByClick = hTRequestsByClick;
-        this.hTApiForNavMenu = hTApiForNavMenu;
-        hTHostsVisualLocation.run(server_socket, hTApiForNavMenu, parent_div_id, this)
-    }
-    //@ click_on_host service
-    this.click_on_host=(host_md5)=>{
-        hTHostsVisualLocation.click_on_host(host_md5);
-        this.hTApiForNavMenu.click_on_host(host_md5);
-    }
-    this.future_jobs=(host_md5)=>{
-        this.hTApiForNavMenu.future_jobs(host_md5);
-        this.hTRequestsByClick.future_jobs(host_md5)
-    }
-}
-function HTHostsVisualLocation(hTStructure, hTSocketResponses, windowEvents){
-    let _parent_div_id = ""; //run
-    this.run=(server_socket, hTApiForNavMenu, parent_div_id, hTAnyClickListening)=>{
+function HTHostsVisualLocation(hTStructure, hTSocketResponses){
+    this.run=(server_socket, navApi, parent_div_id)=>{
         console.log("HTHostsVisualLocation.run()");
-        _parent_div_id = parent_div_id;
-        hTStructure.run(this, hTAnyClickListening)
-        hTSocketResponses.run(server_socket, hTApiForNavMenu, hTStructure, this);
-        windowEvents.run(hTStructure);
-        
-    }
-    this.append_table=(_$a)=>{
-        console.log("HTHostsVisualLocation.draw_table()");
-        //console.log("HTHostsVisualLocation.draw_table(): _a =", _a)
-        //console.log("HTHostsVisualLocation.draw_table(): _parent_div_id =", _parent_div_id)
-        $("#"+_parent_div_id).append(_$a);
-    }
-    this.click_on_host=(host_md5)=>{
-        //@ to reset selection from other hosts
-        hTStructure.click_on_host(host_md5);
+        const host_table = hTStructure.run(server_socket, navApi);
+        $("#"+parent_div_id).append(host_table.dom());
+        hTSocketResponses.run(server_socket, navApi, hTStructure);
+        //windowEvents.run(hTStructure);
     }
 }
 //@ Renamed from 'HostTable' to 'HostTable2', because in other js-file already exists name 'HostTable'
-function HTStructure(hostTr, hTHostsVisualLocation){
+function HTStructure(hostTr){
     this.hostTr = hostTr;
-    this.hTHostsVisualLocation = hTHostsVisualLocation;
-    this.hTAnyClickListening = undefined;//run
-    let _max_td_count = 1;
-    this.change_max_td_count=(count)=>{
-        _max_td_count = count;
-    }
+    let _max_td_count = 2;
+    this.change_max_td_count=(count)=>{_max_td_count = count;}
     const _table_id = "host_table";
     let _trStor = undefined; //run
     let _$a = undefined;
+    let server_socket=undefined;//run
     this.html=()=>{return _$a.get(0).outerHTML;}
     this.dom=()=>{return _$a;}
-    this.instance=()=>{return new HTStructure(this.hostTr, this.hTHostsVisualLocation)}
+    this.instance=()=>{return new HTStructure(this.hostTr)}
+    this.run=(_server_socket, navApi)=>{
+        server_socket = _server_socket;
+        console.log("HTStructure.run()");
+        _$a = $("<table id='"+_table_id+"'>");
+        _trStor = new HT_TrStor().init(this.hostTr, navApi, server_socket);
+        this.set_thumb("not requested data");
+        navApi.subscribe("host_click", this)
+        return this;
+    }
+    this.nav_api_notify=(event_type, data_dto)=>{
+        if(event_type == "host_click"){
+            if(data_dto.md5){
+                _trStor.all().forEach(hostTr=>{
+                    hostTr.drop_host_selection_except(data_dto.md5)
+                })
+                $("#selected_host_md5_place", _$a).html("<span>md5: "+data_dto.md5+"</span>");
+            }else{
+                console.log("HTStructure.nav_api_notify(): no md5 data on 'host_click' event")
+            }
+        }
+    }
     //@param server_msg_dto = {msg: "host_born", creator_type: "launcher", creator_pid: 6252, creator_apid: -1, md5: "6e8bc6f1e3ef10adf9dd98617c133110"}
     this.host_born=(server_msg_dto)=>{
         console.log("HTStructure.host_born()");
+        if(_trStor.is_empty()){_$a.empty()}
         const _hostTr = _trStor.not_crowded(_max_td_count, _$a.width())
-        if(_trStor.is_last_new()){
-            console.log("HTStructure.host_born() new tr has created. OuterHtml before append = ", this.html())
-            _$a.append(_hostTr.dom())}
-            console.log("HTStructure.host_born() new tr has created. OuterHtml after append = ", this.html())
+        _$a.append(_hostTr.dom())
+        console.log("HTStructure.host_born() new tr has created. OuterHtml after append = ", this.html())
         _hostTr.host_born(server_msg_dto);
     }
     //@param server_msg_dto = {msg: "host_born", creator_type: "launcher", creator_pid: 6252, creator_apid: -1, md5: "6e8bc6f1e3ef10adf9dd98617c133110"}
@@ -281,29 +289,22 @@ function HTStructure(hostTr, hTHostsVisualLocation){
             });
         })
     }
-    this.minimal_table=(msg_to_show)=>{
-        console.log("HTStructure.minimal_table()");
+    this.set_thumb=(msg_to_show)=>{
+        console.log("HTStructure.set_thumb()");
         let _hostTr;
-        if(_trStor.is_empty()){
-            console.log("HTStructure.minimal_table(00)");
-            //_hostTr = _trStor.not_crowded(_max_td_count, _$a.width());
-            _hostTr = hostTr.instance().init(_$a.width()).minimal_table(msg_to_show);
-            _$a.append(_hostTr.dom());
-        }else{
-            console.log("HTStructure.minimal_table(01)");
-            //@ случай, типа, если minimal уже был вызван (а значит, уже существует строка) и вдруг вызван ещё раз (значит надо взять эту одну созданную строку)
-            _hostTr = _trStor.zero_tr()
-        }
-        _hostTr.minimal_table(msg_to_show);
+        _hostTr = hostTr.instance().init(_$a.width()).set_thumb(msg_to_show);
+        _$a.empty().append(_hostTr.dom());
+        _hostTr.set_thumb(msg_to_show);
     }
     this.draw_table=(host_list)=>{
         console.log("HTStructure.draw_table(): host_list=", host_list);
         if(host_list.length == 0){
-            this.minimal_table("no hosts online");
+            this.set_thumb("no hosts online");
         }else{
             let _cur_row = 0;
             const _tr_count = Math.ceil(host_list.length / _max_td_count);
             if(_$a){_$a.empty();}
+            _trStor.clear_all();
             //if(this.hTHostsVisualLocation){this.hTHostsVisualLocation.draw_table(_$a);}
             for(let i=0; i<_tr_count; i++){
                 const _hostTr = _trStor.not_crowded(_max_td_count, _$a.width());
@@ -324,41 +325,31 @@ function HTStructure(hostTr, hTHostsVisualLocation){
             _hostTr.agent_work(server_msg_dto);
         })
     }
-    //this.run=(host_table_config, host_list)=>{}
-    this.run=(hTHostsVisualLocation, hTAnyClickListening)=>{
-        this.hTAnyClickListening = hTAnyClickListening;
-        console.log("HTStructure.run()");
-        this.hTHostsVisualLocation = hTHostsVisualLocation;
-        _$a = $("<table id='"+_table_id+"'>");
-        if(this.hTHostsVisualLocation){this.hTHostsVisualLocation.append_table(_$a);}
-        _trStor = new HT_TrStor().init(this.hostTr, hTAnyClickListening);
-        this.minimal_table("not requested data");
-        return this;
-    }
-    this.click_on_host=(host_md5)=>{
-        _trStor.all().forEach(_tr=>{
-            _tr.click_on_host(host_md5);
-        })
-    }
 }
 function HT_TrStor(){
     const _all_trs = {};
     let _tr_counter = 0;
     let _is_last_tr_new = false;
-    let hostTrFactory = undefined; //init
-    this.hTAnyClickListening = undefined;//init
+    let hostTr_F = undefined; //init
+    this.navApi = undefined;//init
+    let server_socket = undefined;//init
     this.instance=()=>{return new HT_TrStor();}
-    this.init=(hostTr, hTAnyClickListening)=>{
-        this.hTAnyClickListening = hTAnyClickListening;
-        hostTrFactory = hostTr;
+    this.init=(hostTr, navApi, _server_socket)=>{
+        this.navApi = navApi;
+        hostTr_F = hostTr;
+        server_socket = _server_socket;
         return this;
     }
+    this.clear_all=()=>{for(let tr in _all_trs){delete _all_trs[tr]}}
     this.len=()=>{return Object.keys(_all_trs).length}
-    this.is_empty=()=>{return Object.keys(_all_trs).length == 0}
+    this.is_empty=()=>{
+        console.log("HT_TrStor.is_empty(): _all_trs=",_all_trs)
+        return Object.keys(_all_trs).length == 0
+    }
     this.all=()=>{return Object.values(_all_trs);}
     this.zero_tr=()=>{return _all_trs[Object.keys(_all_trs)[0]]}
     this.new_tr=(parent_width)=>{
-        const new_tr = hostTrFactory.instance(_tr_counter++).init(parent_width, this.hTAnyClickListening);
+        const new_tr = hostTr_F.instance(_tr_counter++).init(parent_width, this.navApi, server_socket);
         console.log("HT_TrStor.new_tr() =", new_tr)
         _all_trs[_tr_counter] = new_tr;
         return new_tr;
@@ -387,19 +378,23 @@ function HT_TrStor(){
 function HostTr(hostTd, order_number){
     this.order_number = order_number;
     this.hostTd = hostTd;
-    this.hTAnyClickListening = undefined;//init
+    this.navApi = undefined;//init
+    let server_socket = undefined;//init
     this.id=()=>{return order_number}
     const any_tr_id_begin_with = "host_table_tr__";
-    let _$a = undefined;
+    let _$a = undefined;//init
+    this.__$a = undefined;//init
     const _hosts_td = {};
     let _parent_width;
     this.instance=(order_number)=>{return new HostTr(hostTd, order_number);}
-    this.init=(parent_width, hTAnyClickListening)=>{
+    this.init=(parent_width, navApi, _server_socket)=>{
         console.log("HostTr.init() id=", this.id())
-        this.hTAnyClickListening = hTAnyClickListening;
+        this.navApi = navApi;
         _parent_width = parent_width;
+        server_socket = _server_socket;
         _$a = $("<tr style='background:#ddeeee;'>")
         _$a.attr('id', any_tr_id_begin_with+this.id());
+        this.__$a = _$a;
         //console.log("HostTr.init(): _$a =", _$a)
         return this;
     }
@@ -413,21 +408,23 @@ function HostTr(hostTd, order_number){
     this.host_born=(server_msg_dto, _max_td_count, if_overload_callback)=>{
         const hosts_count = Object.keys(_hosts_td).length;
         console.log("HostTr.host_born() _hosts_td.length = ", hosts_count)
+        //@ на случай если внутри есть неучтенный td типа заглушки
+        if(hosts_count == 0){_$a.empty()}
         if(hosts_count >= _max_td_count){
             console.log("HostTr.host_born() _hosts_td >= max_td_count:",hosts_count, _max_td_count)
             if_overload_callback(true);
         }else{
             if(hosts_count == 0){
                 //@ очистить строку от первого тестового td, который содержит надпись "no hosts loaded"
-                console.log("HostTr.host_born() this html before emtpy =", this.html());
+                //console.log("HostTr.host_born() this html before emtpy =", this.html());
                 _$a.empty();
             }
-            console.log("HostTr.host_born() this html =", this.html());
-            const _hostTd = hostTd.instance(server_msg_dto.md5).init(_$a.width(), this.hTAnyClickListening);
+            //console.log("HostTr.host_born() this html =", this.html());
+            const _hostTd = hostTd.instance(server_msg_dto.md5).init(_$a.width(), this.navApi, server_socket);
             _$a.append(_hostTd.dom())
             _hosts_td[server_msg_dto.md5] =_hostTd;
             _hostTd.host_born(server_msg_dto)
-            console.log("HostTr.host_born(): _$a =", this.html());
+            //console.log("HostTr.host_born(): _$a =", this.html());
         }
     }
     //@param server_msg_dto = {msg: "host_born", creator_type: "launcher", creator_pid: 6252, creator_apid: -1, md5: "6e8bc6f1e3ef10adf9dd98617c133110"}
@@ -461,9 +458,9 @@ function HostTr(hostTd, order_number){
             }
         }
     }
-    this.minimal_table=(msg_to_show)=>{
-        console.log("HostTr.minimal_table()");
-        const _hostTd = hostTd.instance(0).init(_$a.width()).show_msg(msg_to_show)
+    this.set_thumb=(msg_to_show)=>{
+        console.log("HostTr.set_thumb()");
+        const _hostTd = hostTd.instance(0, is_thumb_td = true).init(_$a.width(), this.navApi).show_msg(msg_to_show)
         _$a.empty().append(_hostTd.dom());
         return this;
     }
@@ -479,7 +476,7 @@ function HostTr(hostTd, order_number){
         console.log("HostTr.run()")
         for(let i=0; i<host_list_of_one_row.length; i++){
             //const _hostTd = _create_host_td(host_list_of_one_row[i]);
-            const _hostTd = hostTd.instance(host_list_of_one_row[i].md5).init(_$a.width(), this.hTAnyClickListening);
+            const _hostTd = hostTd.instance(host_list_of_one_row[i].md5, is_thumb_td=false).init(_$a.width(), this.navApi, server_socket);
             _$a.append(_hostTd.dom());
             _hosts_td[host_list_of_one_row[i].md5] =_hostTd;
             _hostTd.run(host_list_of_one_row[i]);
@@ -487,25 +484,27 @@ function HostTr(hostTd, order_number){
         return this;
     }
     //@param host_info = {md5, hostTd}
-    this.click_on_host=(host_info)=>{
+    this.drop_host_selection_except=(md5)=>{
         for(let i in _hosts_td){
-            if(_hosts_td[i].md5() != host_info.md5){
+            if(_hosts_td[i].md5() != md5){
                 _hosts_td[i].set_highlight('1px solid red')
             }
         }
     }
 }
-function HostTd(hostHeader, hostLauncher, hostController, md5_id){
+function HostTd(hostHeader, hostLauncher, hostController, md5_or_id, is_thumb_td){
     this.hostHeader = hostHeader;//factory
     this.hostLauncher = hostLauncher;//factory
     this.hostController = hostController;//factory
     this.curHeader = undefined;
     this.curLauncher = undefined;
     this.curController = undefined;
-    this.hTAnyClickListening = undefined;//init
+    this.navApi = undefined;//init
+    let _server_socket = undefined;//init
+    this.is_thumb_td = is_thumb_td;
     this.dom=()=>{return _$a}
     this.html=()=>{return _$a.html()}
-    this.md5=()=>{return md5_id;}
+    this.md5=()=>{return md5_or_id;}
     let _parent_width;
     let _$a = undefined;
     let $agents_wrapper;
@@ -514,19 +513,38 @@ function HostTd(hostHeader, hostLauncher, hostController, md5_id){
         _$a.css('border', border_params);
     }
     this.id=()=>{return _id;}
-    this.instance=(md5_id)=>{return new HostTd(hostHeader, hostLauncher, hostController, md5_id);}
-    this.init=(parent_width, hTAnyClickListening)=>{
+    this.instance=(md5_or_id, is_thumb_td)=>{return new HostTd(hostHeader, hostLauncher, hostController, md5_or_id, is_thumb_td);}
+    this.init=(parent_width, navApi, server_socket)=>{
         console.log("HostTd.init() md5=", this.md5())
-        this.hTAnyClickListening = hTAnyClickListening;
         _parent_width = parent_width;
-        _$a = $("<td valign='top' class = 'host' style='border:1px solid red;'></td>");
+        this.navApi = navApi;
+        _server_socket = server_socket;
+        let _class = 'host';
+        if(this.is_thumb_td){_class +=' thumb';}
+        _$a = $("<td valign='top' class = '"+_class+"' style='border:1px solid red;'></td>");
         _$a.on('click', (evt)=>{
             console.log("clicked!");
             _$a.css('border', '2px solid #f2f');
-            if(this.hTAnyClickListening){
-                this.hTAnyClickListening.click_on_host({md5:this.md5(), hostTd: this})
+            if(this.navApi){
+                this.navApi.notify("host_click", {md5:this.md5(), hostTd: this});
             }
         })
+        return this;
+    }
+    this.run=(data)=>{
+        console.log("HostTd.run()");
+        _$a.attr("id", "host_td__"+data.md5)
+        this.curHeader = hostHeader.instance(data).init(this.navApi, _server_socket);
+        _$a.append(this.curHeader.dom());
+        $agents_wrapper = $("<div style='height:"+_agents_wrapper_height+"px; position:relative; background:#efe;'>");
+        _$a.append($agents_wrapper);
+        //setTimeout(()=>{$agents_wrapper.height("1px")}, 1000)
+        this.curLauncher = hostLauncher.instance(data).init(_$a.width(), this.navApi).run();
+        $agents_wrapper.append(this.curLauncher.dom());
+        this.set_dom_height(this.curLauncher.dom_height());
+        this.curController = hostController.instance(data).init(_$a.width(), this.navApi).run(); 
+        $agents_wrapper.append(this.curController.dom());
+        this.set_dom_height(this.curController.dom_height());
         return this;
     }
     this.show_msg=(msg)=>{
@@ -598,38 +616,23 @@ function HostTd(hostHeader, hostLauncher, hostController, md5_id){
         const total_height = _agents_wrapper_height + height;
         $agents_wrapper.height(total_height+"px");
     }
-    this.run=(data)=>{
-        console.log("HostTd.run()");
-        _$a.attr("id", "host_td__"+data.md5)
-        //_$a.append(hostHeader.instance(data).run().dom())
-        this.curHeader = hostHeader.instance(data).init(this.hTAnyClickListening);
-        _$a.append(this.curHeader.dom());
-        $agents_wrapper = $("<div style='height:"+_agents_wrapper_height+"px; position:relative;'>");
-        _$a.append($agents_wrapper);
-        //setTimeout(()=>{$agents_wrapper.height("1px")}, 1000)
-        this.curLauncher = hostLauncher.instance(data).init(_$a.width(), this).run();
-        $agents_wrapper.append(this.curLauncher.dom());
-        this.set_dom_height(this.curLauncher.dom_height());
-        this.curController = hostController.instance(data).init(_$a.width(), this).run(); 
-        $agents_wrapper.append(this.curController.dom());
-        this.set_dom_height(this.curController.dom_height());
-        return this;
-    }
 }
 function HostHeader(hostBtnFutureJobs, data){
     const _data = data;
     let _a = "";
     let _$a = undefined;
-    this.hTAnyClickListening = undefined;//init
+    this.navApi = undefined;//init
+    let _server_socket = undefined;//init
     this.instance=(data)=>{return new HostHeader(hostBtnFutureJobs, data)}
     this.html=()=>{return _a}
     this.dom=()=>{return _$a}
-    this.init=(hTAnyClickListening)=>{
-        this.hTAnyClickListening = hTAnyClickListening;
+    this.init=(navApi, server_socket)=>{
+        this.navApi = navApi;
+        _server_socket = server_socket;
         //console.log("HostHeader.run()");
         _$a = $("<div id='host_header_md5__"+data.md5+"' style='border:1px solid green;'></div>");
         _$a.append("<div><b>"+data.md5+"</b></div>")
-        _$a.append(hostBtnFutureJobs.instance(data.md5).init(hTAnyClickListening).dom())
+        _$a.append(hostBtnFutureJobs.instance(data.md5).init(navApi, _server_socket).dom())
         return this;
     }
 }
@@ -640,10 +643,12 @@ function HostBtnFutureJobs(md5){
         return new HostBtnFutureJobs(md5);
     }
     this.dom=()=>{return _$a}
-    this.init=(hTAnyClickListening)=>{
+    this.init=(navApi, server_socket)=>{
         _$a = $("<div class='future_jobs_btn_dock' style='width:150px; background-color:#ddf; cursor:pointer;'>future jobs</div>");
         _$a.on("click", (evt)=>{
-            hTAnyClickListening.future_jobs(_md5)
+            console.log("HostBtnFutureJobs.init(); on click evt=", evt);
+            navApi.notify("future_jobs_click", {md5:_md5});
+            server_socket.emit('gui_ctrl', {type:'list_future_jobs', host_id:_md5});
         })
         return this;
     }
@@ -651,9 +656,11 @@ function HostBtnFutureJobs(md5){
 function HostLauncher(data){
     const _data = data;
     let _a = "";
-    let _$a = undefined;    
+    let _$a = undefined; 
+    this.navApi = undefined;//init   
     this.instance=(data)=>{return new HostLauncher(data)}
-    this.init=(parent_width, hostTd)=>{
+    this.init=(parent_width, navApi)=>{
+        this.navApi = navApi;
         console.log("HostLauncher.init() ", data.md5, "parent_width/2 =", parent_width/2)
         _$a = $("<div id='host_launcher__"+data.md5+"' style='width:50%; height:auto; border:1px solid blue; position:absolute; top:0; left:0;'></div>");
         return this;
@@ -693,8 +700,10 @@ function HostController(taskList, data){
     //console.log("HostController: data =", data)
     let _a = "";
     let _$a = true;
+    this.navApi = undefined;//init
     this.instance=(data)=>{return new HostController(this.taskList, data)}
-    this.init=(parent_width, hostTd)=>{
+    this.init=(parent_width, navApi)=>{
+        this.navApi = navApi;
         _$a = $("<div id='host_controller__"+data.md5+"' style='width:50%; height:auto; border:1px solid orange; position:absolute; left:50%;'></div>");
         return this;
     }
@@ -757,8 +766,8 @@ function HTSocketResponses(hTSocketReqHosts){
         _handlers[name] = obj;
         return this;
     }
-    this.run=(server_socket, hTApiForNavMenu, hTStructure, hTHostsVisualLocation)=>{
-        hTSocketReqHosts.run(server_socket, hTApiForNavMenu);
+    this.run=(server_socket, navApi, hTStructure)=>{
+        hTSocketReqHosts.run(server_socket);
         server_socket.on('gui_news', (server_msg_dto)=>{
             const responseObject = _handlers[server_msg_dto.msg];
             if(responseObject){
@@ -773,7 +782,7 @@ function HTSocketResponses(hTSocketReqHosts){
 }
 function HTSocketReqHosts(hTSocketConnListening){
     this.instance=()=>{return new HTSocketReqHosts();}
-    this.run=(server_socket, hTApiForNavMenu)=>{
+    this.run=(server_socket)=>{
         hTSocketConnListening.run(server_socket);
         hTSocketConnListening.onConnect(()=>{
             server_socket.emit('gui_ctrl', {type:'host_table'});
@@ -795,7 +804,7 @@ function HTSocketRespHostTable(){
     //@param {Object dto} host_list_dto - has params: {'msg', 'table'}
     //@param hTStructure - has all info about host table and its contain
     this.run=(hTStructure, server_msg_dto)=>{
-        console.log("HTSocketRespHostTable.run()")
+        console.log("HTSocketRespHostTable.run() server_msg_dto=", server_msg_dto)
         hTStructure.draw_table(server_msg_dto.table)
     }
 }
@@ -881,12 +890,12 @@ function WindowEvents(_window){
         }
     }
 }
-function HostTable2ClickListening(selectedHost){
+function HostTable2ClickListening(navSelectedHost){
     this.run=(hostTable)=>{
-        if(typeof selectedHost == "string"){selectedHost = _global_stor[selectedHost]}
+        if(typeof navSelectedHost == "string"){navSelectedHost = _global_stor[navSelectedHost]}
         //@ jquery object
         hostTable.dom().click((ev)=>{
-            selectedHost.set_current_host(_clicked_host(ev))
+            navSelectedHost.set_current_host(_clicked_host(ev))
         });
         return this;
     }
