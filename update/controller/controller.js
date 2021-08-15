@@ -25,6 +25,13 @@ glob.fuita = function(){
     console.log("FUITA!");
 }
 
+const my_jobs = {
+    "my_job1": function(data, socket){
+        console.log(">>> testing 'my_job1' event !!!! data =", data)
+        socket.emit("my_job1", 5)
+    },
+    "my_event2": function(data, socket){}
+}
 main();
 function main(){
 	new App().run();
@@ -33,6 +40,7 @@ function main(){
 function App(){
 	this.run=()=>{
         new Controller(
+            new AutonomousWork("settings_"),
             new Identifiers(),
             new SocketIoHandlers(
                 new IoWrap(
@@ -63,19 +71,45 @@ function App(){
                 .with('exec_cmd', new ExecuteCommand())
                 .with('proc_count', new ProcCount())
                 .with('do_render', new DoRender())
+                .with('more_jobs', new MoreJobs())
         ).run();
 	}
 }
-function Controller(identifiers, socketIoHandlers){
+function Controller(autonomousWork, identifiers, socketIoHandlers){
     this.identifiers=identifiers;
     this.socketIoHandlers=socketIoHandlers;
     this.run=()=>{
+        autonomousWork.run(socketIoHandlers);
         this.identifiers.prepare().then(agent_ids=>{
             setInterval(()=>{console.log("my md5=", agent_ids.md5)}, 60000);
             this.socketIoHandlers.run(agent_ids);
         }).catch(err=>{
-            console.log("Launcher.run(): this.identifiers.prepare() Error: ", err);
+            console.log("Controller.run(): this.identifiers.prepare() Error: ", err);
         })
+    }
+}
+function AutonomousWork(settings_){
+    this.settings=undefined;
+    this.run=(socketIoHandlers)=>{
+        this.settings = glob[settings_].read() || {}
+        this.ioWrap = socketIoHandlers.io_wrap();
+        this.ioWrap.socketio((socket)=>{
+            socket.on('disconnect',()=>{
+                const wait_timer_after_disconnect = this.settings.if_disconnect_wait_before_spec_fu || 15000;
+                const special_fu_after_timeout = this.settings.if_disconnect_spec_fu;
+                const special_fu_attempts = this.settings.if_disconnect_spec_fu_attempts;
+                if(typeof this[special_fu_after_timeout] == 'function'){
+                    setTimeout(()=>{
+                        this[special_fu_after_timeout]();
+                    },wait_timer_after_disconnect)
+                }else{
+                    console.error("Error: Not specified such special_fu_after_timeout '"+special_fu_after_timeout+"' function");
+                }
+            })
+        })
+    }
+    this.fuita=function(){
+        console.log("AutonomousWork.fuita() ...")
     }
 }
 function Identifiers(){
@@ -161,7 +195,15 @@ function IoWrap(ioSettings, stringifiedJson, disconnectFunc){
 	this.socket = undefined;
     this.ioSettings= ioSettings;
     this.stringifiedJson= stringifiedJson;
-    this.socketio=()=>{return this.socket}
+    this.socketio=(cb)=>{
+        if(typeof cb == 'function'){
+            if(this.socket){cb(this.socket)}
+            else{this.when_socket_ready_cb = cb}
+        }else{
+            return this.socket
+        }
+    }
+    this.when_socket_ready_cb=()=>{console.log("IoWrap.when_socket_ready_cb() not overrided")}
     this.run=(agent_ids)=>{
         const io = require('socket.io-client');
 		const settings = this.ioSettings.read(); //sync
@@ -171,10 +213,11 @@ function IoWrap(ioSettings, stringifiedJson, disconnectFunc){
             "browser_or_agent": "agent",
             "agent_identifiers": this.stringifiedJson.run(agent_ids)
         }});
+        this.when_socket_ready_cb(this.socket);
         this.socket.on('connect',()=>{console.log(">>>connected to server!")})
         this.socket.on('disconnect',()=>{
             console.log(">>>disconnected from server!");
-            disconnectFunc.instance().run();
+            //disconnectFunc.instance().run();
         })
 		return this;
     }
@@ -246,6 +289,7 @@ function SocketIoHandlers(ioWrap){
             this.allEvHandlers[ev_name].run(ev_name, this.socket);   
         });
 	};
+    this.io_wrap=()=>{return this.ioWrap}
 	this.tech_events = ['connect', 'disconnect', 'compareManifest', 'same_md5_agents', 'updateFiles', 'startPartner', 'killPartner', 'identifiers', 'update_folder', 'partner_leaved', 'partner_appeared'];
 	this.user_events = ['diskSpace', 'gpu_info', 'housekeeping', 'proc_count', 'exec_cmd', 'nvidia_smi', 'wetransfer'];
 }
@@ -1122,6 +1166,7 @@ function NvidiaSmi(){
                 });
             }else{
                 socket.emit(ev_name, {is_exist:false, error:"no nvidia gpu on host"});
+                
             }
         })
     }
@@ -1135,9 +1180,9 @@ function ExecuteCommand(){
             console.log("ExecuteCommand.run(): socket data=",data);
             //@ data = {name:"exec_cmd", cmd:"notepad.exe", condition: "exec_done", action:"write data: hi"}
             let _cmd = "";
-            if(data.type_param=="notepad.exe" || data.type_param=="notepad"){
+            if(data.app_name=="notepad.exe" || data.app_name=="notepad"){
                 _cmd = "wmic process call create notepad.exe";
-            }else if(data.type_param=="clean.bat"){
+            }else if(data.app_name=="clean.bat"){
                 console.log("CLEAN.BAT !");
             }
             execute_command(_cmd + '\r\n').then(cmd_out=>{
@@ -1164,7 +1209,7 @@ function ProcCount(){
     this.run=(ev_name, socket)=>{
         //@ ev_name == "do_render"
         socket.on(ev_name, (proc_name)=>{
-            const searchable = proc_name.type_param;
+            const searchable = proc_name.app_name;
             console.log("proc_count event! proc_name =",proc_name);
             if(typeof searchable != 'string'){return socket.emit(ev_name, {is_error: true, error: "no process name for searching"});}
             //if(!searchable.endsWith(".exe")){searchable = searchable + '.exe'}
@@ -1200,6 +1245,23 @@ function DoRender(){
             console.log("do_render event!");
             socket.emit(ev_name, {is_started_render: true});
         });
+    }
+}
+function MoreJobs(){
+    this.run=(ev_name, socket)=>{
+        if(typeof my_jobs == 'object'){
+            Object.keys(my_jobs).forEach(key=>{
+                if(typeof my_jobs[key] == 'function'){
+                    socket.on(key, (data)=>{
+                        my_jobs[key](data, socket);
+                    })
+                }else{
+                    console.error("my_jobs["+key+"] is not a function !!!")
+                }
+            })
+        }else{
+            console.error("NO my_jobs object !!!")
+        }
     }
 }
 //----------PARSE NVIDIA GPU FUNCTIONS--------------
@@ -2301,8 +2363,7 @@ function crc32(r)
     return ((-1^n)>>>0).toString(16).toUpperCase();
 }
 
-function MD5hash(d)
-{
+function MD5hash(d){
     d = d.toString(16);
     result = M(V(Y(X(d), 8 * d.length)));
     return result.toLowerCase()
@@ -2375,3 +2436,24 @@ function retranslateEmitter(obj){
     }
 }
 
+function my_job(){
+    socket.on(ev_name, (data)=>{
+        let disk_letter = "C:/";
+        if(typeof data == 'object'){
+            if(data.disk_letter){disk_letter=data.disk_letter}
+        }
+        if(disk_letter.endsWith(":")){
+            disk_letter=disk_letter+"/"
+        }else if(disk_letter.length==1){
+            disk_letter=disk_letter+":/"
+        }
+        checkDiskSpace(disk_letter).then((disk_space) => {
+            // { free: 12345678, size: 98756432 }
+            console.log("disk_space =",disk_space);
+            socket.emit(ev_name, disk_space);
+        }).catch((ex)=>{
+            console.log("DiskSpace.run(): checkDiskSpace Error: ",ex);
+            _socket.emit(ev_name, {is_error:true, error:ex});
+        }); 
+    });
+}

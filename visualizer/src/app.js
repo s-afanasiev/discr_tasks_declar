@@ -173,19 +173,24 @@ function NavFutureJobsPanel(){
             if(data.msg == 'list_future_jobs'){
                 console.log("NavFutureJobsPanel.init() sokcetdata=", data )
                 if(_cur_clicked_host_md5 == data.md5){
-                    const future_jobs_list = JSON.stringify(data.value);
                     console.log("NavFutureJobsPanel.init() data.value=", data.value)
-                    _$a.empty();
-                    data.value.forEach(one_future_job=>{
-                        const $stop_future_job_btn = $("<span style='cursor:pointer; background:red;'>stop</span>");
-                        $stop_future_job_btn.on("click", (evt)=>{
-                            server_socket.emit('gui_ctrl', {type:'drop_future_jobs', host_id:_cur_clicked_host_md5});
-                        })
-                        _$a.append("<span>"+JSON.stringify(one_future_job)+"</span>")
-                        _$a.append($stop_future_job_btn)
-                    })
                     if(data.value.length == 0){
                         _$a.empty().append("no future jobs")
+                    }else{
+                        _$a.empty();
+                        data.value.forEach(one_future_job=>{
+                            const $stop_future_job_btn = $("<span style='cursor:pointer; background:orange;'>stop</span>");
+                            $stop_future_job_btn.on("click", (evt)=>{
+                                server_socket.emit('gui_ctrl', {type:'drop_future_jobs', host_id:_cur_clicked_host_md5, job_info: one_future_job});
+                            })
+                            _$a.append($stop_future_job_btn)
+                            _$a.append("<span>"+JSON.stringify(one_future_job)+"</span><br>")
+                        });
+                        const $stop_all_future_jobs = $("<span style='cursor:pointer; background:red;'>STOP ALL</span>");
+                        $stop_all_future_jobs.on("click", (evt)=>{
+                            server_socket.emit('gui_ctrl', {type:'drop_future_jobs', host_id:_cur_clicked_host_md5});
+                        })
+                        _$a.append($stop_all_future_jobs);
                     }
                 }
             }

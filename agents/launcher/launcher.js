@@ -16,6 +16,7 @@ const glob = {};
 function App(){
 	this.run=()=>{
         new Launcher(
+            new PartnerWatch("settings_"),
             new Identifiers(),
             new SocketIoHandlers(
                 new IoWrap(
@@ -40,15 +41,51 @@ function App(){
         ).run();
 	}
 }
-function Launcher(identifiers, socketIoHandlers){
+function Launcher(partnerWatch, identifiers, socketIoHandlers){
     this.identifiers=identifiers;
     this.socketIoHandlers=socketIoHandlers;
     this.run=()=>{
+        partnerWatch.run(socketIoHandlers);
         this.identifiers.prepare().then(agent_ids=>{
             setInterval(()=>{console.log("my md5=", agent_ids.md5)}, 60000);
             this.socketIoHandlers.run(agent_ids);
         }).catch(err=>{
             console.log("Launcher.run(): this.identifiers.prepare() Error: ", err);
+        })
+    }
+}
+function PartnerWatch(settings_){
+    this.settings=undefined;
+    this.ioWrap= undefined;
+    this.socket = undefined;
+    this.is_partner_online = false;
+    this.run=(socketIoHandlers)=>{
+        this.settings = glob[settings_].read() || {}
+        this.ioWrap = socketIoHandlers.io_wrap();
+        this.ioWrap.socketio((socket)=>{
+            this.socket = socket;
+            this.socket.on('partner_offline',()=>{
+                this.is_partner_online = false;
+                console.log("PartnerWatch: 'partner_offline' event");
+                const time_after_partner_restart = this.settings["time_after_partner_restart"] || 60000;
+                setTimeout(()=>{
+                    if(this.is_partner_online){}
+                    else{
+                        console.log("PartnerWatch: restarting partner after "+time_after_partner_restart+" timeout");
+                        new StartedPartner(settings_).start((err, res)=>{
+                            if(err){
+                                console.error("PartnerWatch: error starting partner:", err);
+                            }else{
+                                console.log("PartnerWatch: starting partner stdout:", res);
+                            }
+                        })
+                    }
+                }, time_after_partner_restart);
+            });
+            this.socket.on('partner_online',()=>{
+                this.is_partner_online= true;
+                console.log("PartnerWatch: 'partner_online' event");
+            })
         })
     }
 }
@@ -135,7 +172,15 @@ function IoWrap(ioSettings, stringifiedJson){
     this.socket = undefined;
     this.ioSettings= ioSettings;
     this.stringifiedJson= stringifiedJson;
-    this.socketio=()=>{return this.socket}
+    this.socketio=(cb)=>{
+        if(cb){
+            if(this.socket){cb(this.socket);}
+            else{this.when_socket_ready_cb = cb;}
+        }else{
+            return this.socket;
+        }
+    }
+    this.when_socket_ready_cb=()=>{console.log("IoWrap.when_socket_ready_cb() not overrided")}
     this.run=(agent_ids)=>{
         const io = require('socket.io-client');
 		const settings = this.ioSettings.read(); //sync
@@ -145,9 +190,13 @@ function IoWrap(ioSettings, stringifiedJson){
             "browser_or_agent": "agent",
             "agent_identifiers": this.stringifiedJson.run(agent_ids)
         }});
+        this.when_socket_ready_cb(this.socket);
         this.socket.on('connect',()=>{console.log(">>>connected to server!")})
         this.socket.on('disconnect',()=>{console.log(">>>disconnected from server!")})
 		return this;
+    }
+    this.then_ready=(cb)=>{
+
     }
 }
 function StringifiedJson(){
@@ -165,14 +214,15 @@ function IoSettings(settingsPath){
         if(this.settingsCash){
             console.log("IoSettings.read() cashed file!");
             return this.settingsCash;
-        }
-        const normalized_path = path.normalize(this.settingsPath);
-		try{
-			const json_file = fs.readFileSync(normalized_path, "utf8");
-			this.settingsCash = JSON.parse(json_file);
-		}catch(err){
-            console.log("IoSettings.read() Error: ", err);
-            return {error: err};
+        }else{
+            const normalized_path = path.normalize(this.settingsPath);
+            try{
+                const json_file = fs.readFileSync(normalized_path, "utf8");
+                this.settingsCash = JSON.parse(json_file);
+            }catch(err){
+                console.log("IoSettings.read() Error: ", err);
+                return {error: err};
+            }
         }
         return this.settingsCash;
 	}
@@ -180,11 +230,17 @@ function IoSettings(settingsPath){
         glob[name]=this;
         return this;
     }
+    this.param_by_name=(name)=>{
+        if(this.settingsCash[name]){
+            return this.settingsCash[name];
+        }else{console.error("IoSettings: no such param '"+name+"' in config file")}
+    }
 }
 function SocketIoHandlers(ioWrap){
     this.ioWrap= ioWrap;
     this.socket = undefined;
     this.allEvHandlers = {};
+    this.io_wrap=()=>{return this.ioWrap}
     this.with=(ev_name, evHandler)=>{
         this.allEvHandlers[ev_name] = evHandler;
         return this;
@@ -454,7 +510,7 @@ function UpdatedFiles(settings_, comparedManifest_){
     this.is_keep_old_files = true;
     this.is_timeout = true;
     this.run=(ev_name, socket)=>{
-        console.log("UpdatedFiles.run()...");
+        //console.log("UpdatedFiles.run()...");
         socket.on(ev_name, (remote_mans)=>{
             console.log("UpdatedFiles.run() event: ", ev_name);
             this.comparedManifest.mansDiff(remote_mans).then(diff=>{
@@ -773,7 +829,7 @@ function StartedPartner(settings_){
         socket.on(ev_name, ()=>{
             console.log("StartedPartner.run() event: ", ev_name);
             //TODO: 1. cmd_exec(kill) 2. socket.emit(ok)
-            this.start("", (err, res)=>{
+            this.start((err, res)=>{
                 const start_msg = {};
                 if(err){ start_msg.is_error = true; start_msg.is_started = false; }
                 else{ start_msg.is_started = true; }
@@ -781,7 +837,7 @@ function StartedPartner(settings_){
             });
         });
     }
-    this.start=(c_location, callback)=>{
+    this.start=(callback)=>{
         const agent_type = "controller";
         let loc_contr = this.settings.local_dir_controller;
         loc_contr = loc_contr.startsWith('/') ? loc_contr : "/"+loc_contr;
