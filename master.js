@@ -1692,7 +1692,7 @@
                     new DelayedJobs().init()
                 ).run(this.schedule, this.controller, this.agent_socket);
             }else{
-                console.error("No schedule!");
+                console.error("Jobs.run(): No schedule!");
                 return [];
             }
             return this;
@@ -1730,7 +1730,7 @@
             this.agent_socket = agent_socket;
             this.jobsInit.run(schedule, controller, agent_socket, this.extendedJob, this.intervalJobs).onNext(next_job_id=>{
                 console.log("JobsChaining.run(): onNext(): next_job_id=",next_job_id);
-                send_next_job(next_job_id);
+                next_after_init_job(next_job_id);
             });
             return this;
         }
@@ -1758,7 +1758,7 @@
             if(typeof cb == 'function'){cb(list)}
             else{console.error("JobsChaining.list_future_jobs(): cb is not a function!")}
         }
-        const send_next_job=(next_job_id)=>{
+        const next_after_init_job=(next_job_id)=>{
             //@ e.g. next_job_id = 'stop_lte_25'
             //console.log("JobsChaining.send_next_job(): next_job_id=",next_job_id);
             //@ e.g. next_job_tuple = "stop_lte_25": {"type":"stop", "target_job_id":"disk_space_lte_25"}
@@ -1782,15 +1782,15 @@
                     .onAnswer(ans=>{
                         if(ans.is_socket_answered){
                             if(ans.next_action){
-                                send_next_job(ans.next_action);
+                                next_after_init_job(ans.next_action);
                             }
                         }else{
                             //@ most likely - socket response timeout
-                            console.error("JobsChaining.send_next_job() error:", ans, ", on job_id:",next_job_id);
+                            console.error("JobsChaining.next_after_init_job() error:", ans, ", on job_id:",next_job_id);
                         }
                     }).run();
                 } else{
-                    console.error("JobsChaining.send_next_job() Error: such interval jobs already exist:", next_job_id);
+                    console.error("JobsChaining.next_after_init_job() Error: such interval jobs already exist:", next_job_id);
                 }
             }
         }
@@ -1817,23 +1817,26 @@
             else{console.error("JobsInit.onNext(): callback is not a function!");}
         }
         const start_initial_jobs=(schedule, controller, agent_socket, extendedJob, intervalJobs)=>{
-            if(!Array.isArray(schedule.init)) return console.error("ERROR: NO 'init' key in jobs_config! ");
-            schedule.init.forEach(job_id=>{
-                console.log("JobsInit.start_initial_jobs() schedule.jobs[job_id]=", schedule.jobs[job_id]);
-                extendedJob.instance()
-                .init(job_id, schedule.jobs[job_id], controller, agent_socket, intervalJobs)
-                .onAnswer(ans=>{
-                    if(ans.is_socket_answered){
-                        console.log("JobsInit.start_initial_jobs(): socket answered");
-                        if(ans.next_action){
-                            console.log("JobsInit.start_initial_jobs(): next action=", ans.next_action);
-                            this.cbNext(ans.next_action);
+            if(!Array.isArray(schedule.init)){ 
+                schedule.init.forEach(job_id=>{
+                    console.log("JobsInit.start_initial_jobs() initial job =", schedule.jobs[job_id]);
+                    extendedJob.instance()
+                    .init(job_id, schedule.jobs[job_id], controller, agent_socket, intervalJobs)
+                    .onAnswer(ans=>{
+                        if(ans.is_socket_answered){
+                            //console.log("JobsInit.start_initial_jobs(): socket answered");
+                            if(ans.next_action){
+                                console.log("JobsInit.start_initial_jobs(): next action=", ans.next_action);
+                                this.cbNext(ans.next_action);
+                            }
+                        }else{
+                            console.error("JobsInit.start_initial_jobs(): '",job_id,"' job error:", ans.err_type);
                         }
-                    }else{
-                        console.error("JobsInit.start_initial_jobs(): '",job_id,"' job error:", ans.err_type);
-                    }
-                }).run();
-            });
+                    }).run();
+                });
+            }else{
+                return console.error("JobsInit.start_initial_jobs() ERROR: NO 'init' key in jobs_config! ");
+            }
         }
     }
     function JobsAdding(){
@@ -1848,9 +1851,7 @@
         }
     }
     function ExtendedJob(){
-        this.instance=()=>{
-            return new ExtendedJob();
-        }
+        this.instance=()=>{return new ExtendedJob();}
         this.init=(job_id, job_tuple, controller, agent_socket, intervalJobs, delayedJobs)=>{
             if(!job_tuple) return console.error("ExtendedJob.run(): No such job_name",job_id);
             console.log("ExtendedJob.run() job_id=", job_id);
@@ -1977,12 +1978,14 @@
         this.job_id = job_id;
         let _job_timeout_ref = undefined;
         let _interval_start_date = undefined;
+        let is_must_continue = true;
         let _cbAnswer=()=>{console.error("OneJob.cbAnswer() not implemented")}
         this.oneJob = new OneJob().instance(job_id, job_tuple, controller, agent_socket)
             //return new OneIntervalJob(job_id, job_tuple, controller, agent_socket);
         this.break_interval=()=>{
-            console.log("OneIntervalJob.break_interval() job id =", this.job_id);
-            clearInterval(_job_timeout_ref);
+            //clearInterval(_job_timeout_ref);
+            clearTimeout(_job_timeout_ref);
+            is_must_continue = false;
         }
         this.interval_now=()=>{
             const timelapse = new Date().getTime() - _interval_start_date;
@@ -1991,12 +1994,24 @@
         this.run=()=>{
             console.log("OneIntervalJob.run():");
             _interval_start_date = new Date().getTime();
+            //@ Запусти одну задачу сразу, а затем поставь в отложенные ещё один экземпляр
             this.oneJob.instance(job_id, job_tuple, controller, agent_socket).onAnswer(_cbAnswer).run();
-            _job_timeout_ref = setInterval(()=>{
+            //@ TODO: переделать через setTimeout
+            // _job_timeout_ref = setInterval(()=>{
+            //     _interval_start_date = new Date().getTime();
+            //     this.oneJob.instance(job_id, job_tuple, controller, agent_socket).onAnswer(_cbAnswer).run();
+            // }, job_tuple.interval)
+            set_pending_task(job_id, job_tuple, controller, agent_socket);
+            return this;
+        }
+        const set_pending_task=(job_id, job_tuple, controller, agent_socket)=>{
+            _job_timeout_ref = setTimeout(()=>{
                 _interval_start_date = new Date().getTime();
                 this.oneJob.instance(job_id, job_tuple, controller, agent_socket).onAnswer(_cbAnswer).run();
+                if(is_must_continue){
+                    set_pending_task(job_id, job_tuple, controller, agent_socket)
+                }
             }, job_tuple.interval)
-            return this;
         }
         this.onAnswer=(cb)=>{
             _cbAnswer = cb;
@@ -2014,6 +2029,34 @@
         this.socket_silence_timeout = 5000;
         let _timeout_start_date = undefined;
         console.log("OneJob: job_tuple=", job_tuple);
+        this.run=()=>{
+            const job_type = this.job_tuple.type;
+            const job_tuple = this.job_tuple;
+            console.log("OneJob.run(): emitting event=", JSON.stringify(job_tuple));
+            if(Object.keys(job_tuple).length == 0){
+                console.error("OneJob.run() Error: Empty job");
+                return this.cbAnswer("OneJob.run() Error: Empty job");
+            }
+            if(this.job_tuple.delay){
+                _timeout_start_date = new Date().getTime();
+            }
+            this.delay_timeout = setTimeout(()=>{
+                this.agent_socket.emit(job_type, job_tuple).once(job_type, this.answer_handler);
+            }, this.job_tuple.delay||0);
+            this.socket_silence_timeout = (this.job_tuple.delay || 0) + 5000;
+            setTimeout(()=>{
+                if(this.is_job_minimal_done == false){
+                    console.log("OneJob.run(): timeout of job:", this.job_tuple.type);
+                    //@ socket.eventNames()
+                    //@ socket.listeners(event)
+                    //@ socket.removeListener(event, listener)
+                    //this.agent_socket.removeListener(this.job_tuple.type, this.answer_handler);
+                    this.agent_socket.removeAllListeners(this.job_tuple.type);
+                    this.cbAnswer({is_socket_answered: false, err_type: "timeout"});
+                }
+            }, this.socket_silence_timeout)
+            return this;
+        }
         this.answer_handler = (res)=>{
             const job_type = this.job_tuple.type;
             console.log("OneJob.run(): controller answer =", res, ", job_tuple =",job_tuple);
@@ -2063,34 +2106,6 @@
             }else{
                 return 0;
             }
-        }
-        this.run=()=>{
-            const job_type = this.job_tuple.type;
-            const job_tuple = this.job_tuple;
-            console.log("OneJob.run(): emitting event=", JSON.stringify(job_tuple));
-            if(Object.keys(job_tuple).length == 0){
-                console.error("OneJob.run() Error: Empty job");
-                return this.cbAnswer("OneJob.run() Error: Empty job");
-            }
-            if(this.job_tuple.delay){
-                _timeout_start_date = new Date().getTime();
-            }
-            this.delay_timeout = setTimeout(()=>{
-                this.agent_socket.emit(job_type, job_tuple).once(job_type, this.answer_handler);
-            }, this.job_tuple.delay||0);
-            this.socket_silence_timeout = (this.job_tuple.delay || 0) + 5000;
-            setTimeout(()=>{
-                if(this.is_job_minimal_done == false){
-                    console.log("OneJob.run(): timeout of job:", this.job_tuple.type);
-                    //@ socket.eventNames()
-                    //@ socket.listeners(event)
-                    //@ socket.removeListener(event, listener)
-                    //this.agent_socket.removeListener(this.job_tuple.type, this.answer_handler);
-                    this.agent_socket.removeAllListeners(this.job_tuple.type);
-                    this.cbAnswer({is_socket_answered: false, err_type: "timeout"});
-                }
-            }, this.socket_silence_timeout)
-            return this;
         }
     }
     function JobConditionChecking(){
