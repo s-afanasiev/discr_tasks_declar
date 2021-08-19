@@ -656,6 +656,18 @@
                 });
             }
         }
+		this.host_by_md5_only_read = (agent_ids)=>{
+            let host_index = -1;
+			console.log("_hosts_list length="+_hosts_list.length);
+			for(let i=0; i<_hosts_list.length; i++){
+				if(_hosts_list[i].commonMd5() == agent_ids.md5){
+					host_index = i;
+					break;
+				}
+			}
+            if(host_index > -1){return _hosts_list[host_index]}
+            else return false;
+        }
 		this.hostByMd5 = (agent_ids)=>{
 			let host_index = -1;
 			console.log("_hosts_list length="+_hosts_list.length);
@@ -787,7 +799,7 @@
 
 	function HostAsPair(launcher, controller, connectedAgentsThrottle, agentUpdateChain, creator_ids, hostCluster){
         //@ HostAsPair object instantiates by one of Launcher or Controller, so on creation stage we allready know about one of agents and his states
-		this.launcher = launcher;
+        this.launcher = launcher;
 		this.controller = controller;
         this.connectedAgentsThrottle = connectedAgentsThrottle;
         this.agentUpdateChain = agentUpdateChain;
@@ -806,6 +818,7 @@
         this.creatorPid=()=>{return this.creator_ids.pid}
         this.creatorPpid=()=>{return this.creator_ids.ppid}
         this.creatorApid=()=>{return this.creator_ids.apid}
+        //@ creator_ids = {ag_type: "launcher", ag_pid:3245, ...} - это идентификаторы того агента, который подключился первым отностилеьно конкретного хоста-машины
 		this.instance = function(creator_ids, hostCluster){
             console.log("HostAsPair.instance(): creator=",creator_ids.ag_type);
             const ag_type = creator_ids.ag_type;
@@ -862,99 +875,63 @@
             this.browserIoClients = browserIoClients;
             this.externalSource = externalSource;
             this.gui_news({msg: "host_born"});
-            this.launcher.run(this.browserIoClients, this);
-            this.controller.run(this.browserIoClients, this);
-            this.start_init_timeout(3000);
-            this.connectedAgentsThrottle.init(this.launcher, this.controller);
+            this.launcher.run(this.browserIoClients, this, this.agentUpdateChain);
+            this.controller.run(this.browserIoClients, this, this.agentUpdateChain);
+            //this.start_init_timeout(3000);
+            this.connectedAgentsThrottle.run(this.launcher, this.controller, this.hostCluster);
             return this;
         }
+        this.agent_by_type=(ag_type)=>{
+            if(ag_type=="launcher"){return this.launcher}
+            else if(ag_type=="controller"){return this.controller}
+        }
         this.is_init_timeout=()=>{ return this.is_init_timeout_flag; }
-        this.start_init_timeout=(time_)=>{
-            setTimeout(()=>{
-                this.is_init_timeout_flag = true;
-                this.run_agents_after_first_host_init_timeout();
-            }, time_||3000);
-        }
-        this.run_agents_after_first_host_init_timeout=()=>{
-            this.launcher.init(this.agentUpdateChain.instance());
-            this.controller.init(this.agentUpdateChain.instance());
-            //@like a first start on the remote machine, when a human starts the launcher
-            const l_on = this.launcher.isOnline();
-            const c_on = this.controller.isOnline();
-            if(l_on && !c_on){
-                console.log("HostAsPair: only launcher is online...");
-                this.launcher.compareCurManifest(this.last_manifest_snapshot()).then(res=>{
-                    //@res = {compare:false, kill:false, update:false, start:true}
-                }).catch(err=>{
-                    console.error("HostAsPair: this.launcher.compareCurManifest() Error 1: ",err);
-                })
-            //@ this situation can occur, when both agents was continued to work, but server was restarted.
-            }else if(!l_on && c_on){
-                console.log("HostAsPair: only controller is online...");
-                this.controller.compareCurManifest(this.last_manifest_snapshot()).then(res=>{
-                    this.controller.doNormalWork();
-                }).catch(err=>{
-                    console.error("HostAsPair: this.controller.compareCurManifest() Error 1: ",err);
-                })
-            }
-            else if(l_on && c_on){
-                if(this.SETTINGS.apply_updates){
-                    console.log("HostAsPair: Launcher and Controller are online...");
-                    this.launcher.compareCurManifest(this.last_manifest_snapshot()).then(msg=>{
-                        console.log("HostAsPair: after Launcher's comparing result=",msg);
-                        //@res = {compare:false, kill:false, update:false, start:true}
-                        if(!msg.is_killed){
-                            this.controller.compareCurManifest(this.last_manifest_snapshot()).then(res=>{
-                                console.log("run_agents_after_first_host_init_timeout(): both agents has updates each other");
-                                this.controller.doNormalWork();
-                            }).catch(err=>{
-                                console.error("HostAsPair: this.controller.compareCurManifest() Error: ",err);
-                            })
-                        }else{
-                            console.error("HostAsPair: l and c was online, then l compared and killed c")
-                        }
-                    }).catch(err=>{
-                        console.error("HostAsPair: this.launcher.compareCurManifest() Error 2: ",err);
-                    })
-                }else{
-                    this.controller.doNormalWork();
-                }
-            //@-----------------------------------------------------------
+        //@ Здесь решаем, нужно ли обновлять контроллера, если тот  на спец.задании
+        this.decide_if_need_update_partner=(connected, partner)=>{
+            if(partner == "controller" && this[partner].isSpecialMode()){
+                //@ TODO: to plan a delayed update
             }else{
-                console.error("HostAsPair: Unhandled situation! launcher state:", this.launcher.isOnline(), ", controller state:", this.controller.isOnline());
+                this.compareCurManifest(connected);
             }
         }
-        //@ when first time calling this method
+        //@ Сравнить Манифест включает в себя также и обновление партнёра, если есть различия в Манифесте
+        this.compareCurManifest=(ag_type)=>{
+            this[ag_type].compareCurManifest(this.last_manifest_snapshot()).then(res=>{
+                //@res = {compare:false, kill:false, update:false, start:true}
+                if(ag_type == "controller"){
+                    this[ag_type].doNormalWork();
+                }
+            }).catch(err=>{
+                console.error("HostAsPair: this.launcher.compareCurManifest() Error 1: ",err);
+            })
+        }
 		this.welcomeAgent = (agent_socket, agent_ids, manifest_snapshot, mapped_mans_snapshot)=>{
             this.manifest_snapshot = manifest_snapshot;
             this.mapped_mans_snapshot = mapped_mans_snapshot;
-            if(this.connectedAgentsThrottle.adaptConnectedAgent(agent_ids).isAllowed()){
-                const ag_type = agent_ids.ag_type;
-                if(ag_type=="launcher"){
-                    this[ag_type].welcomeAgent(agent_socket, agent_ids, this.manifest_snapshot, this.controller);
-                }else if(ag_type=="controller"){
-                    this[ag_type].welcomeAgent(agent_socket, agent_ids, this.manifest_snapshot, this.launcher, this.mapped_mans_snapshot);
-                }
-                //@ first host init and agents update was finished.Now its a new agents connections and new singles comparings.
-                if(this.is_init_timeout()){
-                    if(this.SETTINGS.apply_updates){
-                        this[ag_type].compareCurManifest(this.manifest_snapshot).then(res=>{
-                            console.log("HostAsPair.welcomeAgent(): is_init_timeout()",res);
-                            if(ag_type=="controller"){
-                                this[ag_type].doNormalWork();
-                            }
-                        }).catch(err=>{
-                            console.error("HostAsPair.welcomeAgent() after is_init_timeout() Error2: ", err);
-                        });
-                    }else{
-                        if(ag_type=="controller"){
-                            this[ag_type].doNormalWork();
+            //@ 1) Проверяем, не происходит ли лишних подключений агентов
+            if(this.connectedAgentsThrottle.check(agent_ids).isAllowed(agent_socket)){
+                //@ Три компоненты исключающие все коллизии: 1. Есть ли apid 2. Есть ли log 3. находится ли сейчас онлайн агент-партнер?
+                const partner_type = (agent_ids.ag_type == "launcher") ? "controller" : "launcher";
+                //@ Последний аргумент this.mapped_mans_snapshot нужен только для контроллера
+                this[agent_ids.ag_type].welcomeAgent(agent_socket, agent_ids, manifest_snapshot, this[partner_type], this.mapped_mans_snapshot)
+                if(this[partner_type].isOnline()){
+                    //@ Если партнёр был онлайн, значит осталось скомандовать обновить партнёра(если это нужно), но если партнёр - контроллер и контроллер в спец. режиме, то отложить его обновление
+                    this.decide_if_need_update_partner(agent_ids.ag_type, partner_type) //т.е. здесь агент сравнивает манифесты, если надо прибивает, апдейтит, стартует. Но прежде проверяем если это контроллер и он на спец задании, то делаем ему отложенное обновление.
+                }else{
+                    //@ Такое может быть, если: 
+                    //@     а) это начало жизни объекта Хоста, когда человек запустил агента и партнёр не включится без команды мастера
+                    //@     б) ВТорой агент вот-вот будет онлайн(имеется ввиду что он просто вторым подключился по сокету)
+                    //@     Поэтому: Ждём 1 секунду(для нивелирования рассинхрона по сокету), затем спрашиваем находится ли партнёр на этот раз онлайн. Если нет, значит, смотрим есть ли у агента apid или log. Если есть, то ждём ещё секунду. Если партнёр не появился в сети, значит, надо давать команду на запуск партнёра.
+                    setTimeout(()=>{
+                        if(this[partner_type].isOnline()){
+                            this.decide_if_need_update_partner(agent_ids.ag_type, partner_type);
+                        }else{
+                            //@ Если через полсекунды партнер НЕ онлайн, то говорим агенту запустить партнера
+                            this.compareCurManifest(agent_ids.ag_type)
                         }
-                    }
+                    }, 1000);
                 }
-            }else{
-                console.error("HostAsPair.welcomeAgent(): Throttle blocked the agent! ", Object.values(agent_ids).join("|"));
-            }
+            }                
 		}
         this.propagateManifestDiff = (mans_diff)=>{
             this.manifest_regular = mans_diff;
@@ -1005,13 +982,13 @@
                 console.error("HostAsPair: run_agents_after_first_host_init_timeout(): this.controller.propagateMappedMansDiff() Error 2: ",err);
             });
         }
-        this.agent_disconnected=(ag_type)=>{
+        this.agent_disconnected=(ag_type, reason)=>{
             if((!this.launcher.isOnline())&&(!this.controller.isOnline())){
                 this.hostCluster.host_destroyed(this.commonMd5());
             }else if(ag_type=="controller" && this.launcher.isOnline()){
-                this.launcher.partner_offline();
+                this.launcher.partner_offline(reason);
             }else if(ag_type=="launcher" && this.controller.isOnline()){
-                this.controller.partner_offline();
+                this.controller.partner_offline(reason);
             }
         }
 	}
@@ -1022,15 +999,27 @@
         this.current_ids = undefined;
         //@--------------------
         this.is_current_agent_allowed = true;
-        this.isAllowed=()=>{return this.is_current_agent_allowed;}
+        this.isAllowed=(agent_socket)=>{
+            console.log("ConnectedAgentsThrottle.isAllowed(): is_current_agent_allowed = ", this.is_current_agent_allowed)
+            if(this.is_current_agent_allowed == false){
+                const host = this.hostCluster.host_by_md5_only_read(this.current_ids);
+                if(host){ console.log("ConnectedAgentsThrottle.isAllowed(): finded host:", host.commonMd5()) }
+                const agent = host.agent_by_type(this.current_ids.ag_type)
+                if(agent){ console.log("ConnectedAgentsThrottle.isAllowed(): finded agent:", agent.agentPid(), agent.agentPpid(), agent.agentApid()) }
+                same_md5_real_agent_socket = agent.socketio();
+                same_md5_real_agent_socket.emit("kill_similar_outcasts", this.current_ids);
+            }
+            return this.is_current_agent_allowed;
+        }
         this.switchCurrentAgentAllowed=(is_allowed)=>{this.is_current_agent_allowed=is_allowed}
         //@--------------------
         this.instance=()=>{return new ConnectedAgentsThrottle()}
-        this.init=(launcher, controller)=>{
+        this.run=(launcher, controller, hostCluster)=>{
             this.launcher=launcher;
             this.controller=controller;
+            this.hostCluster=hostCluster;
         }
-        this.adaptConnectedAgent=(agent_ids)=>{
+        this.check=(agent_ids)=>{
             this.current_ids = agent_ids;
             const ag_type = agent_ids.ag_type;
             if(["launcher", "controller"].includes(ag_type)){
@@ -1054,12 +1043,13 @@
     //@------------------Launcher-----------------------
     function Launcher(agent_ids){
         this.agent_ids = agent_ids;
-        this.partner = undefined;
-        this.agentUpdateChain = undefined;//init
+        this.partner = undefined;//welcomeAgent
+        this.agentUpdateChain = undefined;//run
         this.agent_socket = undefined;
         this.manifest_snapshot = undefined;
         this.browserIoClients =undefined; //run
         this.host =undefined; //run
+        this.flags = {}//add_flags
         //@ input param 'msg' must be String type
         this.gui_news=(data)=>{
             if(this.host){
@@ -1072,8 +1062,9 @@
                 this.host.gui_news(data);
             }
         }
-        this.run=function(browserIoClients, host){
+        this.run=function(browserIoClients, host, agentUpdateChain){
             this.browserIoClients = browserIoClients;
+            this.agentUpdateChain = agentUpdateChain.instance();
             this.host = host;
         }
         //@----------------------------
@@ -1091,12 +1082,16 @@
         this.isUpdateMode=()=>{return this.is_update_mode_flag}
         this.switchUpdateMode=(is_update_mode)=>{this.is_update_mode_flag = is_update_mode}
         //@----------------------------
+		this.add_flags=function(flags){ 
+            Object.keys(flags).forEach(key=>{
+                this.flags[key] = flags[key];
+                if(key == "partner_killed_by_reason" && flags[key] == "update"){
+                    partner.add_flags({"me_was_killed_by_reason": flags[key]});
+                }
+            })
+        }
 		this.instance=function(agent_ids){ return new Launcher(agent_ids); }
 		//@ this in fact not some kind of initialization, but simply pass the object
-        this.init=(agentUpdateChain)=>{
-            this.agentUpdateChain = agentUpdateChain;
-            return this;
-        }
         this.welcomeAgent=(agent_socket, agent_ids, manifest_snapshot, partner)=>{
             this.agent_socket = agent_socket;
             this.agent_ids = agent_ids;//{ag_type, md5, ip, pid, ppid, apid} 
@@ -1109,11 +1104,11 @@
 			this.listenForDisconnect();
 		}
         this.listenForDisconnect=()=>{
-            this.agent_socket.once('disconnect', ()=>{
+            this.agent_socket.once('disconnect', (reason)=>{
+                console.log("Launcher.listenForDisconnect(): disconnect: reason =", reason);
                 this.switchOnline(false);
-                console.log("LAUNCHER DISCONNECTED");
                 this.gui_news({msg:"agent_offline"});
-                this.host.agent_disconnected(this.agent_ids.ag_type);
+                this.host.agent_disconnected(this.agent_ids.ag_type, this.flags["me_was_killed_by_reason"]);
                 this.agent_socket = undefined;
             });
         }
@@ -1163,8 +1158,8 @@
             });
         }
         //@ then partner disconnected - he says it to host - and then host say to partner that partner is offline
-        this.partner_offline=()=>{
-            this.agent_socket.emit("partner_offline");
+        this.partner_offline=(reason)=>{
+            this.agent_socket.emit("partner_offline", reason);
         }
     }
     //@------------------Controller-----------------------
@@ -1178,6 +1173,7 @@
         this.manifest_snapshot = undefined;
         this.browserIoClients = undefined; //run
         this.host = undefined; //run
+        this.flags = {};//add_flags
         //@----------------------------
         this.agentType=()=>{return (this.agent_ids) ? this.agent_ids.ag_type : "controller"}
         this.agentPid=()=>{return (this.agent_ids) ? this.agent_ids.pid : undefined}
@@ -1204,13 +1200,10 @@
                 agent_ids
             );
         }
-		this.init =(agentUpdateChain)=>{
-            this.agentUpdateChain = agentUpdateChain;
-            this.normalControllerMode = this.normalControllerMode.instance()
-            return this;
-        }
-        this.run=function(browserIoClients, host){
+        this.run=function(browserIoClients, host, agentUpdateChain){
             this.browserIoClients = browserIoClients;
+            this.agentUpdateChain = agentUpdateChain.instance();
+            this.normalControllerMode = this.normalControllerMode.instance()
             this.host = host;
         }
 		this.welcomeAgent = (agent_socket, agent_ids, manifest_snapshot, partner, mapped_mans_snapshot)=>{
@@ -1229,13 +1222,21 @@
                 console.error("Controller.firstComparingMappedMans() Error:", err);
             });
 		}
+        this.add_flags=function(flags){ 
+            Object.keys(flags).forEach(key=>{
+                this.flags[key] = flags[key];
+                if(key == "partner_killed_by_reason" && flags[key] == "update"){
+                    this.partner.add_flags({"me_was_killed_by_reason": flags[key]});
+                }
+            })
+        }
         this.listenForDisconnect=()=>{
-            this.agent_socket.once('disconnect', ()=>{
+            this.agent_socket.once('disconnect', (reason)=>{
                 this.switchOnline(false);
-                console.log("CONTROLLER with md5=",this.agent_ids.md5,", DISCONNECTED");
+                console.log("Controller.listenForDisconnect(): disconnect: reason =", reason);
                 //@ Todo: higher at the host level - notify externalSource object
                 this.gui_news({msg:"agent_offline"});
-                this.host.agent_disconnected(this.agent_ids.ag_type);
+                this.host.agent_disconnected(this.agent_ids.ag_type, this.flags["me_was_killed_by_reason"]);
                 this.normalControllerMode.drop_future_jobs();
                 //this.specialControllerMode.drop_future_jobs();
                 console.log("Controller.listenForDisconnect(): eventNames=", this.agent_socket.eventNames());
@@ -1342,8 +1343,8 @@
             }
         }
         //@ then partner disconnected - he says it to host - and then host say to partner that partner is offline
-        this.partner_offline=()=>{
-            this.agent_socket.emit("partner_offline");
+        this.partner_offline=(reason)=>{
+            this.agent_socket.emit("partner_offline", reason);
         }
     }
     //@----------------AgentUpdateChain------------------------
@@ -1421,7 +1422,7 @@
                         reject("StartingPartner: fail after updatingFiles, chain_msg=", chain_msg);
                     }
                 }).catch(err=>{
-                    reject("StartingPartner: updatingFiles throw err: "+err);
+                    reject("StartingPartner: error on prev step 'updatingFiles': "+err);
                 })
             });
         }
@@ -1498,7 +1499,7 @@
                         resolve(extended_msg);
                     }
                 }).catch(err=>{
-                    reject("UpdatingFiles->killingPartner rejected: "+err);
+                    reject("UpdatingFiles: error on prev step 'killingPartner': "+err);
                 })
             });
         }
@@ -1589,12 +1590,13 @@
                     const cond2 = (partner) ? partner.isOnline() : false; //partner must be online, otherwise nothing to kill
                     const cond3 = (creator.agentType()=="launcher") ? partner.isSpecialMode() : false; // if special mode kinda 'render' when we can't kill
                     console.log("KillingPartner: conditions:",cond1,cond2,!cond3);
-                    if(cond1 & cond2 & !cond3){
+                    if(cond1 && cond2 && !cond3){
                         creator.gui_news({msg:"agent_work", value:"sending kill signal with pid "+partner.agentPid()});
                         console.log("KillingPartner: sending kill signal, pid=",partner.agentPid());
                         this.kill_partner(socket, partner.agentPid(), partner.agentPpid()).then(kill_msg=>{
                             //@ TODO: data like 'is_error' can get lost by next chained msg
                             creator.gui_news({msg:"agent_work", value:"the partner was killed"});
+                            creator.add_flags({partner_killed_by_reason:"update"});
                             const extended_msg = Object.assign(compare_msg, kill_msg);
                             resolve(extended_msg);
                         }).catch(err=>{
@@ -1606,7 +1608,7 @@
                         resolve(compare_msg);
                     }
                 }).catch(err=>{
-                    reject("KillingPartner: previous step 'compare' failed. "+err);
+                    reject("KillingPartner: error on prev step 'comparing': "+err);
                 }).finally(()=>{
                     
                 })
@@ -1692,7 +1694,7 @@
                     new DelayedJobs().init()
                 ).run(this.schedule, this.controller, this.agent_socket);
             }else{
-                console.error("Jobs.run(): No schedule!");
+                console.error("No schedule!");
                 return [];
             }
             return this;
@@ -1730,7 +1732,7 @@
             this.agent_socket = agent_socket;
             this.jobsInit.run(schedule, controller, agent_socket, this.extendedJob, this.intervalJobs).onNext(next_job_id=>{
                 console.log("JobsChaining.run(): onNext(): next_job_id=",next_job_id);
-                next_after_init_job(next_job_id);
+                send_next_job(next_job_id);
             });
             return this;
         }
@@ -1758,7 +1760,7 @@
             if(typeof cb == 'function'){cb(list)}
             else{console.error("JobsChaining.list_future_jobs(): cb is not a function!")}
         }
-        const next_after_init_job=(next_job_id)=>{
+        const send_next_job=(next_job_id)=>{
             //@ e.g. next_job_id = 'stop_lte_25'
             //console.log("JobsChaining.send_next_job(): next_job_id=",next_job_id);
             //@ e.g. next_job_tuple = "stop_lte_25": {"type":"stop", "target_job_id":"disk_space_lte_25"}
@@ -1782,15 +1784,15 @@
                     .onAnswer(ans=>{
                         if(ans.is_socket_answered){
                             if(ans.next_action){
-                                next_after_init_job(ans.next_action);
+                                send_next_job(ans.next_action);
                             }
                         }else{
                             //@ most likely - socket response timeout
-                            console.error("JobsChaining.next_after_init_job() error:", ans, ", on job_id:",next_job_id);
+                            console.error("JobsChaining.send_next_job() error:", ans, ", on job_id:",next_job_id);
                         }
                     }).run();
                 } else{
-                    console.error("JobsChaining.next_after_init_job() Error: such interval jobs already exist:", next_job_id);
+                    console.error("JobsChaining.send_next_job() Error: such interval jobs already exist:", next_job_id);
                 }
             }
         }
@@ -1817,26 +1819,23 @@
             else{console.error("JobsInit.onNext(): callback is not a function!");}
         }
         const start_initial_jobs=(schedule, controller, agent_socket, extendedJob, intervalJobs)=>{
-            if(!Array.isArray(schedule.init)){ 
-                schedule.init.forEach(job_id=>{
-                    console.log("JobsInit.start_initial_jobs() initial job =", schedule.jobs[job_id]);
-                    extendedJob.instance()
-                    .init(job_id, schedule.jobs[job_id], controller, agent_socket, intervalJobs)
-                    .onAnswer(ans=>{
-                        if(ans.is_socket_answered){
-                            //console.log("JobsInit.start_initial_jobs(): socket answered");
-                            if(ans.next_action){
-                                console.log("JobsInit.start_initial_jobs(): next action=", ans.next_action);
-                                this.cbNext(ans.next_action);
-                            }
-                        }else{
-                            console.error("JobsInit.start_initial_jobs(): '",job_id,"' job error:", ans.err_type);
+            if(!Array.isArray(schedule.init)) return console.error("ERROR: NO 'init' key in jobs_config! ");
+            schedule.init.forEach(job_id=>{
+                console.log("JobsInit.start_initial_jobs() schedule.jobs[job_id]=", schedule.jobs[job_id]);
+                extendedJob.instance()
+                .init(job_id, schedule.jobs[job_id], controller, agent_socket, intervalJobs)
+                .onAnswer(ans=>{
+                    if(ans.is_socket_answered){
+                        console.log("JobsInit.start_initial_jobs(): socket answered");
+                        if(ans.next_action){
+                            console.log("JobsInit.start_initial_jobs(): next action=", ans.next_action);
+                            this.cbNext(ans.next_action);
                         }
-                    }).run();
-                });
-            }else{
-                return console.error("JobsInit.start_initial_jobs() ERROR: NO 'init' key in jobs_config! ");
-            }
+                    }else{
+                        console.error("JobsInit.start_initial_jobs(): '",job_id,"' job error:", ans.err_type);
+                    }
+                }).run();
+            });
         }
     }
     function JobsAdding(){
@@ -1851,7 +1850,9 @@
         }
     }
     function ExtendedJob(){
-        this.instance=()=>{return new ExtendedJob();}
+        this.instance=()=>{
+            return new ExtendedJob();
+        }
         this.init=(job_id, job_tuple, controller, agent_socket, intervalJobs, delayedJobs)=>{
             if(!job_tuple) return console.error("ExtendedJob.run(): No such job_name",job_id);
             console.log("ExtendedJob.run() job_id=", job_id);
@@ -1978,14 +1979,12 @@
         this.job_id = job_id;
         let _job_timeout_ref = undefined;
         let _interval_start_date = undefined;
-        let is_must_continue = true;
         let _cbAnswer=()=>{console.error("OneJob.cbAnswer() not implemented")}
         this.oneJob = new OneJob().instance(job_id, job_tuple, controller, agent_socket)
             //return new OneIntervalJob(job_id, job_tuple, controller, agent_socket);
         this.break_interval=()=>{
-            //clearInterval(_job_timeout_ref);
-            clearTimeout(_job_timeout_ref);
-            is_must_continue = false;
+            console.log("OneIntervalJob.break_interval() job id =", this.job_id);
+            clearInterval(_job_timeout_ref);
         }
         this.interval_now=()=>{
             const timelapse = new Date().getTime() - _interval_start_date;
@@ -1994,24 +1993,12 @@
         this.run=()=>{
             console.log("OneIntervalJob.run():");
             _interval_start_date = new Date().getTime();
-            //@ Запусти одну задачу сразу, а затем поставь в отложенные ещё один экземпляр
             this.oneJob.instance(job_id, job_tuple, controller, agent_socket).onAnswer(_cbAnswer).run();
-            //@ TODO: переделать через setTimeout
-            // _job_timeout_ref = setInterval(()=>{
-            //     _interval_start_date = new Date().getTime();
-            //     this.oneJob.instance(job_id, job_tuple, controller, agent_socket).onAnswer(_cbAnswer).run();
-            // }, job_tuple.interval)
-            set_pending_task(job_id, job_tuple, controller, agent_socket);
-            return this;
-        }
-        const set_pending_task=(job_id, job_tuple, controller, agent_socket)=>{
-            _job_timeout_ref = setTimeout(()=>{
+            _job_timeout_ref = setInterval(()=>{
                 _interval_start_date = new Date().getTime();
                 this.oneJob.instance(job_id, job_tuple, controller, agent_socket).onAnswer(_cbAnswer).run();
-                if(is_must_continue){
-                    set_pending_task(job_id, job_tuple, controller, agent_socket)
-                }
             }, job_tuple.interval)
+            return this;
         }
         this.onAnswer=(cb)=>{
             _cbAnswer = cb;
@@ -2029,6 +2016,56 @@
         this.socket_silence_timeout = 5000;
         let _timeout_start_date = undefined;
         console.log("OneJob: job_tuple=", job_tuple);
+        this.answer_handler = (res)=>{
+            const job_type = this.job_tuple.type;
+            console.log("OneJob.run(): controller answer =", res, ", job_tuple =",job_tuple);
+            //@ this.job_id - this is unique job id like 'disk_space_lte_25'
+            if(typeof this.controller.gui_news != 'function'){
+                console.error("OneJob.answer_handler(): this.controller.gui_news =", this.controller.gui_news);
+            }
+            const msg_for_controller = "'"+this.job_id+"' job done";
+            this.controller.gui_news({msg:"agent_work", value:msg_for_controller});
+            console.log("OneJob.run(): this.is_job_minimal_done =", this.is_job_minimal_done);
+            this.is_job_minimal_done = true;
+            console.log("OneJob.run(): this.is_job_minimal_done(2) =", this.is_job_minimal_done);
+            const jobConditionChecking = new JobConditionChecking();
+            if(jobConditionChecking.check(this.job_tuple, res)){
+                console.log("OneJob.run(): job with type:", job_type, "PASS condition:", this.job_tuple.condition);
+                //@ Если в action одно строковое значение - значит одна следющая задача
+                if(typeof this.job_tuple.action == "string"){
+                    this.cbAnswer({is_socket_answered: true, next_action: this.job_tuple.action});
+                }
+                //@ Если в action массив строковых значений - значит несколько следующих задач
+                else if(Array.isArray(this.job_tuple.action)){
+                    this.job_tuple.action.forEach(act=>{
+                        this.cbAnswer({is_socket_answered: true, next_action: act});
+                    })
+                }
+            }else{
+                console.log("OneJob.run(): job with type:", job_type, "MISMATCH condition:", this.job_tuple.condition);
+                this.cbAnswer({is_socket_answered: true});
+            }
+        }
+        this.cbAnswer=()=>{console.error("OneJob.cbAnswer() not implemented")}
+        this.instance=(job_id, job_tuple, controller, agent_socket)=>{
+            return new OneJob(job_id, job_tuple, controller, agent_socket);
+        }
+        this.onAnswer=(cb)=>{
+            this.cbAnswer = cb;
+            return this;
+        }
+        this.break_delay_timeout=()=>{
+            clearTimeout(this.delay_timeout);
+        }
+        this.delay_now=()=>{
+            if(this.job_tuple.delay){
+                const timelapse = new Date().getTime() - _timeout_start_date;
+                console.log("OneJob: delay_now(): _timeout_start_date=",_timeout_start_date,"timelapse=",timelapse,"this.job_tuple.delay=",this.job_tuple.delay);
+                return this.job_tuple.delay - timelapse;
+            }else{
+                return 0;
+            }
+        }
         this.run=()=>{
             const job_type = this.job_tuple.type;
             const job_tuple = this.job_tuple;
@@ -2056,56 +2093,6 @@
                 }
             }, this.socket_silence_timeout)
             return this;
-        }
-        this.answer_handler = (res)=>{
-            const job_type = this.job_tuple.type;
-            console.log("OneJob.run(): controller answer =", res, ", job_tuple =",job_tuple);
-            //@ this.job_id - this is unique job id like 'disk_space_lte_25'
-            if(typeof this.controller.gui_news != 'function'){
-                console.error("OneJob.answer_handler(): this.controller.gui_news =", this.controller.gui_news);
-            }
-            const msg_for_controller = "'"+this.job_id+"' job done";
-            this.controller.gui_news({msg:"agent_work", value:msg_for_controller});
-            console.log("OneJob.run(): this.is_job_minimal_done =", this.is_job_minimal_done);
-            this.is_job_minimal_done = true;
-            console.log("OneJob.run(): this.is_job_minimal_done(2) =", this.is_job_minimal_done);
-            const jobConditionChecking = new JobConditionChecking();
-            if(jobConditionChecking.check(this.job_tuple, res)){
-                console.log("OneJob.run(): job with type:", job_type, "PASS condition:", this.job_tuple.condition);
-                //@ Если в action одно строковое значение - значит одна следющая задача
-                if(typeof this.job_tuple.action == "string"){
-                    this.cbAnswer({is_socket_answered: true, next_action: this.job_tuple.action});
-                }
-                //@ Если в action массив строковых значений - значит несколько следующих задач
-                else if(Array.isArray(this.job_tuple.action)){
-                    this.job_tuple.action.forEach(act=>{
-                        this.cbAnswer({is_socket_answered: true, next_action: act});
-                    })
-                }
-            }else{
-                console.error("OneJob.run(): job with type:", job_type, "MISMATCH condition:", this.job_tuple.condition);
-                this.cbAnswer({is_socket_answered: true});
-            }
-        }
-        this.cbAnswer=()=>{console.error("OneJob.cbAnswer() not implemented")}
-        this.instance=(job_id, job_tuple, controller, agent_socket)=>{
-            return new OneJob(job_id, job_tuple, controller, agent_socket);
-        }
-        this.onAnswer=(cb)=>{
-            this.cbAnswer = cb;
-            return this;
-        }
-        this.break_delay_timeout=()=>{
-            clearTimeout(this.delay_timeout);
-        }
-        this.delay_now=()=>{
-            if(this.job_tuple.delay){
-                const timelapse = new Date().getTime() - _timeout_start_date;
-                console.log("OneJob: delay_now(): _timeout_start_date=",_timeout_start_date,"timelapse=",timelapse,"this.job_tuple.delay=",this.job_tuple.delay);
-                return this.job_tuple.delay - timelapse;
-            }else{
-                return 0;
-            }
         }
     }
     function JobConditionChecking(){

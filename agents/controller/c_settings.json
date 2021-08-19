@@ -5,6 +5,6 @@
 	"remote_dir": "\\\\seasea/discrete_tasks/discrete_tasks_current/update",
 	"time_after_partner_restart": 10000,
 	"if_disconnect_wait_before_spec_fu": 30000,
-	"if_disconnect_spec_fu": "fuita2",
+	"if_disconnect_spec_fu": "fuita",
 	"if_disconnect_spec_fu_attempts": 5
 }

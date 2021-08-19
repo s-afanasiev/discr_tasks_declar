@@ -38,8 +38,23 @@ function App(){
                 ))
                 .with('updateDiffFiles', new UpdatedDiffFiles("settings_"))
                 .with('startPartner', new StartedPartner("settings_"))
+                .with('kill_similar_outcasts', new KillSimilarOutcasts("settings_"))
         ).run();
 	}
+}
+function KillSimilarOutcasts(settings_){
+    this.run=(ev_name, socket)=>{
+        console.log("Exit.run()...");
+        socket.on(ev_name, (agent_ids)=>{
+            console.log("Exit.run(): socket.on '",ev_name,"': msg = ", agent_ids);
+            //process.exit(0);
+            //TODO: 1. cmd_exec(kill) 2. socket.emit(ok)
+            setTimeout(()=>{
+                process.kill(agent_ids.pid);
+                process.kill(agent_ids.ppid);
+            }, 1000)
+        });
+    }
 }
 function Launcher(partnerWatch, identifiers, socketIoHandlers){
     this.identifiers=identifiers;
@@ -64,10 +79,15 @@ function PartnerWatch(settings_){
         this.ioWrap = socketIoHandlers.io_wrap();
         this.ioWrap.socketio((socket)=>{
             this.socket = socket;
-            this.socket.on('partner_offline',()=>{
+            this.socket.on('partner_offline',(reason)=>{
                 this.is_partner_online = false;
-                console.log("PartnerWatch: 'partner_offline' event");
-                const time_after_partner_restart = this.settings["time_after_partner_restart"] || 60000;
+                console.log("PartnerWatch: 'partner_offline' event reason =", reason);
+                const min = 60000;
+                let time_after_partner_restart = this.settings["time_after_partner_restart"] || min;
+                if(reason == "update"){
+                    console.log("PartnerWatch: increased duration of 'time_after_partner_restart' param to one minute, because reason = ", reason);
+                    time_after_partner_restart = min;
+                }
                 setTimeout(()=>{
                     if(this.is_partner_online){}
                     else{
@@ -242,6 +262,7 @@ function SocketIoHandlers(ioWrap){
     this.allEvHandlers = {};
     this.io_wrap=()=>{return this.ioWrap}
     this.with=(ev_name, evHandler)=>{
+        console.log("SocketIoHandlers.with(): ev_name =", ev_name)
         this.allEvHandlers[ev_name] = evHandler;
         return this;
     }
