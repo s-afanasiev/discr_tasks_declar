@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const {spawn, exec} = require('child_process');
+const chipro = require('child_process');
 const EventEmitter = require('events');
 const io = require('socket.io-client');
 //const socket = require('./socket.io.dev.js')(SETT.client_socket);
@@ -71,6 +71,7 @@ function App(){
                 .with('exec_cmd', new ExecuteCommand())
                 .with('proc_count', new ProcCount())
                 .with('do_render', new DoRender())
+                .with('kill_similar_outcasts', new KillSimilarOutcasts("settings_"))
                 .with('more_jobs', new MoreJobs())
         ).run();
 	}
@@ -155,7 +156,7 @@ function Identifiers(){
         var EOL = /(\r\n)|(\n\r)|\n|\r/;
         let command = command_ || "getmac";
         return new Promise((resolve,reject)=>{
-            var CMD = exec('cmd');
+            var CMD =chipro.exec('cmd');
             var stdout = '';
             var stdoutres = '';
             var stderr = null;
@@ -279,6 +280,7 @@ function SocketIoHandlers(ioWrap){
 	this.socket = undefined;
     this.allEvHandlers = {};
     this.with=(ev_name, evHandler)=>{
+        console.log("SocketIoHandlers.with(): ev_name =", ev_name);
         this.allEvHandlers[ev_name] = evHandler;
         return this;
     }
@@ -1100,7 +1102,7 @@ function StartedPartner(settings_){
             }
             console.log("Starting "+agent_type+"...");
             //var CMD = spawn('cmd');
-            var CMD = exec('cmd');
+            var CMD = chipro.exec('cmd');
             var stdout = '';
             var stderr = null;
             CMD.stdout.on('data', function (data) { stdout += data.toString(); });
@@ -1179,21 +1181,47 @@ function ExecuteCommand(){
         socket.on(ev_name, function(data){
             console.log("ExecuteCommand.run(): socket data=",data);
             //@ data = {name:"exec_cmd", cmd:"notepad.exe", condition: "exec_done", action:"write data: hi"}
-            let _cmd = "";
-            if(data.app_name=="notepad.exe" || data.app_name=="notepad"){
-                _cmd = "wmic process call create notepad.exe";
-            }else if(data.app_name=="clean.bat"){
-                console.log("CLEAN.BAT !");
+            let _cmd = "wmic process call create" + data.app_name;
+            if(data.app_name.endsWith(".bat") || data.app_name.endsWith(".exe")){
+                test_exec(`${__dirname}/${data.app_name}`);
+                socket.emit(ev_name, true)
+            }else if(data.app_name.endsWith(".js")){
+                test_fork(`${__dirname}/${data.app_name}`);
+                socket.emit(ev_name, true)
+                // test_spawn(`${__dirname}/${data.app_name}`);
+                // test_exec(`${__dirname}/${data.app_name}`);
             }
-            execute_command(_cmd + '\r\n').then(cmd_out=>{
-                const process_id = parse_process_pid(cmd_out);
-                console.log("ExecuteCommand.run(): process id of ",_cmd,"=",process_id);
-                socket.emit(ev_name, {info:process_id});
-            }).catch(ex=>{
-                console.log("ExecuteCommand.run(): fail to execute_command:",ex);
-                socket.emit(ev_name, {error:ex});
-            });
         });
+    }
+    //@ Семейство функций exec () заменяет текущий образ процесса новым образом процесса. Он загружает программу в текущее пространство процесса и запускает ее из точки входа.
+    const test_exec=(path)=>{
+        const child = chipro.exec(path, {}, (err, stdout, stderr) => {
+            console.log('test_exec(): stdout: ' + stdout);
+            console.log('test_exec(): stderr: ' + stderr);
+            if(err){
+              console.log('test_exec(): exec error: ' + err);
+            }
+          });
+    }
+    //@the spawn is more suitable for long-running process with huge output. spawn streams input/output with child process
+    const test_spawn=(path)=>{
+        let child = chipro.spawn(path);
+        ls.stdout.on('data', (data) => {
+        console.log("test_spawn(): stdout: " + data);
+        });
+        ls.stderr.on('data', (data) => {
+        console.log("test_spawn(): stderr: " + data);
+        });
+        ls.on('close', (code) => {
+        console.log("test_spawn(): child process exited with code: " + data);
+        });
+    }
+    const test_fork=(path)=>{
+        let child = chipro.fork(path);
+        child.on("message", (data) => {
+            console.log("test_fork(): Main got message: " + data);
+        });
+        child.send('hello child');
     }
     const parse_process_pid=(cmd_out)=>{
         let res = false;
@@ -1244,6 +1272,20 @@ function DoRender(){
         socket.on(ev_name, (data)=>{
             console.log("do_render event!");
             socket.emit(ev_name, {is_started_render: true});
+        });
+    }
+}
+function KillSimilarOutcasts(settings_){
+    this.run=(ev_name, socket)=>{
+        console.log("Exit.run()...");
+        socket.on(ev_name, (agent_ids)=>{
+            console.log("Exit.run(): socket.on '",ev_name,"': msg = ", agent_ids);
+            //process.exit(0);
+            //TODO: 1. cmd_exec(kill) 2. socket.emit(ok)
+            setTimeout(()=>{
+                process.kill(agent_ids.pid);
+                process.kill(agent_ids.ppid);
+            }, 1000)
         });
     }
 }
@@ -1397,7 +1439,7 @@ function execute_command(command){
     return new Promise((resolve,reject)=>{
         console.log("execute_command(): command=",command);
         if(typeof command != 'string'){return reject()}
-        var CMD = exec(command);
+        var CMD = chipro.exec(command);
         var stdout = '';
         var stderr = false;
         CMD.stdout.on('data', function (data) {
@@ -1461,7 +1503,7 @@ function exec_cmd_getmac(command_)
     var EOL = /(\r\n)|(\n\r)|\n|\r/;
     let command = command_ || "getmac";
     return new Promise((resolve,reject)=>{
-        var CMD = exec('cmd');
+        var CMD = chipro.exec('cmd');
         var stdout = '';
         var stdoutres = '';
         var stderr = null;
@@ -2211,7 +2253,7 @@ const GS = {
                 }
                 console.log("Starting Launcher...");
                 //var CMD = spawn('cmd');
-                var CMD = exec('cmd');
+                var CMD = chipro.exec('cmd');
                 var stdout = '';
                 var stderr = null;
                 CMD.stdout.on('data', function (data) { stdout += data.toString(); });

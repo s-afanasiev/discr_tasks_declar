@@ -1682,41 +1682,141 @@
         this.agent_socket=undefined; //run()
         this.controller=undefined;//run
         this.jobsChaining=undefined;//run
-		this.instance=()=>{return new Jobs(jobs_schedule)}
+        this.jobChainsFromInitJobs=undefined;//go
+		this.instance=()=>{
+            console.error("!!!Jobs.instance()")
+            return new Jobs(jobs_schedule)
+        }
 		this.run=(controller, agent_socket)=>{
             this.agent_socket = agent_socket;
             this.controller = controller;
             if(this.schedule){
-                this.jobsChaining = new JobsChaining(
-                    new JobsInit(),
-                    new ExtendedJob(),
-                    new IntervalJobs(),
-                    new DelayedJobs().init()
-                ).run(this.schedule, this.controller, this.agent_socket);
+                this.go();
+                // this.jobsChaining = new JobsChaining(
+                //     new JobsInit(),
+                //     new ExtendedJob(),
+                //     new IntervalJobs(),
+                //     new DelayedJobs().init()
+                // ).run(this.schedule, this.controller, this.agent_socket);
             }else{
                 console.error("No schedule!");
                 return [];
             }
             return this;
 		}
+        this.go=()=>{
+            this.jobChainsFromInitJobs = new JobChainsFromInitJobs(
+                new InitialJobChain(),
+                new ExtendedJob(),
+                new IntervalJobs(),
+                new DelayedJobs().init()
+            ).run(this.schedule, this.controller, this.agent_socket);
+        }
         this.drop_future_jobs=(msg, cb_ok)=>{
-            if(this.jobsChaining){
-                this.jobsChaining.drop_future_jobs(msg, (ok)=>cb_ok(ok));
+            if(this.jobChainsFromInitJobs){
+                this.jobChainsFromInitJobs.drop_future_jobs(msg, (ok)=>cb_ok(ok));
             }else{
-                console.error("Jobs.drop_future_jobs() NO jobsChaining")
+                console.error("Jobs.drop_future_jobs() NO jobChainsFromInitJobs")
             }
         }
         this.list_future_jobs=(cb)=>{
-            if(this.jobsChaining){
-                this.jobsChaining.list_future_jobs(list=>{
+            //console.error("Jobs.list_future_jobs() jobChainsFromInitJobs =", this.jobChainsFromInitJobs)
+            if(this.jobChainsFromInitJobs){
+                this.jobChainsFromInitJobs.list_future_jobs(list=>{
                     //@ answer to 'NormalControllerMode' object
                     if(typeof cb=='function'){cb(list)}
                 });
             }else{
-                console.error("Jobs.list_future_jobs() NO jobsChaining")
+                console.error("Jobs.list_future_jobs() NO jobChainsFromInitJobs")
             }
         }
 	}
+    function JobChainsFromInitJobs(initialJobChain, extendedJob, intervalJobs, delayedJobs){
+        this.run=(schedule, controller, agent_socket)=>{
+            schedule.init.forEach(job_id=>{
+                if(job_id){
+                    initialJobChain.instance(job_id, extendedJob, intervalJobs, delayedJobs).run(schedule, controller, agent_socket)
+                }
+            });
+            return this;
+        }
+        this.drop_future_jobs=(msg)=>{
+            //@ Остановка конкретной работы или всех будущих работ.
+            if(msg&&msg.job_info){
+                if(msg.job_info.interval){
+                    intervalJobs.drop_future_jobs(msg.job_info.job_id);
+                }else if(msg.job_info.delay){
+                    delayedJobs.drop_delayed_jobs(msg.job_info.job_id);
+                }else{console.error("JobsChaining.drop_future_jobs(): 'interval' or 'delay' expected")}
+            }else{
+                intervalJobs.drop_future_jobs();
+                delayedJobs.drop_delayed_jobs();
+            }
+        }
+        this.list_future_jobs=(cb)=>{
+            const interval_list = intervalJobs.list_future_jobs();
+            const delayed_list = delayedJobs.list_delayed_jobs();
+            const list = interval_list.concat(delayed_list);
+            console.log("JobsChaining.list_future_jobs(): interval and delay list lengths=",list.length);
+            //@ answer to 'Jobs' object
+            if(typeof cb == 'function'){cb(list)}
+            else{console.error("JobsChaining.list_future_jobs(): cb is not a function!")}
+        }
+    }
+    function InitialJobChain(job_id, extendedJob, intervalJobs, delayedJobs){
+        this.job_id = job_id;
+        this.schedule = undefined;//run
+        this.instance=(job_id, extendedJob, intervalJobs, delayedJobs)=>{
+            return new InitialJobChain(job_id, extendedJob, intervalJobs, delayedJobs);
+        }
+        this.run=(schedule, controller, agent_socket)=>{
+            this.schedule = schedule;
+            this.controller = controller;
+            this.agent_socket = agent_socket;
+            send_next_job(this.job_id);
+        }
+        const send_next_job=(next_job_id)=>{
+            //@ e.g. next_job_id = 'stop_lte_25'
+            //console.log("JobsChaining.send_next_job(): next_job_id=",next_job_id);
+            //@ e.g. job_tuple = "stop_lte_25": {"type":"stop", "target_job_id":"disk_space_lte_25"}
+            const job_tuple = this.schedule.jobs[next_job_id];
+            if(!job_tuple) return console.error("JobsChaining.send_next_job(): No such job",next_job_id );
+            if(job_tuple.type == "stop"){
+                //@ delete this.schedule.jobs[job_tuple.target_job_id].interval;
+                console.log("JobsChaining.send_next_job() stop-type job:",job_tuple);
+                const job_id_to_stop = job_tuple.target_job_id;
+                const job_to_stop = this.schedule.jobs[job_id_to_stop];
+                if(typeof job_to_stop == 'object'){
+                    //delete job_to_stop.interval;                    
+                    intervalJobs.stopIntervalJob(job_id_to_stop);
+                }else console.error("JobsChaining.send_next_job() no such job in jobs_config:", job_to_stop);
+            }
+            else if(job_tuple.type != "stop"){
+                console.log("JobsChaining.send_next_job(): job id:",next_job_id);
+                if(intervalJobs.exist(next_job_id)){
+                    console.error("JobsChaining.send_next_job() Error: such interval jobs already exist:", next_job_id);
+                }else{
+                    const new_job = extendedJob.instance()
+                    .init(next_job_id, job_tuple, this.controller, this.agent_socket, intervalJobs, delayedJobs);
+                    if(new_job){
+                        new_job.onAnswer(ans=>{
+                            if(ans.is_socket_answered){
+                                if(ans.next_action){
+                                    console.log("JobsChaining.send_next_job(): next action=", ans.next_action);
+                                    send_next_job(ans.next_action);
+                                }
+                            }else{
+                                //@ most likely - socket response timeout
+                                console.error("JobsChaining.send_next_job() error:", ans, ", on job_id:",next_job_id);
+                            }
+                        }).run();
+                    }else{
+                        console.error("JobsChaining.send_next_job(): next job was not created for: ", next_job_id);
+                    }
+                }
+            }
+        }
+    }
     function JobsChaining(jobsInit, extendedJob, intervalJobs, delayedJobs){
         this.jobsInit = jobsInit;
         this.extendedJob = extendedJob;
@@ -1730,9 +1830,13 @@
             this.schedule = schedule;
             this.controller = controller;
             this.agent_socket = agent_socket;
-            this.jobsInit.run(schedule, controller, agent_socket, this.extendedJob, this.intervalJobs).onNext(next_job_id=>{
+            this.jobsInit.run(schedule, controller, agent_socket, this.extendedJob, this.intervalJobs).onNext((next_job_id, chain_finish_job_id)=>{
                 console.log("JobsChaining.run(): onNext(): next_job_id=",next_job_id);
-                send_next_job(next_job_id);
+                if(next_job_id){
+                    send_next_job(next_job_id);
+                }else{
+                    console.log("JobsChaining.run() onNext: chain has finished for:", chain_finish_job_id)
+                }
             });
             return this;
         }
@@ -1778,21 +1882,26 @@
             }
             else if(next_job_tuple.type != "stop"){
                 console.log("JobsChaining.send_next_job(): calling job:",next_job_id);
-                if(!this.intervalJobs.exist(next_job_id)){
-                    this.extendedJob.instance()
-                    .init(next_job_id, next_job_tuple, this.controller, this.agent_socket, this.intervalJobs, this.delayedJobs)
-                    .onAnswer(ans=>{
-                        if(ans.is_socket_answered){
-                            if(ans.next_action){
-                                send_next_job(ans.next_action);
-                            }
-                        }else{
-                            //@ most likely - socket response timeout
-                            console.error("JobsChaining.send_next_job() error:", ans, ", on job_id:",next_job_id);
-                        }
-                    }).run();
-                } else{
+                if(this.intervalJobs.exist(next_job_id)){
                     console.error("JobsChaining.send_next_job() Error: such interval jobs already exist:", next_job_id);
+                }else{
+                    const new_job = this.extendedJob.instance()
+                    .init(next_job_id, next_job_tuple, this.controller, this.agent_socket, this.intervalJobs, this.delayedJobs);
+                    if(new_job){
+                        new_job.onAnswer(ans=>{
+                            if(ans.is_socket_answered){
+                                if(ans.next_action){
+                                    console.log("JobsChaining.send_next_job(): next action=", ans.next_action);
+                                    send_next_job(ans.next_action);
+                                }
+                            }else{
+                                //@ most likely - socket response timeout
+                                console.error("JobsChaining.send_next_job() error:", ans, ", on job_id:",next_job_id);
+                            }
+                        }).run();
+                    }else{
+                        console.error("JobsChaining.send_next_job(): next job was not created for: ", next_job_id);
+                    }
                 }
             }
         }
@@ -1822,19 +1931,24 @@
             if(!Array.isArray(schedule.init)) return console.error("ERROR: NO 'init' key in jobs_config! ");
             schedule.init.forEach(job_id=>{
                 console.log("JobsInit.start_initial_jobs() schedule.jobs[job_id]=", schedule.jobs[job_id]);
-                extendedJob.instance()
-                .init(job_id, schedule.jobs[job_id], controller, agent_socket, intervalJobs)
-                .onAnswer(ans=>{
-                    if(ans.is_socket_answered){
-                        console.log("JobsInit.start_initial_jobs(): socket answered");
-                        if(ans.next_action){
-                            console.log("JobsInit.start_initial_jobs(): next action=", ans.next_action);
-                            this.cbNext(ans.next_action);
+                //@ Может вернуть объект работы или undefined.
+                const new_job = extendedJob.instance().init(job_id, schedule.jobs[job_id], controller, agent_socket, intervalJobs);
+                if(new_job){
+                    new_job.onAnswer(ans=>{
+                        if(ans.is_socket_answered){
+                            if(ans.next_action){
+                                console.log("JobsInit.start_initial_jobs(): next action=", ans.next_action);
+                                this.cbNext(ans.next_action);
+                            }else{
+                                this.cbNext(false, job_id);
+                            }
+                        }else{
+                            console.error("JobsInit.start_initial_jobs(): '",job_id,"' job error:", ans.err_type);
                         }
-                    }else{
-                        console.error("JobsInit.start_initial_jobs(): '",job_id,"' job error:", ans.err_type);
-                    }
-                }).run();
+                    }).run();
+                }else{
+                    console.log("JobsInit.start_initial_jobs()")
+                }
             });
         }
     }
@@ -1899,7 +2013,7 @@
         }
         this.drop_future_jobs=(job_id)=>{
             if(job_id){
-                console.error("IntervalJobs.drop_future_jobs() job_id=", job_id, "_interval_jobs=", util.inspect(_interval_jobs))
+                console.error("IntervalJobs.drop_future_jobs() job_id=", job_id)
                 _interval_jobs[job_id].break_interval();
                 delete _interval_jobs[job_id];
             }else{
@@ -2037,9 +2151,12 @@
                 }
                 //@ Если в action массив строковых значений - значит несколько следующих задач
                 else if(Array.isArray(this.job_tuple.action)){
-                    this.job_tuple.action.forEach(act=>{
-                        this.cbAnswer({is_socket_answered: true, next_action: act});
+                    this.job_tuple.action.forEach(nact=>{
+                        this.cbAnswer({is_socket_answered: true, next_action: nact});
                     })
+                }
+                else{
+                    this.cbAnswer({is_socket_answered: true, next_action: nact});
                 }
             }else{
                 console.log("OneJob.run(): job with type:", job_type, "MISMATCH condition:", this.job_tuple.condition);
@@ -2155,7 +2272,7 @@
             }
             else if(job_type == 'my_job1'){
                 //@ res - this is the controller's answer through socket.io
-                if(res = 5){
+                if(res == 5){
                     return true;
                 }else{
                     return false;

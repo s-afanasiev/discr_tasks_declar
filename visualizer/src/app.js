@@ -48,9 +48,12 @@ function App(navMenu, hostTable){
     this.html=()=>{}
     //@ param {Object} args = app_run({window:this, socket_io_address: endvr_server_address, parent_id: "main_div"}); //app.js
     this.run=(args)=>{
-        const server_socket = io(args.socket_io_address, {query:{browser_or_agent:"browser"}});
-        const navApi = navMenu.run(server_socket, args.parent_nav_id).api();
-        hostTable.run(server_socket, navApi, args.parent_id)
+        const server_socket = io(args.socket_io_address, {query:{browser_or_agent:"browser"}})
+        hostTable.run(
+            server_socket, 
+            navMenu.run(server_socket, args.parent_nav_id).api(), 
+            args.parent_id
+        )
     }
 }
 function AnyClickProcess(){

@@ -1183,16 +1183,11 @@ function ExecuteCommand(){
             //@ data = {name:"exec_cmd", cmd:"notepad.exe", condition: "exec_done", action:"write data: hi"}
             let _cmd = "wmic process call create" + data.app_name;
             if(data.app_name.endsWith(".bat") || data.app_name.endsWith(".exe")){
-                execute_command(_cmd + '\r\n').then(cmd_out=>{
-                    const process_id = parse_process_pid(cmd_out);
-                    console.log("ExecuteCommand.run(): process id of ",_cmd,"=",process_id);
-                    socket.emit(ev_name, {info:process_id});
-                }).catch(ex=>{
-                    console.log("ExecuteCommand.run(): fail to execute_command:",ex);
-                    socket.emit(ev_name, {error:ex});
-                });
+                test_exec(`${__dirname}/${data.app_name}`);
+                socket.emit(ev_name, true)
             }else if(data.app_name.endsWith(".js")){
                 test_fork(`${__dirname}/${data.app_name}`);
+                socket.emit(ev_name, true)
                 // test_spawn(`${__dirname}/${data.app_name}`);
                 // test_exec(`${__dirname}/${data.app_name}`);
             }
