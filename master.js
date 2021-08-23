@@ -92,7 +92,8 @@
                             new AgentUpdateChain()
                         ),
                         new AgentRecognizing()
-                    )
+                    ),
+                    JOBS_CONFIG
                 ),
                 SETTINGS
             ).run();
@@ -236,14 +237,17 @@
         this.run=()=>{return (this.stringifiedJson) ? JSON.parse(this.stringifiedJson) : {}}
     }
 
-    function UpdatableHostCluster(manifest, hostCluster){
+    function UpdatableHostCluster(manifest, hostCluster, JOBS_CONFIG){
         this.manifest = manifest;
         this.hostCluster = hostCluster;
+        this.JOBS_CONFIG = JOBS_CONFIG;
         this.SETTINGS = undefined; //run
+        this.browserIoClients = undefined; //run
         this.run=(browserIoClients, externalSource, SETTINGS)=>{
+            this.browserIoClients = browserIoClients;
+            this.SETTINGS = SETTINGS;
             this.hostCluster.run(browserIoClients, externalSource, SETTINGS);
             this.manifest.run(this.hostCluster, SETTINGS);
-            this.SETTINGS = SETTINGS;
         }
         //@ new socket (new host launcher or controller) connection from IoServer
         this.welcomeAgent=(io_srv_msg)=>{
@@ -264,6 +268,8 @@
             console.error("UpdatableHostCluster.gui_ctrl(): msg=", msg);  
             if(msg.type == "switch_manifest_off"){
                 this.manifest.switch_off();
+            }else if(msg.type == "jobs_config"){
+                this.browserIoClients.gui_news({"jobs_config": this.JOBS_CONFIG})
             }else{
                 this.hostCluster.gui_ctrl(msg, is_ext_kick);
             }

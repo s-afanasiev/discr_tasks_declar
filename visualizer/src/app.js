@@ -11,7 +11,11 @@ function app_run(args){
                     new DeletedJob()
                 )
             ),
-            new NavGlobalBtns()
+            new NavGlobalBtns(
+                new NavJobChainTreeBtn(
+                    new JobChainTreeWindow()
+                )
+            )
         ),
         new HostTable2(
             new HTHostsVisualLocation(
@@ -51,7 +55,7 @@ function App(navMenu, hostTable){
         const server_socket = io(args.socket_io_address, {query:{browser_or_agent:"browser"}})
         hostTable.run(
             server_socket, 
-            navMenu.run(server_socket, args.parent_nav_id).api(), 
+            navMenu.run(server_socket, args.parent_nav_id, args.window).api(), 
             args.parent_id
         )
     }
@@ -71,13 +75,13 @@ function AnyClickProcess(){
 function NavMenu(navSelectedHost, navGlobalBtns){
     let _$a = undefined;//run
     let _navApi = undefined;//run
-    this.run=(server_socket, parent_div_id)=>{
+    this.run=(server_socket, parent_div_id, _window)=>{
         _navApi = new NavApi().init();
         navSelectedHost.init(server_socket)
         _$a = $("<div style='height:100%; width:100%; border:1px solid blue; display:table;'>");
         $("#"+parent_div_id).append(_$a);
         _$a.append("<div style='display:table-cell; width:10%;'>nav menu!</div>")
-        _$a.append(navGlobalBtns.run().dom())
+        _$a.append(navGlobalBtns.run(server_socket, parent_div_id, _window).dom())
         _$a.append(navSelectedHost.init(server_socket, _navApi).run().dom());
         return this;
     }
@@ -214,12 +218,108 @@ function StoppedJob(resumedJob, deletedJob){}
 function ResumedJob(){}
 function DeletedJob(){}
 function OneHostPrivateInterface(){}
-function NavGlobalBtns(){
+function NavGlobalBtns(navJobChainTreeBtn){
     let _$a = undefined//run
     this.dom=()=>{return _$a;}
-    this.run=()=>{
+    this.run=(server_socket, parent_div_id, _window)=>{
         _$a = $("<div style='height:100%; width:20%; border:1px dashed grey; display:table-cell;'>update mode<div>");
+        _$a.append(navJobChainTreeBtn.run(server_socket, parent_div_id, _window).dom());
         return this;
+    }
+}
+function NavJobChainTreeBtn(jobChainTreeWindow){
+    let _$a = undefined//run
+    this.dom=()=>{return _$a;}
+    this.run=(server_socket, parent_div_id, _window)=>{
+        _$a = $("<div style='height:25%; width:40%; border:1px solid red; cursor:pointer; background:#eee; text-align:center;'>job chains<div>");
+        _$a.click((ev)=>{
+            const event_type = 'jobs_config';
+            //alert("calling ");
+            server_socket.emit('gui_ctrl', {type: event_type})
+        });
+        server_socket.on("gui_news", (data)=>{
+            if(data.jobs_config){
+                jobChainTreeWindow.instance().run(data.jobs_config, parent_div_id, _window);
+            }
+        })
+        return this;
+    }
+}
+function JobChainTreeWindow(){
+    this.instance=()=>{return new JobChainTreeWindow();}
+    this.run=(jobs_config, parent_div_id, _window)=>{
+        const tree_window = $("<div style='position:absolute; width:70%; height:70%; top:15%; left:15%; background:#b5dbc2; z-index:2;'></div>");
+        $("#super").append(tree_window);
+        tree_window.append(new CloseBtn().run(tree_window).dom(), new Tree().run(jobs_config).dom())
+        //$("#"+parent_div_id).append("<div style='postion:absolute; width:50%; height:50%; top:50%; left:50%; background:#dde'></div>")
+    }
+    function CloseBtn(){
+        let _$a = undefined//run
+        this.dom=()=>{return _$a;}
+        this.run=(tree_window)=>{
+            _$a = $("<div style='position:absolute; width:5%; height:5%; top:0; left:0; background:#96b4a0; text-align:center; cursor:pointer;'>X</div>");
+            _$a.click(ev=>{
+                tree_window.remove();
+            })
+            return this;
+        }
+    }
+    function Tree(){
+        let _$a = undefined//run
+        this.dom=()=>{return _$a;}
+        this.run=(jobs_config)=>{
+            _$a = $("<div style='position:absolute; width:98%; height:95%; top:5%; left:0; background:#d3f0dd; padding:1%; outline:1px solid #608f70;'>tree</div>");
+            jobs_config.init.forEach(job_id=>{
+                let if_interval = color_if_interval(jobs_config, job_id);
+                _$a.append("<div><span style='color:#0f3f1f; background:#b5dbc2;'><b>"+job_id+"</b></span>"+if_interval+"</div>");
+                _$a.append(base(jobs_config, job_id, 1));
+            })
+            return this;
+        }
+        function base(jobs_config, job_id, _deep){
+            let deep = _deep || 1;
+            let html = "<div>";
+            if(jobs_config.jobs[job_id]){
+                //console.log("jobs_config[job_id] = ", jobs_config[job_id])
+                const action = jobs_config.jobs[job_id]["action"];
+                if(action){
+                    //draw elbows
+                    if(Array.isArray(action)){
+                        action.forEach(act=>{
+                            html += draw_action(jobs_config, act, deep)+"<br>";
+                        })
+                    }else if(typeof action == "string"){
+                        html += "<span>"+draw_action(jobs_config, action, deep)+"</span>";
+                    }
+                    html += base(jobs_config, action, deep+1)
+                }else{
+                    return "";
+                }
+            }
+            return html += "</div>";
+            //-----------------------------------
+            
+        }
+        function draw_action(jobs_config, action, deep){
+            let html = "";
+            let if_interval = color_if_interval(jobs_config, action);
+            for(let i=0; i<deep; i++){
+                let color = "#d3f0dd";
+                if(i==deep-1) color = "red";
+                html += "<span style='color:"+color+";'>&angrt;</span>";
+            }
+            html += "<span>"+action+"</span>"+if_interval;
+            return html;
+        }
+        function color_if_interval(jobs_config, job_id){
+            let if_interval = "";
+            if(jobs_config.jobs[job_id].interval){
+                if_interval = "<span>&nbsp;</span><span style='background:#e3b8e0;'>"+jobs_config.jobs[job_id].interval+"</span>";
+            }else if(jobs_config.jobs[job_id].delay){
+                if_interval = "<span>&nbsp;</span><span style='background:#edce91;'>"+jobs_config.jobs[job_id].delay+"</span>";
+            }
+            return if_interval;
+        }
     }
 }
 //@---------------------------------
