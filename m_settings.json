@@ -1,5 +1,5 @@
 {
-    "host": "seasea",
+    "host": "tfcomp",
     "port": "55999",
     "update_folder": "./update/",
     "update_folder_watch_timer": 50000,

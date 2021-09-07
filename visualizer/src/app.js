@@ -1,10 +1,15 @@
 const _global_stor = {};
+var global_counter_id = 1;
 function app_run(args){
     //@ param {Object} args = app_run({window:this, socket_io_address: endvr_server_address, parent_id: "main_div"}); //app.js
     return new App(
         new NavMenu(
             new NavSelectedHost(
                 new NavFutureJobsPanel(),
+                new NavJobChainTreeBtn(
+                    new JobChainTreeWindow(),
+                    {btn_name: "agent jobs", concrete_agent:true}
+                ),
                 new AddedJob(),
                 new StoppedJob(
                     new ResumedJob(),
@@ -13,7 +18,8 @@ function app_run(args){
             ),
             new NavGlobalBtns(
                 new NavJobChainTreeBtn(
-                    new JobChainTreeWindow()
+                    new JobChainTreeWindow(),
+                    {btn_name: "jobs general config"}
                 )
             )
         ),
@@ -77,12 +83,11 @@ function NavMenu(navSelectedHost, navGlobalBtns){
     let _navApi = undefined;//run
     this.run=(server_socket, parent_div_id, _window)=>{
         _navApi = new NavApi().init();
-        navSelectedHost.init(server_socket)
         _$a = $("<div style='height:100%; width:100%; border:1px solid blue; display:table;'>");
         $("#"+parent_div_id).append(_$a);
         _$a.append("<div style='display:table-cell; width:10%;'>nav menu!</div>")
         _$a.append(navGlobalBtns.run(server_socket, parent_div_id, _window).dom())
-        _$a.append(navSelectedHost.init(server_socket, _navApi).run().dom());
+        _$a.append(navSelectedHost.init(server_socket, _navApi).run(parent_div_id).dom());
         return this;
     }
     this.api=()=>{return _navApi}
@@ -90,7 +95,7 @@ function NavMenu(navSelectedHost, navGlobalBtns){
         const event_types = ["host_click", "future_jobs_click"];
         const _target_list = {};
         this.init=()=>{
-            event_types.forEach(event_type=>{_target_list[event_type] = [];})
+            event_types.forEach(e_type=>{_target_list[e_type] = [];})
             return this;
         }
         this.notify=(event_type, data_dto)=>{
@@ -107,6 +112,7 @@ function NavMenu(navSelectedHost, navGlobalBtns){
         this.subscribe=(event_type, target)=>{
             if(event_types.includes(event_type)){
                 _target_list[event_type].push(target);
+                console.log("NavMenu.subscribe() target_list length =", _target_list.length);
             }else{
                 console.log("NavApi.subscribe(): no such event: ", event_type);
             }
@@ -123,10 +129,11 @@ function NavMenu(navSelectedHost, navGlobalBtns){
         }
     }
 }
-function NavSelectedHost(navFutureJobsPanel, addedJob, stoppedJob){
+function NavSelectedHost(navFutureJobsPanel, navJobChainTreeBtn, addedJob, stoppedJob){
     let _$a = undefined//run
     let _server_socket = undefined//init
     let _navApi = undefined;//init
+    this.parent_div_id = undefined;//init
     this.id=()=>{return "navSelectedHost"}
     this.as=(name)=>{
         _global_stor[name] = this;
@@ -139,9 +146,12 @@ function NavSelectedHost(navFutureJobsPanel, addedJob, stoppedJob){
         navFutureJobsPanel.init(server_socket, navApi);
         return this;
     }
-    this.run=()=>{
+    this.run=(parent_div_id)=>{
+        this.parent_div_id = parent_div_id;
         _$a = $("<div style='height:100%; width:50%; border:1px dashed orange; display:table-cell;'>")
         _$a.append("<div id='selected_host_md5_place'>selected host</div>");
+        //@ server_socket, parent_div_id, _window
+        _$a.append(navJobChainTreeBtn.init(_navApi).run(_server_socket, this.parent_div_id).dom())
         _$a.append(navFutureJobsPanel.run().dom())
         _navApi.subscribe("host_click", this);
         return this;
@@ -191,7 +201,7 @@ function NavFutureJobsPanel(){
                                 server_socket.emit('gui_ctrl', {type:'drop_future_jobs', host_id:_cur_clicked_host_md5, job_info: one_future_job});
                             })
                             _$a.append($stop_future_job_btn)
-                            _$a.append("<span>"+JSON.stringify(one_future_job)+"</span><br>")
+                            _$a.append("<span>"+JSON.stringify(one_future_job)+"</span>")
                         });
                         const $stop_all_future_jobs = $("<span style='cursor:pointer; background:red;'>STOP ALL</span>");
                         $stop_all_future_jobs.on("click", (evt)=>{
@@ -218,45 +228,83 @@ function StoppedJob(resumedJob, deletedJob){}
 function ResumedJob(){}
 function DeletedJob(){}
 function OneHostPrivateInterface(){}
-function NavGlobalBtns(navJobChainTreeBtn){
+function NavGlobalBtns(navJobChainTreeBtn, _id){
+    const id = (_id) ? _id+1 : 1;
     let _$a = undefined//run
     this.dom=()=>{return _$a;}
     this.run=(server_socket, parent_div_id, _window)=>{
+        console.log("NavGlobalBtns.run(): id=", id)
         _$a = $("<div style='height:100%; width:20%; border:1px dashed grey; display:table-cell;'>update mode<div>");
         _$a.append(navJobChainTreeBtn.run(server_socket, parent_div_id, _window).dom());
         return this;
     }
 }
-function NavJobChainTreeBtn(jobChainTreeWindow){
+function NavJobChainTreeBtn(jobChainTreeWindow, Options){
+    var _navApi = undefined;//init
+    this.current_agent_md5 = -1;//nav_api_notify
+    const _id = global_counter_id++;
+    const receiver_id = "NavJobChainTreeBtn"+_id;
     let _$a = undefined//run
+    const btn_name = Options.btn_name || "jobs chains"
     this.dom=()=>{return _$a;}
+    this.init=(navApi)=>{
+        _navApi = navApi;
+        navApi.subscribe("host_click", this);
+        return this;
+    }
     this.run=(server_socket, parent_div_id, _window)=>{
-        _$a = $("<div style='height:25%; width:40%; border:1px solid red; cursor:pointer; background:#eee; text-align:center;'>job chains<div>");
+        console.log("NavJobChainTreeBtn.run(): id=", _id)
+        _$a = $("<div style='height:25%; width:40%; border:1px solid red; cursor:pointer; background:#eee; text-align:center;'>"+btn_name+"<div>");
         _$a.click((ev)=>{
             const event_type = 'jobs_config';
             //alert("calling ");
-            server_socket.emit('gui_ctrl', {type: event_type})
+            if(Options.concrete_agent){
+                server_socket.emit('gui_ctrl', {type: event_type, caller_id: receiver_id, concrete_agent: this.current_agent_md5})
+            }else{
+                server_socket.emit('gui_ctrl', {type: event_type, caller_id: receiver_id})
+            }
         });
         server_socket.on("gui_news", (data)=>{
-            if(data.jobs_config){
-                jobChainTreeWindow.instance().run(data.jobs_config, parent_div_id, _window);
+            // console.log("NavJobChainTreeBtn.run(): gui_news from server: ", data);
+            // console.log("NavJobChainTreeBtn.run(): gui_news: _id =", _id)
+            if(data.caller_id == receiver_id){
+                console.log("NavJobChainTreeBtn.run(): msg from server: ", data)
+                if(data.jobs_config){
+                    jobChainTreeWindow.instance(_id).run(data.jobs_config, parent_div_id, _window);
+                }
             }
         })
         return this;
     }
+    this.nav_api_notify=(eventType, data_dto)=>{
+        if(eventType == "host_click"){
+            if(data_dto.md5){
+                this.current_agent_md5 = data_dto.md5;
+                console.log("NavJobChainTreeBtn.nav_api_notify(): current_agent_md5 = ", this.current_agent_md5)
+            }else{
+                console.log("NavJobChainTreeBtn.nav_api_notify(): no md5 data on 'host_click' event")
+            }
+        }else{
+            console.log("NavJobChainTreeBtn.nav_api_notify(): unexpected eventType: ", eventType)
+        }
+    }
 }
-function JobChainTreeWindow(){
-    this.instance=()=>{return new JobChainTreeWindow();}
+function JobChainTreeWindow(_id){
+    const id = (_id) ? _id+1 : 1;
+    this.instance=(id)=>{return new JobChainTreeWindow(id);}
     this.run=(jobs_config, parent_div_id, _window)=>{
+        console.log("JobChainTreeWindow.run(): id=", id)
         const tree_window = $("<div style='position:absolute; width:70%; height:70%; top:15%; left:15%; background:#b5dbc2; z-index:2;'></div>");
         $("#super").append(tree_window);
-        tree_window.append(new CloseBtn().run(tree_window).dom(), new Tree().run(jobs_config).dom())
+        tree_window.append(new CloseBtn(id).run(tree_window).dom(), new Tree(id).run(jobs_config).dom())
         //$("#"+parent_div_id).append("<div style='postion:absolute; width:50%; height:50%; top:50%; left:50%; background:#dde'></div>")
     }
-    function CloseBtn(){
+    function CloseBtn(_id){
+        const id = (_id) ? _id+1 : 1;
         let _$a = undefined//run
         this.dom=()=>{return _$a;}
         this.run=(tree_window)=>{
+            console.log("CloseBtn.run(): id=", id)
             _$a = $("<div style='position:absolute; width:5%; height:5%; top:0; left:0; background:#96b4a0; text-align:center; cursor:pointer;'>X</div>");
             _$a.click(ev=>{
                 tree_window.remove();
@@ -264,10 +312,12 @@ function JobChainTreeWindow(){
             return this;
         }
     }
-    function Tree(){
+    function Tree(_id){
+        const id = (_id) ? _id+1 : 1;
         let _$a = undefined//run
         this.dom=()=>{return _$a;}
         this.run=(jobs_config)=>{
+            console.log("Tree.run(): id=", id)
             _$a = $("<div style='position:absolute; width:98%; height:95%; top:5%; left:0; background:#d3f0dd; padding:1%; outline:1px solid #608f70;'>tree</div>");
             jobs_config.init.forEach(job_id=>{
                 let if_interval = color_if_interval(jobs_config, job_id);
@@ -279,8 +329,9 @@ function JobChainTreeWindow(){
         function base(jobs_config, job_id, _deep){
             let deep = _deep || 1;
             let html = "<div>";
+            //console.log("Tree.base() Boolean = ", jobs_config[job_id])
             if(jobs_config.jobs[job_id]){
-                //console.log("jobs_config[job_id] = ", jobs_config[job_id])
+                console.log("Tree.base() jobs_config[job_id] = ", jobs_config.jobs[job_id])
                 const action = jobs_config.jobs[job_id]["action"];
                 if(action){
                     //draw elbows
@@ -313,10 +364,15 @@ function JobChainTreeWindow(){
         }
         function color_if_interval(jobs_config, job_id){
             let if_interval = "";
-            if(jobs_config.jobs[job_id].interval){
-                if_interval = "<span>&nbsp;</span><span style='background:#e3b8e0;'>"+jobs_config.jobs[job_id].interval+"</span>";
-            }else if(jobs_config.jobs[job_id].delay){
-                if_interval = "<span>&nbsp;</span><span style='background:#edce91;'>"+jobs_config.jobs[job_id].delay+"</span>";
+            if(jobs_config.jobs[job_id]){
+                if(jobs_config.jobs[job_id].interval){
+                    if_interval = "<span>&nbsp;</span><span style='background:#e3b8e0;'>"+jobs_config.jobs[job_id].interval+"</span>";
+                }else if(jobs_config.jobs[job_id].delay){
+                    if_interval = "<span>&nbsp;</span><span style='background:#edce91;'>"+jobs_config.jobs[job_id].delay+"</span>";
+                }
+            }else{
+                console.error("Tree.color_if_interval(): no "+job_id+ " in jobs_config.jobs")
+                if_interval = "<span>&nbsp;</span><span style='color:#722;'><b>(Deleted)</b></span>"
             }
             return if_interval;
         }
