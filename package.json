@@ -5,11 +5,13 @@
   "main": "master.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-	"start":"node master.js && node agents/launcher/launcher.js"
+    "start": "node master.js && node agents/launcher/launcher.js"
   },
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "nodemon": "^2.0.12",
+    "pm2": "^5.1.1",
     "socket.io": "^2.3.0"
   }
 }

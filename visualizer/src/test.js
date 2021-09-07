@@ -1,4 +1,7 @@
-function AddedJob(){}
-const obj = new AddedJob()
-console.log(Object.getPrototypeOf(obj) === obj.prototype.prototype)
-console.log(Object.prototype)
+const a = -1;
+
+if(a){
+	console.log("a")
+}else{
+	console.log("no a")
+}

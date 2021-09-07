@@ -1,7 +1,7 @@
 {
-	"client_socket": "http://seasea:55999",
+	"client_socket": "http://tfcomp:55999",
 	"local_dir_controller": "../controller",
 	"local_dir_launcher": "../launcher",
-	"remote_dir": "\\\\seasea/discrete_tasks/discrete_tasks_current/update",
+	"remote_dir": "\\\\tfcomp/CODES/JAM/discrete_tasks/discrete_tasks_current/update",
 	"time_after_partner_restart": 10000
 }

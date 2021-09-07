@@ -1831,7 +1831,7 @@ const GS = {
             _identifiers.ppid =String(process.ppid);
             console.log("GS.prepare_identifiers(): process.argv=", process.argv);
             _identifiers.apid = (isNaN(Number(process.argv[2]))) ? ("") : (String(process.argv[2]));
-            if (_identifiers.apid == 0) _identifiers.apid = "";;
+            if (_identifiers.apid == 0) _identifiers.apid = "";
 
             get_mac((err, res) => {
               if (err) {

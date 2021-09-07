@@ -195,6 +195,7 @@
         //@ msg from inside host cluster to outside Browser
         this.gui_news=(data)=>{
             //@ from HostCluster: data={ msg:'host_table', table: [{md5:""},{md5:""}] };
+            console.log("BrowserIoClients.gui_news(): data =", JSON.stringify(data))
             if(this.socket){
                 //console.error("AAAAAAAAAAAAA", data)
                 this.socket.emit('gui_news', data);
@@ -269,7 +270,11 @@
             if(msg.type == "switch_manifest_off"){
                 this.manifest.switch_off();
             }else if(msg.type == "jobs_config"){
-                this.browserIoClients.gui_news({"jobs_config": this.JOBS_CONFIG})
+                if(msg.concrete_agent){
+                    this.hostCluster.gui_ctrl(msg, is_ext_kick)
+                }else{
+                    this.browserIoClients.gui_news({"jobs_config": this.JOBS_CONFIG, "caller_id": msg.caller_id})
+                }
             }else{
                 this.hostCluster.gui_ctrl(msg, is_ext_kick);
             }
@@ -709,6 +714,16 @@
                     return res;
                 });
                 recipient.gui_news({msg:'host_table', table: result});
+            }else if(msg.type=="jobs_config"){
+                const AGENT_MD5 = msg.concrete_agent;
+                let host_matched = _hosts_list.filter(host=>{
+                    return host.commonMd5() == AGENT_MD5;
+                });
+                if(host_matched.length ==1){
+                    host_matched[0].gui_ctrl(msg, is_ext_kick);
+                }else{
+                    console.error("HostCluster.gui_ctrl(): msg type 'jobs_config': host_matched length=", host_matched.length);
+                }
             }else if(msg.type=="apply_updates"){
                 if(msg.value == "check"){
                     recipient.gui_news({msg:'apply_updates', value: this.SETTINGS.apply_updates});
@@ -857,12 +872,19 @@
                     result.controller.agent_apid = this.controller.agentApid();
                 }
                 return result;
+            }else if(msg.type=="jobs_config"){
+                //@msg = {type: event_type, caller_id: <some id from external Object>, concrete_agent: <agent md5>}
+                console.log("HostAspair.gui_ctrl(): '"+msg.type+"'-type msg")
+                this.controller.gui_ctrl(msg)
             }else if(msg.type=="list_future_jobs"||msg.type=="drop_future_jobs"){
                 console.error("HostAsPair.gui_ctrl(): msg=",util.inspect(msg));
                 if(this.controller){
                     this.controller.gui_ctrl(msg, is_ext_kick);
                 }
-            }else return {};
+            }else {
+                console.error("HostAsPair.gui_ctrl(): unhandled msg type:", msg.type)
+                return {};
+            }
         }
         //@ param data = {msg:"", ag_type:"launcher", obj:<object of Launcher or Controller>}
         this.gui_news=(data)=>{
@@ -1274,6 +1296,13 @@
                 });
             }else if(msg.type=="drop_future_jobs"){
                 this.normalControllerMode.drop_future_jobs(msg);
+            }else if(msg.type=="jobs_config"){
+                //@msg = {type: event_type, caller_id: <some id from external Object>, concrete_agent: <agent md5>}
+                console.log("Controller.gui_ctrl(): '"+msg.type+"'-type msg")
+                this.normalControllerMode.jobs_config(config=>{
+                    console.log("Controller.gui_ctrl(): returning jobs config from normalControllerMode")
+                    this.gui_news({"jobs_config": config, "caller_id": msg.caller_id});
+                });
             }
         }
         //@ this comparing promote, when master first time welcome the Agent
@@ -1676,6 +1705,12 @@
                 if(typeof cb=='function'){cb(list)}
             });
         }
+        this.jobs_config=(cb)=>{
+            console.log("NormalControllerMode.jobs_config()...")
+            if(typeof cb=='function'){
+                cb(this.jobs.jobs_config());
+            }
+        }
         this.run=(controller, agent_socket)=>{
             this.agent_socket =agent_socket;
             console.log("NormalControllerMode.run()...");
@@ -1683,27 +1718,30 @@
         }
     }
     //@ ----CONTROLLER'S JOBS--------------
-    function Jobs(jobs_schedule){
-        this.schedule = jobs_schedule;
+    function Jobs(_schedule){
+        this.schedule = _schedule;
+        this.jobsSchedule = undefined;
         this.agent_socket=undefined; //run()
         this.controller=undefined;//run
         this.jobsChaining=undefined;//run
         this.jobChainsFromInitJobs=undefined;//go
+		this.jobs_config=()=>{
+            console.log("Jobs.jobs_config(): returning schedule...")
+            return this.schedule;
+        }
 		this.instance=()=>{
-            console.error("!!!Jobs.instance()")
-            return new Jobs(jobs_schedule)
+            if(this.jobsSchedule){
+                return new Jobs(this.jobsSchedule.clone())
+            }else if(this.schedule){
+                return new Jobs(JSON.parse(JSON.stringify(this.schedule)))
+            }else{console.error("Jobs.instance(): NO SCHEDULE!!!")}
         }
 		this.run=(controller, agent_socket)=>{
+            this.jobsSchedule = new JobsSchedule(this.schedule).run();
             this.agent_socket = agent_socket;
             this.controller = controller;
             if(this.schedule){
                 this.go();
-                // this.jobsChaining = new JobsChaining(
-                //     new JobsInit(),
-                //     new ExtendedJob(),
-                //     new IntervalJobs(),
-                //     new DelayedJobs().init()
-                // ).run(this.schedule, this.controller, this.agent_socket);
             }else{
                 console.error("No schedule!");
                 return [];
@@ -1716,7 +1754,7 @@
                 new ExtendedJob(),
                 new IntervalJobs(),
                 new DelayedJobs().init()
-            ).run(this.schedule, this.controller, this.agent_socket);
+            ).run(this.jobsSchedule, this.controller, this.agent_socket);
         }
         this.drop_future_jobs=(msg, cb_ok)=>{
             if(this.jobChainsFromInitJobs){
@@ -1736,13 +1774,45 @@
                 console.error("Jobs.list_future_jobs() NO jobChainsFromInitJobs")
             }
         }
+        function JobsSchedule(schedule){
+            this.schedule = schedule;
+            this.run=()=>{
+                return this;
+            }
+            this.clone=()=>{
+                if(this.schedule){
+                    return JSON.parse(JSON.stringify(this.schedule))
+                }
+            }
+            this.initJobs=()=>{
+                if(this.schedule){
+                    return this.schedule.init.filter(job_id=>typeof job_id=="string" && job_id != "");
+                }else{
+                    console.error("JobsSchedule.initJobs(): NO SCHEDULE!")
+                    return [];
+                }
+            }
+            //@param {Array} job_ids = <array of unique jobs ids>
+            this.del_jobs=(job_ids)=>{
+                if(!Array.isArray(job_ids)){
+                    job_ids = [job_ids];
+                }
+                job_ids.forEach(job_id=>{
+                    delete this.schedule.jobs[job_id];
+                })
+            }
+            //@ param {String} job_id = e.g. "disk_space_lte_25" || "nvidia_exist"
+            this.tuple_by_job_id=(job_id)=>{
+                return this.schedule.jobs[job_id];
+            }
+        }
 	}
     function JobChainsFromInitJobs(initialJobChain, extendedJob, intervalJobs, delayedJobs){
-        this.run=(schedule, controller, agent_socket)=>{
-            schedule.init.forEach(job_id=>{
-                if(job_id){
-                    initialJobChain.instance(job_id, extendedJob, intervalJobs, delayedJobs).run(schedule, controller, agent_socket)
-                }
+        this.jobsSchedule = undefined;//run
+        this.run=(jobsSchedule, controller, agent_socket)=>{
+            this.jobsSchedule = jobsSchedule;
+            jobsSchedule.initJobs().forEach(job_id=>{
+                initialJobChain.instance(job_id, extendedJob, intervalJobs, delayedJobs).run(this.jobsSchedule, controller, agent_socket);
             });
             return this;
         }
@@ -1754,9 +1824,10 @@
                 }else if(msg.job_info.delay){
                     delayedJobs.drop_delayed_jobs(msg.job_info.job_id);
                 }else{console.error("JobsChaining.drop_future_jobs(): 'interval' or 'delay' expected")}
+                this.jobsSchedule.del_jobs([msg.job_info.job_id])
             }else{
-                intervalJobs.drop_future_jobs();
-                delayedJobs.drop_delayed_jobs();
+                this.jobsSchedule.del_jobs(intervalJobs.drop_future_jobs().last_dropped_jobs());
+                this.jobsSchedule.del_jobs(delayedJobs.drop_delayed_jobs().last_dropped_jobs())
             }
         }
         this.list_future_jobs=(cb)=>{
@@ -1771,27 +1842,27 @@
     }
     function InitialJobChain(job_id, extendedJob, intervalJobs, delayedJobs){
         this.job_id = job_id;
-        this.schedule = undefined;//run
+        this.jobsSchedule = undefined;//run
         this.instance=(job_id, extendedJob, intervalJobs, delayedJobs)=>{
             return new InitialJobChain(job_id, extendedJob, intervalJobs, delayedJobs);
         }
-        this.run=(schedule, controller, agent_socket)=>{
-            this.schedule = schedule;
+        this.run=(jobsSchedule, controller, agent_socket)=>{
+            this.jobsSchedule = jobsSchedule;
             this.controller = controller;
             this.agent_socket = agent_socket;
             send_next_job(this.job_id);
         }
         const send_next_job=(next_job_id)=>{
             //@ e.g. next_job_id = 'stop_lte_25'
-            //console.log("JobsChaining.send_next_job(): next_job_id=",next_job_id);
             //@ e.g. job_tuple = "stop_lte_25": {"type":"stop", "target_job_id":"disk_space_lte_25"}
-            const job_tuple = this.schedule.jobs[next_job_id];
+            //const job_tuple = this.schedule.jobs[next_job_id];
+            const job_tuple = this.jobsSchedule.tuple_by_job_id(next_job_id);
             if(!job_tuple) return console.error("JobsChaining.send_next_job(): No such job",next_job_id );
             if(job_tuple.type == "stop"){
                 //@ delete this.schedule.jobs[job_tuple.target_job_id].interval;
                 console.log("JobsChaining.send_next_job() stop-type job:",job_tuple);
                 const job_id_to_stop = job_tuple.target_job_id;
-                const job_to_stop = this.schedule.jobs[job_id_to_stop];
+                const job_to_stop = this.jobsSchedule.tuple_by_job_id(job_id_to_stop);
                 if(typeof job_to_stop == 'object'){
                     //delete job_to_stop.interval;                    
                     intervalJobs.stopIntervalJob(job_id_to_stop);
@@ -1991,15 +2062,17 @@
                 //@ if job in jobs_config.json has a 'delay' key
                 if(job_tuple.delay){
                     //@ Философская проблема заключается в том, что сейчас мы позволяем добавлять бесконечное число отложенных работ с одинаковым id. Тогда, если в delayedJobs будут добавляться такие дубликаты, то мы будем добавлять к их id-шнику инкрементое число через решетку типа disk_25#2
+                    console.log("ExtendedJob.init() adding '"+ job_id+"' job to delayedJobs");
                     delayedJobs.add(job_id, delayedOrIntervalJob);
                 }
             }
             return delayedOrIntervalJob;
         }
     }
-    //@ helper object through which we store an array of interval jobs and can control them
+    //@ object through which we store an array of interval jobs and can control them
     function IntervalJobs(){
         const _interval_jobs = {};
+        var _last_dropped_jobs = [];
         this.add=(job_key, intervalJob)=>{
             _interval_jobs[job_key] = intervalJob;
         }
@@ -2017,17 +2090,22 @@
             if(_interval_jobs[job_key]) return true;
             else return false;
         }
+        this.last_dropped_jobs=()=>{return _last_dropped_jobs}
         this.drop_future_jobs=(job_id)=>{
+            _last_dropped_jobs = [];
             if(job_id){
                 console.error("IntervalJobs.drop_future_jobs() job_id=", job_id)
                 _interval_jobs[job_id].break_interval();
                 delete _interval_jobs[job_id];
+                _last_dropped_jobs = [job_id];
             }else{
                 Object.keys(_interval_jobs).forEach(job_id=>{
+                    _last_dropped_jobs.push(job_id);
                     _interval_jobs[job_id].break_interval();
                     delete _interval_jobs[job_id];
                 });
             }
+            return this;
             //console.log("IntervalJobs.drop_future_jobs(): _interval_jobs=",JSON.stringify(_interval_jobs));
         }
         this.list_future_jobs=()=>{
@@ -2045,6 +2123,8 @@
     function DelayedJobs(){
         let _delayed_jobs = {};
         const check_interval = 5000;
+        var _last_dropped_jobs = [];
+        this.last_dropped_jobs=()=>{return _last_dropped_jobs}
         this.init=()=>{
             setInterval(()=>{
                 console.log("DelayedJobs.init() _delayed_jobs = ", Object.keys(_delayed_jobs))
@@ -2074,15 +2154,26 @@
             return out_list;
         }
         this.drop_delayed_jobs=(job_id)=>{
+            _last_dropped_jobs = [];
+            //@ if passed concrete job id, then delete only this job
             if(job_id){
-                _delayed_jobs[job_id].break_delay_timeout();
-                delete _delayed_jobs[job_id];
-            }else{
+                if(_delayed_jobs[job_id]){
+                    _delayed_jobs[job_id].break_delay_timeout();
+                    delete _delayed_jobs[job_id];
+                    _last_dropped_jobs.push(job_id);
+                }else{
+                    console.error("DelayedJobs.drop_delayed_jobs(): no such '"+job_id+"' job. ")
+                }
+            }
+            //@ else if not passed concrete job id, then delete all delayed jobs
+            else{
                 Object.keys(_delayed_jobs).forEach(job_id=>{
+                    _last_dropped_jobs.push(job_id);
                     _delayed_jobs[job_id].break_delay_timeout();
                     delete _delayed_jobs[job_id];
                 });
             }
+            return this;
         }
         const _generate_new_job_key=(job_key, cur_keys, next_index)=>{
             const index = next_index || 2;
