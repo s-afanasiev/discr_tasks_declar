@@ -189,6 +189,7 @@
             })
             this.socket.on('gui_ctrl', (msg)=>{
                 console.log("BrowserIoClients control_msg: ",msg);
+                const socketMsg = new SocketMsg(msg);
                 this.updatableHostCluster.gui_ctrl(msg);
             })
         }
@@ -200,6 +201,9 @@
                 //console.error("AAAAAAAAAAAAA", data)
                 this.socket.emit('gui_news', data);
             }
+        }
+        function SocketMsg(msg){
+            this.msg = msg;
         }
     }
 
@@ -1830,6 +1834,7 @@
                 this.jobsSchedule.del_jobs(delayedJobs.drop_delayed_jobs().last_dropped_jobs())
             }
         }
+        //this.drop_future_jobs=(msg)=>{}
         this.list_future_jobs=(cb)=>{
             const interval_list = intervalJobs.list_future_jobs();
             const delayed_list = delayedJobs.list_delayed_jobs();
