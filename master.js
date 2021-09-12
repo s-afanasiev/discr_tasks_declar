@@ -941,7 +941,7 @@
             this.manifest_snapshot = manifest_snapshot;
             this.mapped_mans_snapshot = mapped_mans_snapshot;
             //@ 1) Проверяем, не происходит ли лишних подключений агентов
-            if(this.connectedAgentsThrottle.check(agent_ids).isAllowed(agent_socket)){
+            if(this.connectedAgentsThrottle.check(agent_ids).isAllowed()){
                 //@ Три компоненты исключающие все коллизии: 1. Есть ли apid 2. Есть ли log 3. находится ли сейчас онлайн агент-партнер?
                 const partner_type = (agent_ids.ag_type == "launcher") ? "controller" : "launcher";
                 //@ Последний аргумент this.mapped_mans_snapshot нужен только для контроллера
@@ -1031,15 +1031,13 @@
         this.current_ids = undefined;
         //@--------------------
         this.is_current_agent_allowed = true;
-        this.isAllowed=(agent_socket)=>{
+        this.isAllowed=()=>{
             console.log("ConnectedAgentsThrottle.isAllowed(): is_current_agent_allowed = ", this.is_current_agent_allowed)
             if(this.is_current_agent_allowed == false){
                 const host = this.hostCluster.host_by_md5_only_read(this.current_ids);
-                if(host){ console.log("ConnectedAgentsThrottle.isAllowed(): finded host:", host.commonMd5()) }
                 const agent = host.agent_by_type(this.current_ids.ag_type)
                 if(agent){ console.log("ConnectedAgentsThrottle.isAllowed(): finded agent:", agent.agentPid(), agent.agentPpid(), agent.agentApid()) }
-                same_md5_real_agent_socket = agent.socketio();
-                same_md5_real_agent_socket.emit("kill_similar_outcasts", this.current_ids);
+                agent.kill_similar_outcasts();
             }
             return this.is_current_agent_allowed;
         }
@@ -1055,22 +1053,20 @@
             this.current_ids = agent_ids;
             const ag_type = agent_ids.ag_type;
             if(["launcher", "controller"].includes(ag_type)){
-                this.switchCurrentAgentAllowed(true);
+                //@ so if one Agent already exist and there is coming one more the same Agent, In fact, we prohibit duplicates.
+                if(this[ag_type].isOnline()){
+                    this.switchCurrentAgentAllowed(false);
+                    console.error("ConnectedAgentsThrottle: Agent dublicated: ", Object.values(agent_ids).join("|"));
+                }else{
+                    this.switchCurrentAgentAllowed(true);
+                }
             }else{
                 this.switchCurrentAgentAllowed(false);
                 console.error("ConnectedAgentsThrottle: Unknow Agent type: ",agent_ids);
                 return this;
             }
-            //@ so if one Agent already exist and there is coming one more the same Agent, In fact, we prohibit duplicates.
-            if(this[ag_type].isOnline()){
-                this.switchCurrentAgentAllowed(false);
-                console.error("ConnectedAgentsThrottle: Agent dublicated: ", Object.values(agent_ids).join("|"));
-            }else{
-                this.switchCurrentAgentAllowed(true);
-            }
             return this;
         }
-        
     }
     //@------------------Launcher-----------------------
     function Launcher(agent_ids){
@@ -1192,6 +1188,9 @@
         //@ then partner disconnected - he says it to host - and then host say to partner that partner is offline
         this.partner_offline=(reason)=>{
             this.agent_socket.emit("partner_offline", reason);
+        }
+        this.kill_similar_outcasts=()=>{
+            this.socketio().emit("kill_similar_outcasts", this.agent_ids);
         }
     }
     //@------------------Controller-----------------------
@@ -1384,6 +1383,57 @@
         //@ then partner disconnected - he says it to host - and then host say to partner that partner is offline
         this.partner_offline=(reason)=>{
             this.agent_socket.emit("partner_offline", reason);
+        }
+        this.kill_similar_outcasts=()=>{
+            this.socketio().emit("kill_similar_outcasts", this.agent_ids);
+        }
+    }
+    function Agent(agent_ids){
+        this.agent_ids = agent_ids;
+        this.partner = undefined;//welcome_agent()
+        this.agentUpdateChain = undefined;//init()
+        this.agent_socket = undefined;
+        this.manifest_snapshot = undefined;
+        this.browserIoClients = undefined; //run
+        this.host = undefined; //run
+        this.flags = {};//add_flags
+        this.agentType=()=>{return (this.agent_ids) ? this.agent_ids.ag_type : "controller"}
+        this.agentPid=()=>{return (this.agent_ids) ? this.agent_ids.pid : undefined}
+        this.agentPpid=()=>{return (this.agent_ids) ? this.agent_ids.ppid : undefined}
+        this.agentApid=()=>{return (this.agent_ids) ? this.agent_ids.apid : undefined}
+        this.socketio=()=>{return this.agent_socket}
+        this.is_online_flag = false;
+        this.isOnline=function(){return this.is_online_flag}
+        this.switchOnline=function(is_online){this.is_online_flag=is_online;}
+        //@----------------------------
+        this.is_update_mode_flag=false;
+        this.isUpdateMode=()=>{return this.is_update_mode_flag}
+        this.switchUpdateMode=(is_update_mode)=>{this.is_update_mode_flag = is_update_mode}
+        //this.is_special_mode_flag=false; //@controller
+        this.run=function(browserIoClients, host, agentUpdateChain){
+            this.browserIoClients = browserIoClients;
+            this.agentUpdateChain = agentUpdateChain.instance();
+            this.host = host;
+            //this.normalControllerMode = this.normalControllerMode.instance() //@controller
+        }
+        this.gui_news=(data, payload)=>{
+			if(this.host){
+					data.payload = payload;
+					data.agent_type = this.agentType();
+					if(data.msg == 'agent_online'){
+							data.agent_pid = this.agentPid();
+							data.agent_ppid = this.agentPpid();
+							data.agent_apid = this.agentApid();
+					}
+					this.host.gui_news(data);
+			}
+	    }
+        //@ then partner disconnected - he says it to host - and then host say to partner that partner is offline
+        this.partner_offline=(reason)=>{
+                this.agent_socket.emit("partner_offline", reason);
+        }
+        this.kill_similar_outcasts=()=>{
+                this.socketio().emit("kill_similar_outcasts", this.agent_ids);
         }
     }
     //@----------------AgentUpdateChain------------------------

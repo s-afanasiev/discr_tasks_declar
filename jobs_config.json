@@ -20,6 +20,7 @@
         "proc_count_2": {"type":"proc_count", "condition": "gte", "action":"stop_1", "interval":30000},
         "stop_lte_30": {"type":"stop", "target_job_id":"disk_space_lte_25"}
     },
+    "uninterrupted_jobs": ["do_render", "do_render_2"],
     "jobs_dictionary":[
         "this is description block",
         {"disk_space":"return disk space on disk by disk letter. Answer = {free: 7123123, size: 100000000}"},
