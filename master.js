@@ -79,10 +79,12 @@
                         new HostAsPair(
                             new Launcher({}),
                             new Controller(
-                                new SpecialControllerMode(),
-                                new NormalControllerMode(
-                                    new Jobs(JOBS_CONFIG)
+                                new Jobs(
+                                    new SpecialControllerMode(),
+                                    new NormalControllerMode(),
+                                    JOBS_CONFIG
                                 ),
+                                {stub:true},
                                 {stub:true}
                             ),
                             new ConnectedAgentsThrottle(
@@ -116,22 +118,22 @@
         }
     }
     function StringEndSlash(){
-    this.check=(str)=>{
-        if(!str || typeof str != "string"){throw new Error("StringEndSlash.check() arg must be a String type!");}
-        else{
-            const is_end1 = str.endsWith("\\");
-            const is_end2 = str.endsWith("/");
-            console.log("StringEndSlash.check() is_end1=",is_end1,",is_end2=",is_end2);
-            if(is_end1 || is_end2){return true}
-            else return false;
+        this.check=(str)=>{
+            if(!str || typeof str != "string"){throw new Error("StringEndSlash.check() arg must be a String type!");}
+            else{
+                const is_end1 = str.endsWith("\\");
+                const is_end2 = str.endsWith("/");
+                console.log("StringEndSlash.check() is_end1=",is_end1,",is_end2=",is_end2);
+                if(is_end1 || is_end2){return true}
+                else return false;
+            }
+        }
+        this.add=(str)=>{
+            if(!str || typeof str != "string"){return str}
+            else if(this.check(str)) return str;
+            else return str + '/';
         }
     }
-    this.add=(str)=>{
-        if(!str || typeof str != "string"){return str}
-        else if(this.check(str)) return str;
-        else return str + '/';
-    }
-}
     function ExternalSource(){
         this.run=(updatableHostCluster)=>{
             this.updatableHostCluster=updatableHostCluster;
@@ -206,7 +208,6 @@
             this.msg = msg;
         }
     }
-
     function IoServer(httpServer){
         this.httpServer = httpServer;
         this.updatableHostCluster=undefined;
@@ -236,12 +237,10 @@
             });
         }
     }	
-
     function ParsedJSON(stringifiedJson){
         this.stringifiedJson = stringifiedJson;
         this.run=()=>{return (this.stringifiedJson) ? JSON.parse(this.stringifiedJson) : {}}
     }
-
     function UpdatableHostCluster(manifest, hostCluster, JOBS_CONFIG){
         this.manifest = manifest;
         this.hostCluster = hostCluster;
@@ -284,7 +283,6 @@
             }
         }
     }
-
     //@ ready=1
 	function Manifest(dirStructure, dirsComparing){
         this.main_update_paths = []; //run
@@ -633,7 +631,6 @@
             }
         }
     }
-	
 	function HostCluster(hostAsPair, agentRecognizing){
         this.hostAsPair = hostAsPair;
         this.browserIoClients=undefined;//run
@@ -776,7 +773,6 @@
             console.log("HostCluster.host_destroyed() _hosts_list length after=", _hosts_list.length);
         }
 	}
-
     function AgentRecognizing(agent_identifiers){
         this.agent_identifiers = agent_identifiers;
 		this.instance=(agent_identifiers)=>{
@@ -802,7 +798,6 @@
 			});
 		}
 	}
-
     function RedundantAgentsReservation(workWithAgents){
         this.workWithAgents = workWithAgents;
         this.is_timeout = false;
@@ -821,7 +816,6 @@
             else{workWithAgents.firstWorkSinceRestart(a,b,c);}
         }
     }
-
 	function HostAsPair(launcher, controller, connectedAgentsThrottle, agentUpdateChain, creator_ids, hostCluster){
         //@ HostAsPair object instantiates by one of Launcher or Controller, so on creation stage we allready know about one of agents and his states
         this.launcher = launcher;
@@ -931,7 +925,7 @@
             this[ag_type].compareCurManifest(this.last_manifest_snapshot()).then(res=>{
                 //@res = {compare:false, kill:false, update:false, start:true}
                 if(ag_type == "controller"){
-                    this[ag_type].doNormalWork();
+                    this[ag_type].do_work();
                 }
             }).catch(err=>{
                 console.error("HostAsPair: this.launcher.compareCurManifest() Error 1: ",err);
@@ -1194,9 +1188,8 @@
         }
     }
     //@------------------Controller-----------------------
-	function Controller(specialControllerMode, normalControllerMode, agent_ids, agent){
-        this.specialControllerMode = specialControllerMode;
-        this.normalControllerMode = normalControllerMode;
+	function Controller(jobs, agent_ids, agent){
+        this.jobs = jobs;
         this.agent_ids = agent_ids;
         this.agent = agent;
         this.partner = undefined;//welcome_agent()
@@ -1206,6 +1199,13 @@
         this.browserIoClients = undefined; //run
         this.host = undefined; //run
         this.flags = {};//add_flags
+        this.instance=function(agent_ids){
+            return new Controller(
+                this.jobs, 
+                agent_ids,
+                new Agent(agent_ids)
+            );
+        }
         //@----------------------------
         this.agentType=()=>{return (this.agent_ids) ? this.agent_ids.ag_type : "controller"}
         this.agentPid=()=>{return (this.agent_ids) ? this.agent_ids.pid : undefined}
@@ -1221,23 +1221,22 @@
         this.isUpdateMode=()=>{return this.is_update_mode_flag}
         this.switchUpdateMode=(is_update_mode)=>{this.is_update_mode_flag = is_update_mode}
         //@----------------------------
+        this.work_mode = "normal";
         this.is_special_mode_flag=false;
         this.isSpecialMode=()=>{return this.is_special_mode_flag;}
-        this.switchSpecialMode=(is_special_mode)=>{this.is_special_mode_flag = is_special_mode;}
-        //@----------------------------
-		this.instance=function(agent_ids){
-            return new Controller(
-                this.specialControllerMode,
-                this.normalControllerMode, 
-                agent_ids,
-                new Agent(agent_ids)
-            );
+        this.switchSpecialMode=(is_special_mode)=>{
+            this.is_special_mode_flag = is_special_mode;
+            this.work_mode = "special";
         }
+        this.current_work_mode=()=>{return this.work_mode}
+        this.switch_work_mode=(mode)=>{this.work_mode = mode;}
+        //@----------------------------
         this.run=function(browserIoClients, host, agentUpdateChain){
             this.browserIoClients = browserIoClients;
             this.agentUpdateChain = agentUpdateChain.instance();
-            this.normalControllerMode = this.normalControllerMode.instance()
             this.host = host;
+            //this.normalControllerMode = this.normalControllerMode.instance()
+            this.jobs.run(this, this.agent_socket);
         }
 		this.welcomeAgent = (agent_socket, agent_ids, manifest_snapshot, partner, mapped_mans_snapshot)=>{
             console.log("Controller.welcomeAgent(): partner online:",partner.isOnline());
@@ -1270,7 +1269,7 @@
                 //@ Todo: higher at the host level - notify externalSource object
                 this.gui_news({msg:"agent_offline"});
                 this.host.agent_disconnected(this.agent_ids.ag_type, this.flags["me_was_killed_by_reason"]);
-                this.normalControllerMode.drop_future_jobs();
+                this.jobs.drop_future_jobs();
                 //this.specialControllerMode.drop_future_jobs();
                 console.log("Controller.listenForDisconnect(): eventNames=", this.agent_socket.eventNames());
                 //@ socket.eventNames()
@@ -1295,17 +1294,17 @@
         this.gui_ctrl=(msg, is_ext_kick)=>{
             //console.log("Controller.gui_ctrl(): msg=", msg);
             if(msg.type=="list_future_jobs"){
-                this.normalControllerMode.list_future_jobs(list=>{
+                this.jobs.list_future_jobs(list=>{
                     console.log("Controller.gui_ctrl(): list_future_jobs=",list);
                     this.gui_news({msg:"list_future_jobs", value:list});
                 });
             }else if(msg.type=="drop_future_jobs"){
-                this.normalControllerMode.drop_future_jobs(msg);
+                this.jobs.drop_future_jobs(msg);
             }else if(msg.type=="jobs_config"){
                 //@msg = {type: event_type, caller_id: <some id from external Object>, concrete_agent: <agent md5>}
                 console.log("Controller.gui_ctrl(): '"+msg.type+"'-type msg")
-                this.normalControllerMode.jobs_config(config=>{
-                    console.log("Controller.gui_ctrl(): returning jobs config from normalControllerMode")
+                this.jobs.jobs_config(config=>{
+                    console.log("Controller.gui_ctrl(): returning jobs config from jobs object")
                     this.gui_news({"jobs_config": config, "caller_id": msg.caller_id});
                 });
             }
@@ -1371,16 +1370,10 @@
                 }, 5000);
             });
         }
-        this.doNormalWork=()=>{
-            if(this.isSpecialMode()){
-                //@ Special Mode: for example some Render operation.
-                this.gui_news({msg:"agent_work", value:"resume doing work in a special mode"});
-                this.specialControllerMode.run(this, this.agent_socket);
-            }else{
-                //@ Normal Mode: 'diskSpace' and so on...
-                this.gui_news({msg:"agent_work", value:"resume doing work in a normal mode"});
-                this.normalControllerMode.run(this, this.agent_socket);
-            }
+        this.do_work=()=>{
+            const str = "resume doing work in a "+this.currentControllerMode.mode()+" mode"
+            this.gui_news({msg:"agent_work", value: str});
+            this.jobs.do_work();
         }
         //@ then partner disconnected - he says it to host - and then host say to partner that partner is offline
         this.partner_offline=(reason)=>{
@@ -1746,10 +1739,9 @@
             console.log("SpecialControllerMode.run()...");
         }
     }
-    function NormalControllerMode(jobs){
-        this.jobs=jobs;
+    function NormalControllerMode(){
         this.agent_socket=undefined; //run()
-        this.instance=()=>{return new NormalControllerMode(jobs)}
+        this.instance=()=>{return new NormalControllerMode()}
         this.drop_future_jobs=(msg, cb)=>{
             this.jobs.drop_future_jobs(msg, is_ok=>{
                 if(cb){cb(is_ok)}
@@ -1774,8 +1766,10 @@
         }
     }
     //@ ----CONTROLLER'S JOBS--------------
-    function Jobs(_schedule){
+    function Jobs(specialControllerMode, normalControllerMode, _schedule){
         this.schedule = _schedule;
+        this.specialControllerMode = specialControllerMode;
+        this.normalControllerMode = normalControllerMode;
         this.jobsSchedule = undefined;
         this.agent_socket=undefined; //run()
         this.controller=undefined;//run
@@ -1797,21 +1791,18 @@
             this.agent_socket = agent_socket;
             this.controller = controller;
             if(this.schedule){
-                this.go();
+                this.jobChainsFromInitJobs = new JobChainsFromInitJobs(
+                    new InitialJobChain(),
+                    new ExtendedJob(),
+                    new IntervalJobs(),
+                    new DelayedJobs().init()
+                ).run(this.jobsSchedule, this.controller, this.agent_socket);
             }else{
                 console.error("No schedule!");
                 return [];
             }
             return this;
 		}
-        this.go=()=>{
-            this.jobChainsFromInitJobs = new JobChainsFromInitJobs(
-                new InitialJobChain(),
-                new ExtendedJob(),
-                new IntervalJobs(),
-                new DelayedJobs().init()
-            ).run(this.jobsSchedule, this.controller, this.agent_socket);
-        }
         this.drop_future_jobs=(msg, cb_ok)=>{
             if(this.jobChainsFromInitJobs){
                 this.jobChainsFromInitJobs.drop_future_jobs(msg, (ok)=>cb_ok(ok));
@@ -1830,39 +1821,89 @@
                 console.error("Jobs.list_future_jobs() NO jobChainsFromInitJobs")
             }
         }
-        function JobsSchedule(schedule){
-            this.schedule = schedule;
-            this.run=()=>{
-                return this;
-            }
-            this.clone=()=>{
-                if(this.schedule){
-                    return JSON.parse(JSON.stringify(this.schedule))
-                }
-            }
-            this.initJobs=()=>{
-                if(this.schedule){
-                    return this.schedule.init.filter(job_id=>typeof job_id=="string" && job_id != "");
-                }else{
-                    console.error("JobsSchedule.initJobs(): NO SCHEDULE!")
-                    return [];
-                }
-            }
-            //@param {Array} job_ids = <array of unique jobs ids>
-            this.del_jobs=(job_ids)=>{
-                if(!Array.isArray(job_ids)){
-                    job_ids = [job_ids];
-                }
-                job_ids.forEach(job_id=>{
-                    delete this.schedule.jobs[job_id];
-                })
-            }
-            //@ param {String} job_id = e.g. "disk_space_lte_25" || "nvidia_exist"
-            this.tuple_by_job_id=(job_id)=>{
-                return this.schedule.jobs[job_id];
+	}
+    function JobsSchedule(schedule){
+        this.schedule = schedule;
+        this.run=()=>{
+            return this;
+        }
+        this.clone=()=>{
+            if(this.schedule){
+                return JSON.parse(JSON.stringify(this.schedule))
             }
         }
-	}
+        this.initJobs=()=>{
+            if(this.schedule){
+                return this.schedule.init.filter(job_id=>typeof job_id=="string" && job_id != "");
+            }else{
+                console.error("JobsSchedule.initJobs(): NO SCHEDULE!")
+                return [];
+            }
+        }
+        //@param {Array} job_ids = <array of unique jobs ids>
+        this.del_jobs=(job_ids)=>{
+            if(!Array.isArray(job_ids)){
+                job_ids = [job_ids];
+            }
+            job_ids.forEach(job_id=>{
+                delete this.schedule.jobs[job_id];
+            })
+        }
+        //@ param {String} job_id = e.g. "disk_space_lte_25" || "nvidia_exist"
+        this.tuple_by_job_id=(job_id)=>{
+            return new JobsScheduleInitBranch(this.schedule, job_id);
+        }
+        function JobsScheduleInitBranch(schedule, job_id){
+            this.schedule = schedule;
+            this.job_id_pointer = job_id;
+            this.current_job_actions = undefined;
+            this.current_job_index_in_action_array = 0;
+            this.is_first_initial_job = true;
+            this.next_tuple=()=>{
+                let res_tuple = {};
+                //@  Реализован собственный итератор. Здесь цепочка задач только начинается.
+                if(this.is_first_initial_job){
+                    this.is_first_initial_job = false;
+                    res_tuple = this.schedule.jobs[this.job_id_pointer];
+                    //@ 1. res_tuple может быть undefined - т.е. он просто не описан в this.schedule.jobs
+                    if(res_tuple){
+                        this.current_job_actions = res_tuple["action"];
+                        //@ 2. this.current_job_actions - может быть undefined - т.е. опущен в кортеже
+                        if(this.current_job_actions){
+                            //@ 2.1. Может быть массивом
+                            if(Array.isArray(this.current_job_actions)){
+                                //@ Здесь можно не проверять переполнение job_index, потому что мы в first_initial_job
+                                this.job_id_pointer = this.current_job_actions[this.current_job_index_in_action_array++];
+                            }
+                            //@ 2.2. Может быть строкой
+                            else if(typeof this.current_job_actions == 'string'){
+                                this.job_id_pointer = this.current_job_actions;
+                            }
+                        }
+                    }
+                }else{
+                    res_tuple = this.schedule.jobs[this.job_id_pointer];
+                    if(res_tuple){
+                        this.current_job_actions = res_tuple["action"];
+                        if(this.current_job_actions){
+                            if(Array.isArray(this.current_job_actions)){}
+                            else if(typeof this.current_job_actions == 'string'){}
+                        }
+                    }
+                    if(Array.isArray(this.current_job_actions)){
+                        if(this.current_job_index_in_action_array >=this.job_id_pointer.length){}
+                        res_tuple = this.schedule.jobs[this.job_id_pointer[this.current_job_index_in_action_array++]];
+                    }else if(typeof this.current_job_actions == 'string'){
+
+                    }else{
+                        res_tuple = this.schedule.jobs[this.job_id_pointer];
+                        this.current_job_actions = this.schedule.jobs[this.job_id_pointer]["action"];
+                    }
+                }
+                return res_tuple;
+            }
+        }
+    }
     function JobChainsFromInitJobs(initialJobChain, extendedJob, intervalJobs, delayedJobs){
         this.jobsSchedule = undefined;//run
         this.run=(jobsSchedule, controller, agent_socket)=>{
@@ -1900,6 +1941,8 @@
     function InitialJobChain(job_id, extendedJob, intervalJobs, delayedJobs){
         this.job_id = job_id;
         this.jobsSchedule = undefined;//run
+        this.controller = undefined;//run
+        this.agent_socket = undefined;//run
         this.instance=(job_id, extendedJob, intervalJobs, delayedJobs)=>{
             return new InitialJobChain(job_id, extendedJob, intervalJobs, delayedJobs);
         }
@@ -1913,7 +1956,8 @@
             //@ e.g. next_job_id = 'stop_lte_25'
             //@ e.g. job_tuple = "stop_lte_25": {"type":"stop", "target_job_id":"disk_space_lte_25"}
             //const job_tuple = this.schedule.jobs[next_job_id];
-            const job_tuple = this.jobsSchedule.tuple_by_job_id(next_job_id);
+            //const job_tuple = this.jobsSchedule.tuple_by_job_id(next_job_id);
+            this.jobsScheduleInitBranch = this.jobsSchedule.tuple_by_job_id(next_job_id);
             if(!job_tuple) return console.error("JobsChaining.send_next_job(): No such job",next_job_id );
             if(job_tuple.type == "stop"){
                 //@ delete this.schedule.jobs[job_tuple.target_job_id].interval;
@@ -2469,7 +2513,6 @@
             return timer !== false;
         };
     }
-
 	//@ ready=1
 	function HttpServer(webRequest, settings){
         this.http = undefined;
@@ -2479,7 +2522,6 @@
 			return this;
 		}
 	}
-
     function IoConfig(SETTINGS){
         let io_addr;
         this.io_address =()=>{ 
@@ -2489,7 +2531,6 @@
             return io_addr;
         }
     }
-
     function Pages(){
         const _map = {};
         this.with=(req_path, page)=>{
@@ -2534,7 +2575,6 @@
             return(html)?(html):"404: page not found";
         }
     } 
-
     function FileFromFs(){
         this.cache = undefined;
         this.file=(filepath)=>{
@@ -2554,7 +2594,6 @@
             });
         }
     }
-	
 	//@ ready=1
 	function WebRequest(pages){
         this.a = 5;
@@ -2571,9 +2610,6 @@
 		}
 	}
     
-
-	
-    
 	function Logger(){
         const logger = {};
 
@@ -2585,8 +2621,6 @@
         }
         return logger;
     }
-    
-
 // ----------- TEST -----------
 function mainTest(){
     const http = require('http').createServer(webRequest).listen(55999);
@@ -2613,11 +2647,6 @@ function dirsComparingTest(){
     ]);
     setTimeout(()=>{console.log("res=",res);}, 1000)
 }
-
-  
-
-
-
 
 //------------------------------
 // EXTERNAL FUNCTIONS
