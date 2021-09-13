@@ -79,9 +79,11 @@
                         new HostAsPair(
                             new Launcher({}),
                             new Controller(
-                                new SpecialControllerMode(),
-                                new NormalControllerMode(
-                                    new Jobs(JOBS_CONFIG)
+                                new CurrentControllerMode(),
+                                new Jobs(
+                                    new SpecialControllerMode(),
+                                    new NormalControllerMode(),
+                                    JOBS_CONFIG
                                 ),
                                 {stub:true}
                             ),
@@ -931,7 +933,7 @@
             this[ag_type].compareCurManifest(this.last_manifest_snapshot()).then(res=>{
                 //@res = {compare:false, kill:false, update:false, start:true}
                 if(ag_type == "controller"){
-                    this[ag_type].doNormalWork();
+                    this[ag_type].doWork();
                 }
             }).catch(err=>{
                 console.error("HostAsPair: this.launcher.compareCurManifest() Error 1: ",err);
@@ -1194,9 +1196,9 @@
         }
     }
     //@------------------Controller-----------------------
-	function Controller(specialControllerMode, normalControllerMode, agent_ids, agent){
-        this.specialControllerMode = specialControllerMode;
-        this.normalControllerMode = normalControllerMode;
+	function Controller(currentControllerMode, jobs, agent_ids, agent){
+        this.currentControllerMode = currentControllerMode;
+        this.jobs = jobs;
         this.agent_ids = agent_ids;
         this.agent = agent;
         this.partner = undefined;//welcome_agent()
@@ -1206,6 +1208,14 @@
         this.browserIoClients = undefined; //run
         this.host = undefined; //run
         this.flags = {};//add_flags
+        this.instance=function(agent_ids){
+            return new Controller(
+                this.currentControllerMode,
+                this.jobs, 
+                agent_ids,
+                new Agent(agent_ids)
+            );
+        }
         //@----------------------------
         this.agentType=()=>{return (this.agent_ids) ? this.agent_ids.ag_type : "controller"}
         this.agentPid=()=>{return (this.agent_ids) ? this.agent_ids.pid : undefined}
@@ -1225,18 +1235,12 @@
         this.isSpecialMode=()=>{return this.is_special_mode_flag;}
         this.switchSpecialMode=(is_special_mode)=>{this.is_special_mode_flag = is_special_mode;}
         //@----------------------------
-		this.instance=function(agent_ids){
-            return new Controller(
-                this.specialControllerMode,
-                this.normalControllerMode, 
-                agent_ids,
-                new Agent(agent_ids)
-            );
-        }
+		
         this.run=function(browserIoClients, host, agentUpdateChain){
             this.browserIoClients = browserIoClients;
             this.agentUpdateChain = agentUpdateChain.instance();
-            this.normalControllerMode = this.normalControllerMode.instance()
+            //this.normalControllerMode = this.normalControllerMode.instance()
+            this.jobs.run();
             this.host = host;
         }
 		this.welcomeAgent = (agent_socket, agent_ids, manifest_snapshot, partner, mapped_mans_snapshot)=>{
@@ -1270,7 +1274,7 @@
                 //@ Todo: higher at the host level - notify externalSource object
                 this.gui_news({msg:"agent_offline"});
                 this.host.agent_disconnected(this.agent_ids.ag_type, this.flags["me_was_killed_by_reason"]);
-                this.normalControllerMode.drop_future_jobs();
+                this.jobs.drop_future_jobs();
                 //this.specialControllerMode.drop_future_jobs();
                 console.log("Controller.listenForDisconnect(): eventNames=", this.agent_socket.eventNames());
                 //@ socket.eventNames()
@@ -1295,17 +1299,17 @@
         this.gui_ctrl=(msg, is_ext_kick)=>{
             //console.log("Controller.gui_ctrl(): msg=", msg);
             if(msg.type=="list_future_jobs"){
-                this.normalControllerMode.list_future_jobs(list=>{
+                this.jobs.list_future_jobs(list=>{
                     console.log("Controller.gui_ctrl(): list_future_jobs=",list);
                     this.gui_news({msg:"list_future_jobs", value:list});
                 });
             }else if(msg.type=="drop_future_jobs"){
-                this.normalControllerMode.drop_future_jobs(msg);
+                this.jobs.drop_future_jobs(msg);
             }else if(msg.type=="jobs_config"){
                 //@msg = {type: event_type, caller_id: <some id from external Object>, concrete_agent: <agent md5>}
                 console.log("Controller.gui_ctrl(): '"+msg.type+"'-type msg")
-                this.normalControllerMode.jobs_config(config=>{
-                    console.log("Controller.gui_ctrl(): returning jobs config from normalControllerMode")
+                this.jobs.jobs_config(config=>{
+                    console.log("Controller.gui_ctrl(): returning jobs config from jobs object")
                     this.gui_news({"jobs_config": config, "caller_id": msg.caller_id});
                 });
             }
@@ -1371,16 +1375,19 @@
                 }, 5000);
             });
         }
-        this.doNormalWork=()=>{
-            if(this.isSpecialMode()){
+        this.doWork=()=>{
+            if(this.currentControllerMode.mode() == 'special'){
                 //@ Special Mode: for example some Render operation.
                 this.gui_news({msg:"agent_work", value:"resume doing work in a special mode"});
-                this.specialControllerMode.run(this, this.agent_socket);
-            }else{
+                //this.specialControllerMode.run(this, this.agent_socket);
+            }else if(this.currentControllerMode.mode() == 'normal'){
                 //@ Normal Mode: 'diskSpace' and so on...
                 this.gui_news({msg:"agent_work", value:"resume doing work in a normal mode"});
-                this.normalControllerMode.run(this, this.agent_socket);
+                //this.normalControllerMode.run(this, this.agent_socket);
+            }else{
+                this.gui_news({msg:"agent_work", value:"UNKNOWN working mode"}); 
             }
+            this.jobs.doWork();
         }
         //@ then partner disconnected - he says it to host - and then host say to partner that partner is offline
         this.partner_offline=(reason)=>{
@@ -1390,6 +1397,7 @@
             this.socketio().emit("kill_similar_outcasts", this.agent_ids);
         }
     }
+    function CurrentControllermode(){}
     function Agent(agent_ids){
         this.agent_ids = agent_ids;
         this.partner = undefined;//welcome_agent()
@@ -1774,8 +1782,10 @@
         }
     }
     //@ ----CONTROLLER'S JOBS--------------
-    function Jobs(_schedule){
+    function Jobs(specialControllerMode, normalControllerMode, _schedule){
         this.schedule = _schedule;
+        this.specialControllerMode = specialControllerMode;
+        this.normalControllerMode = normalControllerMode;
         this.jobsSchedule = undefined;
         this.agent_socket=undefined; //run()
         this.controller=undefined;//run
