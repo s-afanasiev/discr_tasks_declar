@@ -1194,10 +1194,11 @@
         }
     }
     //@------------------Controller-----------------------
-	function Controller(specialControllerMode, normalControllerMode, agent_ids){
+	function Controller(specialControllerMode, normalControllerMode, agent_ids, agent){
         this.specialControllerMode = specialControllerMode;
         this.normalControllerMode = normalControllerMode;
         this.agent_ids = agent_ids;
+        this.agent = agent;
         this.partner = undefined;//welcome_agent()
         this.agentUpdateChain = undefined;//init()
         this.agent_socket = undefined;
@@ -1228,7 +1229,8 @@
             return new Controller(
                 this.specialControllerMode,
                 this.normalControllerMode, 
-                agent_ids
+                agent_ids,
+                new Agent(agent_ids)
             );
         }
         this.run=function(browserIoClients, host, agentUpdateChain){
@@ -1397,7 +1399,7 @@
         this.browserIoClients = undefined; //run
         this.host = undefined; //run
         this.flags = {};//add_flags
-        this.agentType=()=>{return (this.agent_ids) ? this.agent_ids.ag_type : "controller"}
+        //this.agentType=()=>{return (this.agent_ids) ? this.agent_ids.ag_type : "controller"}
         this.agentPid=()=>{return (this.agent_ids) ? this.agent_ids.pid : undefined}
         this.agentPpid=()=>{return (this.agent_ids) ? this.agent_ids.ppid : undefined}
         this.agentApid=()=>{return (this.agent_ids) ? this.agent_ids.apid : undefined}
