@@ -79,6 +79,10 @@
                         new HostAsPair(
                             new Launcher({}),
                             new Controller(
+<<<<<<< HEAD
+=======
+                                new CurrentControllerMode(),
+>>>>>>> 3e91b6b30bf4d7d126a4b34a625f7c6c09e074f7
                                 new Jobs(
                                     new SpecialControllerMode(),
                                     new NormalControllerMode(),
@@ -1383,6 +1387,7 @@
             this.socketio().emit("kill_similar_outcasts", this.agent_ids);
         }
     }
+    function CurrentControllermode(){}
     function Agent(agent_ids){
         this.agent_ids = agent_ids;
         this.partner = undefined;//welcome_agent()
