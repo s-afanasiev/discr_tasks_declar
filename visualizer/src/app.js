@@ -773,12 +773,19 @@ function HostTd(hostHeader, hostLauncher, hostController, md5_or_id, is_thumb_td
     }
     this.work_mode=(server_msg_dto)=>{
         //this.curController.work_mode(server_msg_dto.value, this)
+<<<<<<< HEAD
         console.log("HostTd.work_mode() server_msg_dto =", server_msg_dto);
         if(server_msg_dto.value == "special"){
             //_$a.append("<div class='special' style='position:absolute; background:pink;'>special mode!</div>")
         }else if(server_msg_dto.value == "normal"){
             //TODO: remove label "special_mode"
             //$(_$a, ".special").remove();
+=======
+        if(server_msg_dto.value == "special"){
+            _$a.append("<div class='special' style='position:absolute; background:pink;'>special mode!</div>")
+        }else if(server_msg_dto.value == "normal"){
+            //TODO: remove label "special_mode"
+>>>>>>> d8cb2d6bcdc3d176c996f321656c8ec34be9af86
         }
     }
     const _after_agent_offline=(cb)=>{
