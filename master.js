@@ -4,7 +4,7 @@
     const util = require('util');
     const url = require('url');
     const fs = require('fs');
-    
+    let global_id = 1;
 	main();
 	function main(){
         retranslate_logger();
@@ -1358,7 +1358,7 @@
         this.do_work=()=>{
             const str = "On '" + this.machine_hostname() + "' now in " + this.current_work_mode() + " mode";
             this.gui_news({msg:"agent_work", value: str});
-            this.jobs.instance().run(this, this.agent_socket);
+            this.jobs = this.jobs.instance().run(this, this.agent_socket);
         }
         //@ then partner disconnected - he says it to host - and then host say to partner that partner is offline
         this.partner_offline=(reason)=>{
@@ -1754,6 +1754,7 @@
     //@ ----CONTROLLER'S JOBS--------------
     //@ description: Objects 'specialControllerMode' and 'normalControllerMode' are fictive now and probably will be deleted for now, because we will change only Controller's state to special/normal mode
     function Jobs(_schedule, specialControllerMode, normalControllerMode){
+        this.id = global_id++;
         this.schedule = _schedule;
         this.specialControllerMode = specialControllerMode;
         this.normalControllerMode = normalControllerMode;
@@ -1774,20 +1775,16 @@
             }else{console.error("Jobs.instance(): NO SCHEDULE!!!")}
         }
 		this.run=(controller, agent_socket)=>{
+            console.error("Jobs.run(): id=", this.id);
             this.jobsSchedule = new JobsSchedule(this.schedule).run();
             this.agent_socket = agent_socket;
             this.controller = controller;
-            if(this.jobsSchedule){
-                this.jobChainsFromInitJobs = new JobChainsFromInitJobs(
-                    new InitialJobChain(),
-                    new ExtendedJob(),
-                    new IntervalJobs(),
-                    new DelayedJobs().init()
-                ).run(this.jobsSchedule, this.controller, this.agent_socket);
-            }else{
-                console.error("No schedule!");
-                return [];
-            }
+            this.jobChainsFromInitJobs = new JobChainsFromInitJobs(
+                new InitialJobChain(),
+                new ExtendedJob(),
+                new IntervalJobs(),
+                new DelayedJobs().init()
+            ).run(this.jobsSchedule, this.controller, this.agent_socket);
             return this;
 		}
         this.drop_future_jobs=(msg, cb_ok)=>{
@@ -1805,7 +1802,7 @@
                     if(typeof cb=='function'){cb(list)}
                 });
             }else{
-                console.error("Jobs.list_future_jobs() NO jobChainsFromInitJobs")
+                console.error("Jobs.list_future_jobs() NO jobChainsFromInitJobs: id=", this.id )
             }
         }
 	}

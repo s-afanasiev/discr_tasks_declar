@@ -11,7 +11,7 @@
         "disk_space_lte_30": {"type":"disk_space", "condition": "lte 30 gb", "action":"proc_count_notepad", "interval":40000},
         "clean_space_1":{"type":"exec_cmd", "app_name":"clean.bat", "condition": "is_done", "action":"proc_count_1"},
         "increase_traffic":{},
-        "nvidia_exist":{"type":"nvidia_smi", "condition": "is_exist", "action":["do_render", "proc_count_notepad"]},
+        "nvidia_exist":{"type":"nvidia_smi", "condition": "is_exist", "action":["do_render"], "interval":30000},
         "proc_count_notepad": {"type":"proc_count", "app_name":"notepad", "condition": "is_1", "action":"stop_lte_30"},
         "proc_count_calc": {"type":"proc_count", "app_name":"calc.exe", "condition": "is_1", "action":"disk_space_gte_30", "delay": 20000},
         "disk_space_gte_30": {"type":"proc_count", "app_name":"calc.exe", "condition": "is_1", "action":["do_render", "do_render_2"], "delay": 20000},
