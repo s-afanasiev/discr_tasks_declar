@@ -128,7 +128,8 @@ function Identifiers(){
                     ids.apid = (isNaN(Number(process.argv[2]))) ? (-1) : (Number(process.argv[2]));
                     if (ids.apid == 0) ids.apid = -1;
                     ids.sid = "";
-                    ids.ip = "";
+                    ids.ip_v4 = this.get_ip;
+                    ids.hostname = os.hostname;
                     resolve(ids);
                 }
             }) 
@@ -152,6 +153,20 @@ function Identifiers(){
             }, ATTEMPTS_INTERVAL)
         });
     } 
+    this.get_ip=()=>{
+        const nets = os.networkInterfaces();
+        const addresses = [];
+        for (const name of Object.keys(nets)) {
+            for (const net of nets[name]) {
+                // Skip over non-IPv4 and internal (i.e. 127.0.0.1) addresses
+                if (net.family === 'IPv4' && !net.internal) {
+                    console.log("address=", net.address)
+                    addresses.push(net.address);
+                }
+            }
+        }
+        return addresses;
+    }
     this.exec_cmd_getmac=(command_)=>{
         var EOL = /(\r\n)|(\n\r)|\n|\r/;
         let command = command_ || "getmac";

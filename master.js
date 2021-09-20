@@ -79,10 +79,6 @@
                         new HostAsPair(
                             new Launcher({}),
                             new Controller(
-<<<<<<< HEAD
-=======
-                                new CurrentControllerMode(),
->>>>>>> 3e91b6b30bf4d7d126a4b34a625f7c6c09e074f7
                                 new Jobs(
                                     new SpecialControllerMode(),
                                     new NormalControllerMode(),
@@ -764,7 +760,7 @@
                 });
             }
         }
-        //@ host says that all his agents was disconnected, so its equal like host must be recycled
+        //@ host says that all his agents was disconnected, so its equal that host must be recycled
         this.host_destroyed=(host_md5)=>{
             let host_index = -1;
             for(let i=0; i<_hosts_list.length; i++){
@@ -916,14 +912,6 @@
             else if(ag_type=="controller"){return this.controller}
         }
         this.is_init_timeout=()=>{ return this.is_init_timeout_flag; }
-        //@ Здесь решаем, нужно ли обновлять контроллера, если тот  на спец.задании
-        this.decide_if_need_update_partner=(connected, partner)=>{
-            if(partner == "controller" && this[partner].isSpecialMode()){
-                //@ TODO: to plan a delayed update
-            }else{
-                this.compareCurManifest(connected);
-            }
-        }
         //@ Сравнить Манифест включает в себя также и обновление партнёра, если есть различия в Манифесте
         this.compareCurManifest=(ag_type)=>{
             this[ag_type].compareCurManifest(this.last_manifest_snapshot()).then(res=>{
@@ -935,32 +923,19 @@
                 console.error("HostAsPair: this.launcher.compareCurManifest() Error 1: ",err);
             })
         }
+        //@ param {} mapped_mans_snapshot - нужен только для контроллера, потому что он обновляет произвольные каталоги, заданные администратором
 		this.welcomeAgent = (agent_socket, agent_ids, manifest_snapshot, mapped_mans_snapshot)=>{
             this.manifest_snapshot = manifest_snapshot;
             this.mapped_mans_snapshot = mapped_mans_snapshot;
             //@ 1) Проверяем, не происходит ли лишних подключений агентов
             if(this.connectedAgentsThrottle.check(agent_ids).isAllowed()){
-                //@ Три компоненты исключающие все коллизии: 1. Есть ли apid 2. Есть ли log 3. находится ли сейчас онлайн агент-партнер?
-                const partner_type = (agent_ids.ag_type == "launcher") ? "controller" : "launcher";
-                //@ Последний аргумент this.mapped_mans_snapshot нужен только для контроллера
-                this[agent_ids.ag_type].welcomeAgent(agent_socket, agent_ids, manifest_snapshot, this[partner_type], this.mapped_mans_snapshot)
-                if(this[partner_type].isOnline()){
-                    //@ Если партнёр был онлайн, значит осталось скомандовать обновить партнёра(если это нужно), но если партнёр - контроллер и контроллер в спец. режиме, то отложить его обновление
-                    this.decide_if_need_update_partner(agent_ids.ag_type, partner_type) //т.е. здесь агент сравнивает манифесты, если надо прибивает, апдейтит, стартует. Но прежде проверяем если это контроллер и он на спец задании, то делаем ему отложенное обновление.
-                }else{
-                    //@ Такое может быть, если: 
-                    //@     а) это начало жизни объекта Хоста, когда человек запустил агента и партнёр не включится без команды мастера
-                    //@     б) ВТорой агент вот-вот будет онлайн(имеется ввиду что он просто вторым подключился по сокету)
-                    //@     Поэтому: Ждём 1 секунду(для нивелирования рассинхрона по сокету), затем спрашиваем находится ли партнёр на этот раз онлайн. Если нет, значит, смотрим есть ли у агента apid или log. Если есть, то ждём ещё секунду. Если партнёр не появился в сети, значит, надо давать команду на запуск партнёра.
-                    setTimeout(()=>{
-                        if(this[partner_type].isOnline()){
-                            this.decide_if_need_update_partner(agent_ids.ag_type, partner_type);
-                        }else{
-                            //@ Если через полсекунды партнер НЕ онлайн, то говорим агенту запустить партнера
-                            this.compareCurManifest(agent_ids.ag_type)
-                        }
-                    }, 1000);
-                }
+                const partner_type = agent_ids.ag_type == "launcher" ? "controller" : "launcher";
+                this[agent_ids.ag_type].welcomeAgent(agent_socket, agent_ids, manifest_snapshot, this[partner_type], this.mapped_mans_snapshot);
+                //@ Смысл таймаута: Если Мастер был перезапущен администратором, а агенты были онлайн, то маленькое ожидание даст понять это, потому что они могут подключиться быстро друг за другом по сокету.
+                setTimeout(()=>{
+                    //@ Этот метод на самом деле цепочка заданий, сначала заставляет проверить, есть ли файлы для обноления а затем, если надо, запустить партнера.
+                    this.compareCurManifest(agent_ids.ag_type)
+                }, 1000);
             }                
 		}
         this.propagateManifestDiff = (mans_diff)=>{
@@ -1216,6 +1191,7 @@
         this.agentPpid=()=>{return (this.agent_ids) ? this.agent_ids.ppid : undefined}
         this.agentApid=()=>{return (this.agent_ids) ? this.agent_ids.apid : undefined}
         this.socketio=()=>{return this.agent_socket}
+        this.machine_hostname=()=>{return this.agent_ids.hostname}
         //@----------------------------
         this.is_online_flag = false;
 		this.isOnline=function(){return this.is_online_flag}
@@ -1233,14 +1209,16 @@
             this.work_mode = "special";
         }
         this.current_work_mode=()=>{return this.work_mode}
-        this.switch_work_mode=(mode)=>{this.work_mode = mode;}
+        this.switch_work_mode=(mode)=>{
+            this.work_mode = mode;
+            this.gui_news({msg: "work_mode", value: mode})
+        }
         //@----------------------------
         this.run=function(browserIoClients, host, agentUpdateChain){
             this.browserIoClients = browserIoClients;
             this.agentUpdateChain = agentUpdateChain.instance();
             this.host = host;
             //this.normalControllerMode = this.normalControllerMode.instance()
-            this.jobs.run(this, this.agent_socket);
         }
 		this.welcomeAgent = (agent_socket, agent_ids, manifest_snapshot, partner, mapped_mans_snapshot)=>{
             console.log("Controller.welcomeAgent(): partner online:",partner.isOnline());
@@ -1375,9 +1353,9 @@
             });
         }
         this.do_work=()=>{
-            const str = "resume doing work in a "+this.currentControllerMode.mode()+" mode"
+            const str = "On '" + this.machine_hostname() + "' now in " + this.current_work_mode() + " mode";
             this.gui_news({msg:"agent_work", value: str});
-            this.jobs.do_work();
+            this.jobs.run(this, this.agent_socket);
         }
         //@ then partner disconnected - he says it to host - and then host say to partner that partner is offline
         this.partner_offline=(reason)=>{
@@ -1771,6 +1749,7 @@
         }
     }
     //@ ----CONTROLLER'S JOBS--------------
+    //@ description: Objects 'specialControllerMode' and 'normalControllerMode' are fictive now and probably will be deleted for now, because we will change only Controller's state to special/normal mode
     function Jobs(specialControllerMode, normalControllerMode, _schedule){
         this.schedule = _schedule;
         this.specialControllerMode = specialControllerMode;
@@ -1795,7 +1774,7 @@
             this.jobsSchedule = new JobsSchedule(this.schedule).run();
             this.agent_socket = agent_socket;
             this.controller = controller;
-            if(this.schedule){
+            if(this.jobsSchedule){
                 this.jobChainsFromInitJobs = new JobChainsFromInitJobs(
                     new InitialJobChain(),
                     new ExtendedJob(),
@@ -1856,23 +1835,25 @@
         }
         //@ param {String} job_id = e.g. "disk_space_lte_25" || "nvidia_exist"
         this.tuple_by_job_id=(job_id)=>{
-            return new JobsScheduleInitBranch(this.schedule, job_id);
+            //return new JobsScheduleInitBranch(this.schedule, job_id);
+            return this.schedule.jobs[job_id];
         }
+        this.is_uninterrupted=(job_type)=>{ return this.schedule.uninterrupted_jobs.includes(job_type); }
         function JobsScheduleInitBranch(schedule, job_id){
             this.schedule = schedule;
             this.job_id_pointer = job_id;
             this.current_job_actions = undefined;
             this.current_job_index_in_action_array = 0;
             this.is_first_initial_job = true;
-            this.next_tuple=()=>{
-                let res_tuple = {};
+            this.next_tuples=()=>{
+                let tuples = [];
                 //@  Реализован собственный итератор. Здесь цепочка задач только начинается.
                 if(this.is_first_initial_job){
                     this.is_first_initial_job = false;
-                    res_tuple = this.schedule.jobs[this.job_id_pointer];
-                    //@ 1. res_tuple может быть undefined - т.е. он просто не описан в this.schedule.jobs
-                    if(res_tuple){
-                        this.current_job_actions = res_tuple["action"];
+                    const first_tuple = this.schedule.jobs[this.job_id_pointer];
+                    //@ 1. first_tuple может быть undefined - т.е. он объявлен в "schedule.init_jobs", но не описан в "schedule.jobs"
+                    if(first_tuple){
+                        this.current_job_actions = first_tuple["action"];
                         //@ 2. this.current_job_actions - может быть undefined - т.е. опущен в кортеже
                         if(this.current_job_actions){
                             //@ 2.1. Может быть массивом
@@ -1961,8 +1942,8 @@
             //@ e.g. next_job_id = 'stop_lte_25'
             //@ e.g. job_tuple = "stop_lte_25": {"type":"stop", "target_job_id":"disk_space_lte_25"}
             //const job_tuple = this.schedule.jobs[next_job_id];
-            //const job_tuple = this.jobsSchedule.tuple_by_job_id(next_job_id);
-            this.jobsScheduleInitBranch = this.jobsSchedule.tuple_by_job_id(next_job_id);
+            const job_tuple = this.jobsSchedule.tuple_by_job_id(next_job_id);
+            //this.jobsScheduleInitBranch = this.jobsSchedule.tuple_by_job_id(next_job_id);
             if(!job_tuple) return console.error("JobsChaining.send_next_job(): No such job",next_job_id );
             if(job_tuple.type == "stop"){
                 //@ delete this.schedule.jobs[job_tuple.target_job_id].interval;
@@ -1976,9 +1957,13 @@
             }
             else if(job_tuple.type != "stop"){
                 console.log("JobsChaining.send_next_job(): job id:",next_job_id);
-                if(intervalJobs.exist(next_job_id)){
+                if(job_tuple.interval && intervalJobs.exist(next_job_id)){
                     console.error("JobsChaining.send_next_job() Error: such interval jobs already exist:", next_job_id);
                 }else{
+                    if(this.jobsSchedule.is_uninterrupted(job_tuple.type)){
+                        this.controller.switchSpecialMode(true);
+                        this.controller.switch_work_mode("special");
+                    }
                     const new_job = extendedJob.instance()
                     .init(next_job_id, job_tuple, this.controller, this.agent_socket, intervalJobs, delayedJobs);
                     if(new_job){
@@ -1986,6 +1971,8 @@
                             if(ans.is_socket_answered){
                                 if(ans.next_action){
                                     console.log("JobsChaining.send_next_job(): next action=", ans.next_action);
+                                    this.controller.switchSpecialMode(false);
+                                    this.controller.switch_work_mode("normal");
                                     send_next_job(ans.next_action);
                                 }
                             }else{

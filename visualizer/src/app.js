@@ -49,6 +49,7 @@ function app_run(args){
                 .with("agent_online", new HTSocketRespAgentOnline())
                 .with("agent_offline", new HTSocketRespAgentOffline())
                 .with("agent_work", new HTSocketRespAgentWork())
+                .with("work_mode", new HTSocketRespWorkMode())
             )
         )
     ).run(args)
@@ -489,6 +490,12 @@ function HTStructure(hostTr){
             _hostTr.agent_work(server_msg_dto);
         })
     }
+    //@ param {hashtable Object} server_msg_dto = {msg: "work_mode", value: <"special"||"normal">, md5: "fc59692915b9b0afd602ed573ee7deff"}
+    this.work_mode=(server_msg_dto)=>{
+        _trStor.all().forEach(_hostTr=>{
+            _hostTr.work_mode(server_msg_dto);
+        })
+    }
 }
 function HT_TrStor(){
     const _all_trs = {};
@@ -636,6 +643,13 @@ function HostTr(hostTd, order_number){
             }
         }
     }
+    this.work_mode=(server_msg_dto)=>{
+        for (let md5 in _hosts_td){
+            if(md5 == server_msg_dto.md5){
+                _hosts_td[md5].work_mode(server_msg_dto);
+            }
+        }
+    }
     this.run=(host_list_of_one_row)=>{
         console.log("HostTr.run()")
         for(let i=0; i<host_list_of_one_row.length; i++){
@@ -756,6 +770,14 @@ function HostTd(hostHeader, hostLauncher, hostController, md5_or_id, is_thumb_td
     //@ E.g. server_msg_dto = { msg: "agent_work", value: "'disk_space_lte_25' job done", agent_type: "controller", md5: "fc59692915b9b0afd602ed573ee7deff" }
     this.agent_work=(server_msg_dto)=>{
         this.curController.agent_work(server_msg_dto.value, this)
+    }
+    this.work_mode=(server_msg_dto)=>{
+        //this.curController.work_mode(server_msg_dto.value, this)
+        if(server_msg_dto.value == "special"){
+            _$a.append("<div class='special' style='position:absolute; background:pink;'>special mode!</div>")
+        }else if(server_msg_dto.value == "normal"){
+            //TODO: remove label "special_mode"
+        }
     }
     const _after_agent_offline=(cb)=>{
         const is_launcher_offline = !this.curLauncher.online();
@@ -1045,6 +1067,13 @@ function HTSocketRespAgentWork(){
     this.run=(hTStructure, server_msg_dto)=>{
         //console.log("HTSocketRespAgentWork.run() not implemented");
         hTStructure.agent_work(server_msg_dto);
+    }
+}
+function HTSocketRespWorkMode(){
+    this.instance=()=>{return new HTSocketRespWorkMode();}
+    this.run=(hTStructure, server_msg_dto)=>{
+        //console.log("HTSocketRespAgentWork.run() not implemented");
+        hTStructure.work_mode(server_msg_dto);
     }
 }
 function WindowEvents(_window){
