@@ -1,0 +1,2 @@
+todo
+- error: Jobs.list_future_jobs() NO jobChainsFromInitJobs. The Jobs object says that he didn't see his child jobChainsFromInitJobs object, althought he compose him at start.
