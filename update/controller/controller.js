@@ -128,8 +128,8 @@ function Identifiers(){
                     ids.apid = (isNaN(Number(process.argv[2]))) ? (-1) : (Number(process.argv[2]));
                     if (ids.apid == 0) ids.apid = -1;
                     ids.sid = "";
-                    ids.ip_v4 = this.get_ip;
-                    ids.hostname = os.hostname;
+                    ids.ip = this.get_ip();
+                    ids.hostname = os.hostname(); 
                     resolve(ids);
                 }
             }) 
@@ -501,6 +501,7 @@ function ComparedManifest(dirStructure, dirsComparing, settings_){
                 const mans_diff = this.dirsComparing.compare(local_manif, remote_manif, this.is_keep_old_files);
                 console.log("ComparedManifest: on event: mans_diff=",JSON.stringify(mans_diff));
                 const is_changes_exist = (Object.keys(mans_diff).length>0) ? true : false;
+                console.log("ComparedManifest: is_changes_exist=",is_changes_exist);
                 socket.emit(ev_name, {is_changes: is_changes_exist});
             }).catch(err=>{
                 console.log("ComparedManifest: on socket event Error: ", err);
@@ -1094,7 +1095,7 @@ function StartedPartner(settings_){
     this.run=(ev_name, socket)=>{
         socket.on(ev_name, ()=>{
             console.log("StartedPartner.run()...");
-            //TODO: 1. cmd_exec(kill) 2. socket.emit(ok)
+            //TODO: 1. cmd_exec(kill) 2. socket.emit(ok) ...
             this.start("", (err, res)=>{
                 const start_msg = {};
                 if(err){ start_msg.is_error = true; start_msg.is_started = false; }
@@ -1844,6 +1845,7 @@ const GS = {
             _identifiers.md5 = "";
             _identifiers.sid = "";
             _identifiers.ip = "";
+            _identifiers.hostname = os.hostname();
             _identifiers.pid = String(process.pid);
             _identifiers.ppid =String(process.ppid);
             console.log("GS.prepare_identifiers(): process.argv=", process.argv);
@@ -2273,7 +2275,7 @@ const GS = {
                 var CMD = chipro.exec('cmd');
                 var stdout = '';
                 var stderr = null;
-                CMD.stdout.on('data', function (data) { stdout += data.toString(); });
+                CMD.stdout.on('data', function (data) {stdout += data.toString(); });
                 CMD.stderr.on('data', function (data) {
                     if (stderr === null) { stderr = data.toString(); }
                     else { stderr += data.toString(); }
@@ -2288,10 +2290,8 @@ const GS = {
         kill: function(list, callback) {
             let pending = list.length * 2;
             let err_pids = [];
-            for (let i in list) 
-            {
-                if (list[i].pid) 
-                {
+            for (let i in list){
+                if (list[i].pid){
                     console.log("Dropping Launcher Node process:", list[i].pid);
                     try { 
                         process.kill(list[i].pid);
@@ -2305,8 +2305,7 @@ const GS = {
                 } 
                 else { console.log("GS.partner.kill(): no PID(node.exe), nothing to kill..."); }
 
-                if (list[i].ppid) 
-                {
+                if (list[i].ppid){
                     console.log("Dropping Launcher CMD process:", list[i].ppid);
                     try { process.kill(list[i].ppid);
                         if (!--pending) {callback(err_pids);}
@@ -2314,7 +2313,7 @@ const GS = {
                     catch(e) {
                         err_pids.push(list[i].ppid);
                         console.log("Fail to kill Launcher Node process:", e.msg) 
-                        if (!--pending) {callback(err_pids);}
+                        if (!--pending) {callback(err_pids);} 
                     }
                 } 
                 else { console.log("GS.partner.kill(): no PPID(cmd.exe), nothing to kill..."); }

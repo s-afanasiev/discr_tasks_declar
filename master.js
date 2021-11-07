@@ -710,6 +710,8 @@
                 const result = _hosts_list.map(host=>{
                     let res = {};
                     res.md5 = host.commonMd5();
+                    res.hostname = host.hostname();
+                    console.log("HostCluster.gui_ctrl(): hostname=", res.hostname)
                     const add_info = host.gui_ctrl(msg);
                     res = Object.assign(res, add_info);
                     return res;
@@ -831,12 +833,14 @@
         this.manifest_snapshot = undefined;//welcomeAgent
         this.mapped_mans_snapshot = undefined;//welcomeAgent
         this.is_init_timeout_flag = false;
+        this.is_updating_now = false;
         this.last_manifest_snapshot=()=>{return this.manifest_snapshot}
         this.commonMd5=()=>{return this.creator_ids.md5}
         this.creatorType=()=>{return this.creator_ids.ag_type}
         this.creatorPid=()=>{return this.creator_ids.pid}
         this.creatorPpid=()=>{return this.creator_ids.ppid}
         this.creatorApid=()=>{return this.creator_ids.apid}
+        this.hostname=()=>{return this.creator_ids.hostname}
         //@ creator_ids = {ag_type: "launcher", ag_pid:3245, ...} - это идентификаторы того агента, который подключился первым отностилеьно конкретного хоста-машины
 		this.instance = function(creator_ids, hostCluster){
             console.log("HostAsPair.instance(): creator=",creator_ids.ag_type);
@@ -893,6 +897,7 @@
                 data.creator_apid = this.creatorApid();
             }
             data.md5 = this.commonMd5();
+            data.hostname = this.hostname();
             this.browserIoClients.gui_news(data);
             this.externalSource.outcome_burp(data);
         }
@@ -907,14 +912,16 @@
             this.connectedAgentsThrottle.run(this.launcher, this.controller, this.hostCluster);
             return this;
         }
+        this.listen_for_socketio_questions=()=>{}
         this.agent_by_type=(ag_type)=>{
             if(ag_type=="launcher"){return this.launcher}
             else if(ag_type=="controller"){return this.controller}
         }
         this.is_init_timeout=()=>{ return this.is_init_timeout_flag; }
-        //@ Сравнить Манифест включает в себя также и обновление партнёра, если есть различия в Манифесте
+        //@ Сравнить Манифест включает в себя цепочку действий, в том числе перезапуск партнёра, если это будет необходимо
         this.compareCurManifest=(ag_type)=>{
             this[ag_type].compareCurManifest(this.last_manifest_snapshot()).then(res=>{
+                this.is_updating_now = false;
                 //@res = {compare:false, kill:false, update:false, start:true}
                 if(ag_type == "controller"){
                     this[ag_type].do_work();
@@ -1054,7 +1061,8 @@
         this.manifest_snapshot = undefined;
         this.browserIoClients =undefined; //run
         this.host =undefined; //run
-        this.flags = {}//add_flags
+        this._update_state="";//msg
+        this.update_state=()=>{return this._update_state};
         //@ input param 'msg' must be String type
         this.gui_news=(data)=>{
             if(this.host){
@@ -1087,14 +1095,6 @@
         this.isUpdateMode=()=>{return this.is_update_mode_flag}
         this.switchUpdateMode=(is_update_mode)=>{this.is_update_mode_flag = is_update_mode}
         //@----------------------------
-		this.add_flags=function(flags){ 
-            Object.keys(flags).forEach(key=>{
-                this.flags[key] = flags[key];
-                if(key == "partner_killed_by_reason" && flags[key] == "update"){
-                    partner.add_flags({"me_was_killed_by_reason": flags[key]});
-                }
-            })
-        }
 		this.instance=function(agent_ids){ return new Launcher(agent_ids); }
 		//@ this in fact not some kind of initialization, but simply pass the object
         this.welcomeAgent=(agent_socket, agent_ids, manifest_snapshot, partner)=>{
@@ -1107,25 +1107,37 @@
             this.switchOnline(true);
             this.gui_news({msg:"agent_online"});
 			this.listenForDisconnect();
+            this.listen_for_socketio_questions();
 		}
+        this.listen_for_socketio_questions=()=>{
+            this.agent_socket.on('is_partner_online', (pars)=>{
+                if(this.patner){
+                    this.agent_socket.emit('is_partner_online', this.partner.isOnline());
+                }else{
+                    //@
+                    this.agent_socket.emit('is_partner_online', false);
+                }
+            })
+        }
         this.listenForDisconnect=()=>{
             this.agent_socket.once('disconnect', (reason)=>{
+                //@ the reason will equals "transport close"
                 console.log("Launcher.listenForDisconnect(): disconnect: reason =", reason);
                 this.switchOnline(false);
                 this.gui_news({msg:"agent_offline"});
-                this.host.agent_disconnected(this.agent_ids.ag_type, this.flags["me_was_killed_by_reason"]);
+                this.host.agent_disconnected(this.agent_ids.ag_type, this.update_state());
                 this.agent_socket = undefined;
             });
         }
         this.compareCurManifest=(man)=>{
-            console.log("Launcher.compareCurManifest(): man=", man);
+            console.log("Launcher.compareCurManifest(): ...");
             return new Promise((resolve,reject)=>{
                 this.switchUpdateMode(true);
                 this.gui_news({msg:"update_mode", value:"on"});
                 const man_for_launcher = {};
                 man_for_launcher.controller = man.controller;
                 man_for_launcher.other = man.other;
-                console.log("Launcher.compareCurManifest(): man_for_launcher=", man_for_launcher);
+                //console.log("Launcher.compareCurManifest(): man_for_launcher=", man_for_launcher);
                 this.agentUpdateChain.instance(this, man_for_launcher).run(this.socketio(), this.partner).then(res=>{
                     resolve(res);
                 }).catch(err=>{
@@ -1169,6 +1181,24 @@
         this.kill_similar_outcasts=()=>{
             this.socketio().emit("kill_similar_outcasts", this.agent_ids);
         }
+        this.messaga=(msg, reason)=>{
+            this.agent.messaga(msg);
+            if(msg=="before_killed"){
+                //@after this msg my partner will trying to kill me
+                this._update_state = "update_me"
+            }
+            else if(msg=="before_partner_killed"){
+                //@after this msg i will try to kill my partner
+                this._update_state = "update_partner"
+            }
+            else if(msg=="partner_killed"){
+                //@this message confirms the killing of a partner
+            }
+            else if(msg=="partner_started"){
+                //@partner was restarted after update or startd the first time
+                this._update_state = ""
+            }
+        }
     }
     //@------------------Controller-----------------------
 	function Controller(jobs, agent_ids, agent){
@@ -1181,7 +1211,8 @@
         this.manifest_snapshot = undefined;
         this.browserIoClients = undefined; //run
         this.host = undefined; //run
-        this.flags = {};//add_flags
+        this._update_state="";//msg
+        this.update_state=()=>{return this._update_state};
         this.instance=function(agent_ids){
             return new Controller(
                 this.jobs, 
@@ -1240,21 +1271,13 @@
                 console.error("Controller.firstComparingMappedMans() Error:", err);
             });
 		}
-        this.add_flags=function(flags){ 
-            Object.keys(flags).forEach(key=>{
-                this.flags[key] = flags[key];
-                if(key == "partner_killed_by_reason" && flags[key] == "update"){
-                    this.partner.add_flags({"me_was_killed_by_reason": flags[key]});
-                }
-            })
-        }
         this.listenForDisconnect=()=>{
             this.agent_socket.once('disconnect', (reason)=>{
                 this.switchOnline(false);
                 console.log("Controller.listenForDisconnect(): disconnect: reason =", reason);
                 //@ Todo: higher at the host level - notify externalSource object
                 this.gui_news({msg:"agent_offline"});
-                this.host.agent_disconnected(this.agent_ids.ag_type, this.flags["me_was_killed_by_reason"]);
+                this.host.agent_disconnected(this.agent_ids.ag_type, this.update_state());
                 this.jobs.drop_future_jobs();
                 //this.specialControllerMode.drop_future_jobs();
                 console.log("Controller.listenForDisconnect(): eventNames=", this.agent_socket.eventNames());
@@ -1367,6 +1390,24 @@
         this.kill_similar_outcasts=()=>{
             this.socketio().emit("kill_similar_outcasts", this.agent_ids);
         }
+        this.messaga=(msg, reason)=>{
+            this.agent.messaga(msg);
+            if(msg=="before_killed"){
+                //@after this msg my partner will trying to kill me
+                this._update_state = "update_me"
+            }
+            else if(msg=="before_partner_killed"){
+                //@after this msg i will try to kill my partner
+                this._update_state = "update_partner"
+            }
+            else if(msg=="partner_killed"){
+                //@this message confirms the killing of a partner
+            }
+            else if(msg=="partner_started"){
+                //@partner was restarted after update or startd the first time
+                this._update_state = ""
+            }
+        }
     }
     function CurrentControllermode(){}
     function Agent(agent_ids){
@@ -1377,7 +1418,6 @@
         this.manifest_snapshot = undefined;
         this.browserIoClients = undefined; //run
         this.host = undefined; //run
-        this.flags = {};//add_flags
         //this.agentType=()=>{return (this.agent_ids) ? this.agent_ids.ag_type : "controller"}
         this.agentPid=()=>{return (this.agent_ids) ? this.agent_ids.pid : undefined}
         this.agentPpid=()=>{return (this.agent_ids) ? this.agent_ids.ppid : undefined}
@@ -1416,6 +1456,17 @@
         this.kill_similar_outcasts=()=>{
                 this.socketio().emit("kill_similar_outcasts", this.agent_ids);
         }
+        this.messaga=(msg)=>{
+            if(msg=="before_killed"){
+                //@after this msg my partner will trying to kill me
+            }
+            else if(msg=="before_partner_killed"){
+                //@after this msg i will try to kill my partner
+            }
+            else if(msg=="partner_killed"){
+                //@this message confirms the killing of a partner
+            }
+        }
     }
     //@----------------AgentUpdateChain------------------------
     function AgentUpdateChain(creator, manifest){
@@ -1423,6 +1474,7 @@
         this.instance=(creator, manifest)=>{return new AgentUpdateChain(creator, manifest)}
         this.short_names = ["start", "update", "kill", "compare"];
         this.run=(socket, partner)=>{
+            const updateReport = new UpdateReport();
             return new Promise((resolve,reject)=>{
                 new StartingPartner(
                     new UpdatingFiles(
@@ -1430,7 +1482,7 @@
                             new CompareManifest()
                         )
                     )
-                ).run(socket, creator, partner, this.manifest).then(res=>{
+                ).run(socket, creator, partner, this.manifest, updateReport).then(res=>{
                     resolve(res);
                 }).catch(err=>{
                     reject(err);
@@ -1438,6 +1490,7 @@
             });
         }
     }
+    function UpdateReport(){}
     function AgentUpdateWithoutCompare(creator, mans_diff){
         this.mans_diff=mans_diff;
         this.instance=(mans_diff)=>{return new AgentUpdateWithoutCompare(creator, mans_diff)}
@@ -1458,7 +1511,7 @@
     function StartingPartner(updatingFiles){
         this.updatingFiles=updatingFiles;
         //this.instance=()=>{return new StartingPartner(this.updatingFiles.instance())}
-        this.run=(socket, creator, partner, man_or_mans_diff)=>{
+        this.run=(socket, creator, partner, man_or_mans_diff, updateReport)=>{
             console.log("StartingPartner.run() creator is ", creator.agentType());
             return new Promise((resolve,reject)=>{
                 this.updatingFiles.run(socket, creator, partner, man_or_mans_diff).then(chain_msg=>{
@@ -1472,9 +1525,9 @@
                         }else{
                             creator.gui_news({msg:"agent_work", value:"starting the partner..."});
                             this.start_partner(socket).then(start_msg=>{
-                                console.log("StartingPartner.run(): start_partner().then: res= ",start_msg);
+                                this.say_to_browser("the partner is started");
+                                this.say_to_agent(creator);
                                 const extended_msg = Object.assign(chain_msg, start_msg);
-                                creator.gui_news({msg:"agent_work", value:"the partner is started"});
                                 resolve(extended_msg);
                             }).catch(err=>{
                                 creator.gui_news({msg:"agent_work", value:"fail to start the partner: "+err});
@@ -1482,19 +1535,32 @@
                             });
                         }
                     }else{
-                        if(chain_msg.is_error){
-                            console.error("StartingPartner.run(): after updatingFiles error: ", chain_msg.error);
-                        }else if(chain_msg.err_names && chain_msg.err_names.length){
-                            console.error("StartingPartner.run(): after updatingFiles AGENT CANT COPY FILES: ", chain_msg.err_names);
-                        }else{
-                            console.log("StartingPartner.run(): after updatingFiles chain_msg(2)=", JSON.stringify(chain_msg));
-                        }
+                        this.log_errors(chain_msg);
                         reject("StartingPartner: fail after updatingFiles, chain_msg=", chain_msg);
                     }
                 }).catch(err=>{
                     reject("StartingPartner: error on prev step 'updatingFiles': "+err);
                 })
             });
+        }
+        this.log_errors=(chain_msg)=>{
+            if(chain_msg.is_error){
+                console.error("StartingPartner.run(): after updatingFiles error: ", chain_msg.error);
+            }else if(chain_msg.err_names && chain_msg.err_names.length){
+                console.error("StartingPartner.run(): after updatingFiles AGENT CANT COPY FILES: ", chain_msg.err_names);
+            }else{
+                console.log("StartingPartner.run(): after updatingFiles chain_msg(2)=", JSON.stringify(chain_msg));
+            }
+        }
+        this.say_to_agent=(creator)=>{
+            if(creator){
+                try{creator.messaga("partner_started", "update");}
+                catch(err){console.error(">>>>>>>>>>>>>>>>>>>> WTF 1")}
+            }else{console.error("StartingPartner: after updatingFiles: partner is undefined!")}
+        }
+        this.say_to_browser=()=>{
+            console.log("StartingPartner.run(): start_partner().then: res= ",start_msg);
+            creator.gui_news({msg:"agent_work", value:"the partner is started"});
         }
         this.start_partner=(socket)=>{
             return new Promise((resolve,reject)=>{
@@ -1656,26 +1722,35 @@
                     if(compare_msg.is_error){
                         return reject(compare_msg.error); // agent cant compare normally
                     }
-                    const cond1 = compare_msg.is_changes; //changes must exist, otherwise no need to kill
-                    const cond2 = (partner) ? partner.isOnline() : false; //partner must be online, otherwise nothing to kill
-                    const cond3 = (creator.agentType()=="launcher") ? partner.isSpecialMode() : false; // if special mode kinda 'render' when we can't kill
-                    console.log("KillingPartner: conditions:",cond1,cond2,!cond3);
-                    if(cond1 && cond2 && !cond3){
-                        creator.gui_news({msg:"agent_work", value:"sending kill signal with pid "+partner.agentPid()});
-                        console.log("KillingPartner: sending kill signal, pid=",partner.agentPid());
-                        this.kill_partner(socket, partner.agentPid(), partner.agentPpid()).then(kill_msg=>{
-                            //@ TODO: data like 'is_error' can get lost by next chained msg
-                            creator.gui_news({msg:"agent_work", value:"the partner was killed"});
-                            creator.add_flags({partner_killed_by_reason:"update"});
-                            const extended_msg = Object.assign(compare_msg, kill_msg);
-                            resolve(extended_msg);
-                        }).catch(err=>{
-                            creator.gui_news({msg:"agent_work", value:"fail to kill the partner: "+err});
-                            reject(err);
-                        })
-                    }else{
-                        console.log("KillingPartner: No nedd to Kill");
-                        resolve(compare_msg);
+                    else{
+                        //@ 1 condition: it makes sense to kill if there is any change, otherwise no need to kill
+                        const cond1 = compare_msg.is_changes; 
+                        //@ 2: partner must be online, otherwise nothing to kill
+                        const cond2 = (partner) ? partner.isOnline() : false; 
+                        const cond3 = (creator.agentType()=="launcher") ? partner.isSpecialMode() : false; // if special mode kinda 'render' when we can't kill
+                        console.log("KillingPartner: conditions:",cond1,cond2,!cond3);
+                        if(cond1 && cond2 && !cond3){
+                            creator.gui_news({msg:"agent_work", value:"sending kill signal with pid "+partner.agentPid()});
+                            console.log("KillingPartner: sending kill signal, pid=",partner.agentPid());
+                            if(creator){creator.messaga("before_partner_killed", "update");}
+                                else{console.error("KillingPartner: after compareManifest: creator is undefined?")}
+                            if(partner){partner.messaga("before_killed", "update");}
+                                else{console.error("KillingPartner: after compareManifest: partner is undefined?")}
+                            this.kill_partner(socket, partner.agentPid(), partner.agentPpid()).then(kill_msg=>{
+                                //@ TODO: data like 'is_error' can get lost by next chained msg
+                                creator.gui_news({msg:"agent_work", value:"the partner was killed"});
+                                if(creator){creator.messaga("partner_killed", "update");}
+                                    else{console.error("KillingPartner: after kill_partner(): creator is undefined?")}
+                                const extended_msg = Object.assign(compare_msg, kill_msg);
+                                resolve(extended_msg);
+                            }).catch(err=>{
+                                creator.gui_news({msg:"agent_work", value:"fail to kill the partner: "+err});
+                                reject(err);
+                            })
+                        }else{
+                            //console.log("KillingPartner: No nedd to Kill");
+                            resolve(compare_msg);
+                        }
                     }
                 }).catch(err=>{
                     reject("KillingPartner: error on prev step 'comparing': "+err);

@@ -6,6 +6,7 @@ const os = require('os');
 const {spawn, exec} = require('child_process');
 const EventEmitter = require('events');
 const { settings } = require('cluster');
+const { threadId } = require('worker_threads');
 const AGENT_SETTINGS_PATH = __dirname+"/l_settings.json";
 const glob = {};
 //============IMPLEMENTATION========================
@@ -59,11 +60,39 @@ function KillSimilarOutcasts(settings_){
 function Launcher(partnerWatch, identifiers, socketIoHandlers){
     this.identifiers=identifiers;
     this.socketIoHandlers=socketIoHandlers;
+    this._is_partner_online;
+    this._is_partner_updating;
+    this.is_partner_online=()=>{return this._is_partner_online}
+    this.is_partner_updating=()=>{return this._is_partner_updating}
+    this.messag=(type, msg)=>{
+        if(type=="partner_state"){
+            if(msg == "before_partner_killed"){
+                this._is_partner_online = true;
+                this._is_partner_updating = true;
+            }
+            else if(msg == "partner_killed"){
+                this._is_partner_online = false;
+                this._is_partner_updating = true;
+            }
+            else if(msg == "before_partner_started"){
+                this._is_partner_online = false;
+                this._is_partner_updating = true;
+            }
+            else if(msg == "partner_started_error"){
+                this._is_partner_online = false;
+                this._is_partner_updating = false;
+            }
+            else if(msg == "partner_started"){
+                this._is_partner_online = true;
+                this._is_partner_updating = false;
+            }
+        }
+    }
     this.run=()=>{
-        partnerWatch.run(socketIoHandlers);
+        partnerWatch.run(socketIoHandlers, this);
         this.identifiers.prepare().then(agent_ids=>{
             setInterval(()=>{console.log("my md5=", agent_ids.md5)}, 60000);
-            this.socketIoHandlers.run(agent_ids);
+            this.socketIoHandlers.run(agent_ids, this);
         }).catch(err=>{
             console.log("Launcher.run(): this.identifiers.prepare() Error: ", err);
         })
@@ -74,7 +103,9 @@ function PartnerWatch(settings_){
     this.ioWrap= undefined;
     this.socket = undefined;
     this.is_partner_online = false;
-    this.run=(socketIoHandlers)=>{
+    this.launcher;
+    this.run=(socketIoHandlers, launcher)=>{
+        this.launcher = launcher;
         this.settings = glob[settings_].read() || {}
         this.ioWrap = socketIoHandlers.io_wrap();
         this.ioWrap.socketio((socket)=>{
@@ -84,23 +115,34 @@ function PartnerWatch(settings_){
                 console.log("PartnerWatch: 'partner_offline' event reason =", reason);
                 const min = 60000;
                 let time_after_partner_restart = this.settings["time_after_partner_restart"] || min;
-                if(reason == "update"){
-                    console.log("PartnerWatch: increased duration of 'time_after_partner_restart' param to one minute, because reason = ", reason);
-                    time_after_partner_restart = min;
+                if(reason == "update_partner"){
+                    console.log("PartnerWatch: Do nothing, because reason = ", reason);
                 }
-                setTimeout(()=>{
-                    if(this.is_partner_online){}
-                    else{
-                        console.log("PartnerWatch: restarting partner after "+time_after_partner_restart+" timeout");
-                        new StartedPartner(settings_).start((err, res)=>{
-                            if(err){
-                                console.error("PartnerWatch: error starting partner:", err);
-                            }else{
-                                console.log("PartnerWatch: starting partner stdout:", res);
-                            }
-                        })
-                    }
-                }, time_after_partner_restart);
+                else if(this.launcher.is_partner_updating()){
+                    //@
+                    console.log("PartnerWatch: partner updating:",this.launcher.is_partner_updating(),", partner online:", this.launcher.is_partner_online());
+                }
+                else{
+                    setTimeout(()=>{
+                        if(this.launcher.is_partner_updating()){
+                            //@
+                            console.log("PartnerWatch: after",time_after_partner_restart,"partner updating:",this.launcher.is_partner_updating(),", partner online:", this.launcher.is_partner_online());
+                        }
+                        else{
+                            console.log("asking master 'is partner online?'...")
+                            this.socket.emit("is_partner_online")
+                            this.socket.on("is_partner_online", is_online=>{
+                                if(is_online){
+                                    //@do nothing
+                                    console.log("PartnerWatch: master says that partner is allready online")
+                                }else{
+                                    console.log("PartnerWatch: asking master why_partner_is_offline?");
+                                    this.socket.emit("why_partner_is_offline?")
+                                }
+                            })
+                        }
+                    }, time_after_partner_restart);
+                }
             });
             this.socket.on('partner_online',()=>{
                 this.is_partner_online= true;
@@ -125,6 +167,7 @@ function Identifiers(){
                     if (ids.apid == 0) ids.apid = -1;
                     ids.sid = "";
                     ids.ip = "";
+                    ids.hostname = os.hostname();
                     resolve(ids);
                 }
             }) 
@@ -266,11 +309,12 @@ function SocketIoHandlers(ioWrap){
         this.allEvHandlers[ev_name] = evHandler;
         return this;
     }
-    this.run=(agent_ids)=>{
+    this.run=(agent_ids, launcher)=>{
+        this.launcher = launcher;
         this.socket = this.ioWrap.run(agent_ids).socketio();
 		Object.keys(this.allEvHandlers).forEach(ev_name=>{
 			console.log("hanging up '"+ev_name+"' event.");
-            this.allEvHandlers[ev_name].run(ev_name, this.socket);   
+            this.allEvHandlers[ev_name].run(ev_name, this.socket, this.launcher);   
         });
 	};
 	this.tech_events = ['connect', 'disconnect', 'compareManifest', 'same_md5_agents', 'updateFiles', 'startPartner', 'killPartner', 'identifiers', 'update_folder', 'partner_leaved', 'partner_appeared'];
@@ -489,16 +533,21 @@ function DirsComparing(){
 }
 //@-------------------------------
 function KilledPartner(){
-    this.run=(ev_name, socket)=>{
+    this.launcher;//run
+    //@ this is the order to kill the partner
+    this.run=(ev_name, socket, launcher)=>{
+        this.launcher = launcher;
         console.log("KilledPartner.run()...");
         socket.on(ev_name, (msg)=>{
             console.log("KilledPartner.run() msg =", msg);
             //TODO: 1. cmd_exec(kill) 2. socket.emit(ok)
+            this.launcher.messag("partner_state", "before_partner_killed")
             this.kill_by_pid(msg.pid, msg.ppid, err=>{
                 if(err){
-                    console.log("KilledPartner: emitting erorr!");
+                    console.log("KilledPartner: fail to kill by Pid!");
                     socket.emit(ev_name, {is_error: true, error: err});
                 }else{
+                    this.launcher.messag("partner_state", "partner_killed")
                     console.log("KilledPartner: emitting successafter 500 ms!");
                     setTimeout(()=>{
                         socket.emit(ev_name, {is_killed: true});
@@ -844,16 +893,25 @@ function UpdatedDiffFiles(settings_){
     }
 }
 function StartedPartner(settings_){
+    this.launcher;
     this.settings = glob[settings_].read() || {}
-    this.run=(ev_name, socket)=>{
+    this.run=(ev_name, socket, launcher)=>{
+        this.launcher = launcher;
         console.log("StartedPartner.run()...");
         socket.on(ev_name, ()=>{
             console.log("StartedPartner.run() event: ", ev_name);
             //TODO: 1. cmd_exec(kill) 2. socket.emit(ok)
+            this.launcher.messag("partner_state", "before_partner_started")
             this.start((err, res)=>{
                 const start_msg = {};
-                if(err){ start_msg.is_error = true; start_msg.is_started = false; }
-                else{ start_msg.is_started = true; }
+                if(err){ 
+                    start_msg.is_error = true; start_msg.is_started = false; 
+                    this.launcher.messag("partner_state", "partner_started_error")
+                }
+                else{
+                    start_msg.is_started = true;
+                    this.launcher.messag("partner_state", "partner_started")
+                }
                 socket.emit(ev_name, start_msg);
             });
         });
@@ -863,9 +921,7 @@ function StartedPartner(settings_){
         let loc_contr = this.settings.local_dir_controller;
         loc_contr = loc_contr.startsWith('/') ? loc_contr : "/"+loc_contr;
         let partner_path = __dirname + loc_contr + "/controller.js";
-        console.log("partner_path=",partner_path);
         partner_path = path.normalize(partner_path);
-        console.log("partner_path normalize=",partner_path);
         fs.stat(partner_path, (err)=>{
             if (err) {
                 console.log("StartedPartner fs.stat error:",err);
@@ -1330,7 +1386,7 @@ const GS = {
             });
         },
         kill: function(list, callback) {
-            let pending = list.length * 2;
+            let pending = list.length * 2; 
             let err_pids = [];
             for (let i in list) 
             {
@@ -1373,8 +1429,6 @@ const GS = {
         },
     },
 }
-
-
 
 
 //------------------------------------------

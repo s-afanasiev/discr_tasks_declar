@@ -546,6 +546,7 @@ function HT_TrStor(){
         return not_crowded_tr;
     }
 }
+function HostsLine(hostTd, order_number){}
 function HostTr(hostTd, order_number){
     this.order_number = order_number;
     this.hostTd = hostTd;
@@ -817,9 +818,9 @@ function HostHeader(hostBtnFutureJobs, data){
     this.init=(navApi, server_socket)=>{
         this.navApi = navApi;
         _server_socket = server_socket;
-        //console.log("HostHeader.run()");
+        console.log("HostHeader.run(): data=", data);
         _$a = $("<div id='host_header_md5__"+data.md5+"' style='border:1px solid green;'></div>");
-        _$a.append("<div><b>"+data.md5+"</b></div>")
+        _$a.append("<div><b>"+data.hostname+"</b>: <b>"+data.md5+"</b></div>")
         _$a.append(hostBtnFutureJobs.instance(data.md5).init(navApi, _server_socket).dom())
         return this;
     }
