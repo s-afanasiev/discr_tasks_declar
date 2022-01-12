@@ -7,7 +7,7 @@ const {spawn, exec} = require('child_process');
 const EventEmitter = require('events');
 const { settings } = require('cluster');
 const { threadId } = require('worker_threads');
-const AGENT_SETTINGS_PATH = __dirname+"/l_settings.json";
+const GLOBAL_OPTIONS_PATH = __dirname+"/l_settings.json";
 const glob = {};
 //============IMPLEMENTATION========================
 (function main(){ new App().run(); })();
@@ -17,19 +17,16 @@ const glob = {};
 function App(){
 	this.run=()=>{
         new Launcher(
-            new PartnerWatch("settings_"),
-            new Identifiers(),
-            new SocketIoHandlers(
-                new IoWrap(
-                    new IoSettings(AGENT_SETTINGS_PATH).as("settings_"),
-                    new StringifiedJson()
-                )
-            )
+            new GlobalOptions(GLOBAL_OPTIONS_PATH),
+            new SelfIdentifiers(),
+            new IoWrap(
+                new StringifiedJson()
+            ),
+            new ServerInputCommands()
                 .with('compareManifest', 
                     new ComparedManifest(
                         new DirStructure(), 
-                        new DirsComparing(),
-                        "settings_"
+                        new DirsComparing()
                     ).as("comparedManifest_")
                 )
                 .with('killPartner', new KilledPartner())
@@ -37,17 +34,55 @@ function App(){
                     "settings_", 
                     "comparedManifest_"
                 ))
-                .with('updateDiffFiles', new UpdatedDiffFiles("settings_"))
-                .with('startPartner', new StartedPartner("settings_"))
-                .with('kill_similar_outcasts', new KillSimilarOutcasts("settings_"))
+                .with('updateDiffFiles', new UpdatedDiffFiles())
+                .with('startPartner', new StartedPartner())
+                .with('kill_similar_outcasts', new KillSimilarOutcasts()),
+            new OutgoingMessages(
+                    new WorkMonitoring(  
+                        new PartnerWatch(),
+                        new IAmAliveMessage("i_am_alive", 29000)
+                    )
+                )
         ).run();
 	}
 }
+
+function GlobalOptions(GLOBAL_OPTIONS_PATH){
+    this.settingsPath = GLOBAL_OPTIONS_PATH;
+    this.settingsCash =undefined;
+	this.read=()=>{
+        if(this.settingsCash){
+            console.log("IoSettings.read() cashed file!");
+            return this.settingsCash;
+        }else{
+            const normalized_path = path.normalize(this.settingsPath);
+            try{
+                const json_file = fs.readFileSync(normalized_path, "utf8");
+                this.settingsCash = JSON.parse(json_file);
+            }catch(err){
+                console.error("GlobalOptions Error: while reading: ", err);
+                return {error: err};
+            }
+        }
+        return this.settingsCash;
+	}
+    this.param_by_name=(name)=>{
+        if(this.settingsCash[name]){
+            return this.settingsCash[name];
+        }else{console.error("GlobalOptions: no such param '"+name+"' in config file")}
+    }
+}
+
 function KillSimilarOutcasts(settings_){
-    this.run=(ev_name, socket)=>{
+    this.ev_name;//init
+    this.init=(ev_name)=>{
+        this.ev_name = ev_name;
+        return this;
+    }
+    this.run=(global_options_json, agentIdentifiers, socket, launcher)=>{
         console.log("Exit.run()...");
-        socket.on(ev_name, (agent_ids)=>{
-            console.log("Exit.run(): socket.on '",ev_name,"': msg = ", agent_ids);
+        socket.on(this.ev_name, (agent_ids)=>{
+            console.log("KillSimilarOutcasts: socket.on '",this.ev_name,"': msg = ", agent_ids);
             //process.exit(0);
             //TODO: 1. cmd_exec(kill) 2. socket.emit(ok)
             setTimeout(()=>{
@@ -57,9 +92,11 @@ function KillSimilarOutcasts(settings_){
         });
     }
 }
-function Launcher(partnerWatch, identifiers, socketIoHandlers){
-    this.identifiers=identifiers;
-    this.socketIoHandlers=socketIoHandlers;
+function Launcher(globalOptions, selfIdentifiers, ioWrap, serverInputCommands, outgoingMessages){
+    this.selfIdentifiers=selfIdentifiers;
+    this.ioWrap=ioWrap;
+    this.serverInputCommands=serverInputCommands;
+    this.outgoingMessages = outgoingMessages;
     this._is_partner_online;
     this._is_partner_updating;
     this.is_partner_online=()=>{return this._is_partner_online}
@@ -89,70 +126,108 @@ function Launcher(partnerWatch, identifiers, socketIoHandlers){
         }
     }
     this.run=()=>{
-        partnerWatch.run(socketIoHandlers, this);
-        this.identifiers.prepare().then(agent_ids=>{
-            setInterval(()=>{console.log("my md5=", agent_ids.md5)}, 60000);
-            this.socketIoHandlers.run(agent_ids, this);
-        }).catch(err=>{
-            console.log("Launcher.run(): this.identifiers.prepare() Error: ", err);
-        })
+        const global_options_json = globalOptions.read();
+        if(global_options_json){
+            this.selfIdentifiers.run().then(agent_ids=>{
+                this.ioWrap.run(global_options_json, agent_ids, this).socketio(io=>{
+                    this.serverInputCommands.run(global_options_json, this.selfIdentifiers, io, this);
+                    this.outgoingMessages.run(global_options_json, this.selfIdentifiers, io, this);
+                });
+            }).catch(err=>{
+                console.log("Launcher.run(): this.selfIdentifiers.run() Error: ", err);
+            })
+        }else{
+            // no global options file !?
+        }
     }
 }
+
+function OutgoingMessages(workMonitoring){
+    this.workMonitoring = workMonitoring;
+    this.run=(global_options_json, selfIdentifiers, socketio, launcher)=>{
+        this.workMonitoring.run(global_options_json, selfIdentifiers, socketio, launcher)
+    }
+}
+
+function WorkMonitoring(partnerWatch, iAmAliveMessage){
+    this.run=(global_options_json, selfIdentifiers, socketio, launcher)=>{
+        partnerWatch.run(global_options_json, selfIdentifiers, socketio, launcher);
+        iAmAliveMessage.run(global_options_json, selfIdentifiers, socketio, launcher)
+    }
+}
+
 function PartnerWatch(settings_){
     this.settings=undefined;
     this.ioWrap= undefined;
     this.socket = undefined;
     this.is_partner_online = false;
     this.launcher;
-    this.run=(socketIoHandlers, launcher)=>{
+    this.run=(global_options_json, selfIdentifiers, socketio, launcher)=>{
         this.launcher = launcher;
-        this.settings = glob[settings_].read() || {}
-        this.ioWrap = socketIoHandlers.io_wrap();
-        this.ioWrap.socketio((socket)=>{
-            this.socket = socket;
-            this.socket.on('partner_offline',(reason)=>{
-                this.is_partner_online = false;
-                console.log("PartnerWatch: 'partner_offline' event reason =", reason);
-                const min = 60000;
-                let time_after_partner_restart = this.settings["time_after_partner_restart"] || min;
-                if(reason == "update_partner"){
-                    console.log("PartnerWatch: Do nothing, because reason = ", reason);
-                }
-                else if(this.launcher.is_partner_updating()){
-                    //@
-                    console.log("PartnerWatch: partner updating:",this.launcher.is_partner_updating(),", partner online:", this.launcher.is_partner_online());
-                }
-                else{
-                    setTimeout(()=>{
-                        if(this.launcher.is_partner_updating()){
-                            //@
-                            console.log("PartnerWatch: after",time_after_partner_restart,"partner updating:",this.launcher.is_partner_updating(),", partner online:", this.launcher.is_partner_online());
-                        }
-                        else{
-                            console.log("asking master 'is partner online?'...")
-                            this.socket.emit("is_partner_online")
-                            this.socket.on("is_partner_online", is_online=>{
-                                if(is_online){
-                                    //@do nothing
-                                    console.log("PartnerWatch: master says that partner is allready online")
-                                }else{
-                                    console.log("PartnerWatch: asking master why_partner_is_offline?");
-                                    this.socket.emit("why_partner_is_offline?")
-                                }
-                            })
-                        }
-                    }, time_after_partner_restart);
-                }
-            });
-            this.socket.on('partner_online',()=>{
-                this.is_partner_online= true;
-                console.log("PartnerWatch: 'partner_online' event");
-            })
+        this.settings = global_options_json;
+        this.socket = socketio;
+        this.socket.on('partner_offline',(reason)=>{
+            this.is_partner_online = false;
+            console.log("PartnerWatch: 'partner_offline' by reason:", reason);
+            const min = 60000;
+            let time_after_partner_restart = this.settings["time_after_partner_restart"] || min;
+            if(reason == "update_partner"){
+                console.log("PartnerWatch: Do nothing, because partner is under update");
+            }
+            else if(this.launcher.is_partner_updating()){
+                //@
+                console.log("PartnerWatch: partner updating:",this.launcher.is_partner_updating(),", partner online:", this.launcher.is_partner_online());
+            }
+            else{
+                setTimeout(()=>{
+                    if(this.launcher.is_partner_updating()){
+                        //@
+                        console.log("PartnerWatch: after",time_after_partner_restart,"partner updating:",this.launcher.is_partner_updating(),", partner online:", this.launcher.is_partner_online());
+                    }
+                    else{
+                        console.log("asking master 'is partner online?'...")
+                        this.socket.emit("is_partner_online")
+                        this.socket.once("is_partner_online", is_online=>{
+                            if(is_online){
+                                //@do nothing
+                                console.log("PartnerWatch: master says that partner is allready online")
+                            }else{
+                                console.log("PartnerWatch: asking master why_partner_is_offline?");
+                                this.socket.emit("why_partner_is_offline?")
+                            }
+                        })
+                    }
+                }, time_after_partner_restart);
+            }
+        });
+        this.socket.on('partner_online',()=>{
+            this.is_partner_online= true;
+            console.log("PartnerWatch: 'partner_online' event");
         })
     }
 }
-function Identifiers(){
-    this.prepare=()=>{
+
+function IAmAliveMessage(msg_to_send, _interval){
+    this.run=(global_options_json, selfIdentifiers, socketio, launcher)=>{
+        console.log("IAmAliveMessage.run()...");
+        setInterval(()=>{
+            if(socketio){
+                console.log("sending heartbit msg to server. My hostname=",selfIdentifiers.ids("hostname") ,"md5=", selfIdentifiers.ids("md5"))
+                socketio.emit(msg_to_send, selfIdentifiers.ids())
+            }else{
+                console.error("IAmAliveMessage: Error: no socket!");
+            }
+        }, _interval || 29000)
+    }
+}
+
+function SelfIdentifiers(){
+    this._identifiers={};//prepare
+    this.ids=(name)=>{
+        if(name){return this._identifiers[name]}
+        else{return this._identifiers}
+    }
+    this.run=()=>{
         console.log("preparing identifiers for master...");
         return new Promise((resolve,reject)=>{
             let ids = {};
@@ -168,6 +243,7 @@ function Identifiers(){
                     ids.sid = "";
                     ids.ip = "";
                     ids.hostname = os.hostname();
+                    this._identifiers = ids;
                     resolve(ids);
                 }
             }) 
@@ -231,37 +307,41 @@ function Identifiers(){
         });
     }
 }
-function IoWrap(ioSettings, stringifiedJson){
+
+function IoWrap(stringifiedJson){
     this.socket = undefined;
-    this.ioSettings= ioSettings;
     this.stringifiedJson= stringifiedJson;
+    this.waiters = [];
     this.socketio=(cb)=>{
-        if(cb){
+        if(typeof cb=="function"){
             if(this.socket){cb(this.socket);}
-            else{this.when_socket_ready_cb = cb;}
+            else{
+                //this.when_socket_ready_cb = cb;
+                this.waiters.push(cb);
+                console.log("IoWrap: this.waiters.length=", this.waiters.length)
+            }
         }else{
             return this.socket;
         }
     }
-    this.when_socket_ready_cb=()=>{console.log("IoWrap.when_socket_ready_cb() not overrided")}
-    this.run=(agent_ids)=>{
+    this.when_socket_ready_cb=()=>{console.log("IoWrap.when_socket_ready_cb() not ready")}
+    this.run=(global_options_json, agent_ids, launcher)=>{
         const io = require('socket.io-client');
-		const settings = this.ioSettings.read(); //sync
-        console.log("IoWrap.run(): settings=", settings);
-		//@ At this moment connection happens
-		this.socket = io(settings.client_socket, {query:{
+		this.socket = io(global_options_json.client_socket, {query:{
             "browser_or_agent": "agent",
             "agent_identifiers": this.stringifiedJson.run(agent_ids)
         }});
-        this.when_socket_ready_cb(this.socket);
-        this.socket.on('connect',()=>{console.log(">>>connected to server!")})
-        this.socket.on('disconnect',()=>{console.log(">>>disconnected from server!")})
+        this.waiters.forEach(cb=>cb(this.socket))
+        //this.when_socket_ready_cb(this.socket);
+        this.socket.on('connect',()=>{console.log(">>>IoWrap: connected to server!")})
+        this.socket.on('disconnect',()=>{console.log(">>>IoWrap: disconnected from server!")})
 		return this;
     }
     this.then_ready=(cb)=>{
 
     }
 }
+
 function StringifiedJson(){
     this.ids_json = undefined;
     this.run=(ids_json)=>{
@@ -271,50 +351,29 @@ function StringifiedJson(){
     };
 }
 function IoSettings(settingsPath){
-	this.settingsPath = settingsPath;
-    this.settingsCash =undefined;
-	this.read=()=>{
-        if(this.settingsCash){
-            console.log("IoSettings.read() cashed file!");
-            return this.settingsCash;
-        }else{
-            const normalized_path = path.normalize(this.settingsPath);
-            try{
-                const json_file = fs.readFileSync(normalized_path, "utf8");
-                this.settingsCash = JSON.parse(json_file);
-            }catch(err){
-                console.log("IoSettings.read() Error: ", err);
-                return {error: err};
-            }
-        }
-        return this.settingsCash;
-	}
-    this.as=(name)=>{
-        glob[name]=this;
-        return this;
-    }
-    this.param_by_name=(name)=>{
-        if(this.settingsCash[name]){
-            return this.settingsCash[name];
-        }else{console.error("IoSettings: no such param '"+name+"' in config file")}
-    }
+	
 }
-function SocketIoHandlers(ioWrap){
+
+function ServerInputCommands(ioWrap){
     this.ioWrap= ioWrap;
     this.socket = undefined;
     this.allEvHandlers = {};
     this.io_wrap=()=>{return this.ioWrap}
     this.with=(ev_name, evHandler)=>{
-        console.log("SocketIoHandlers.with(): ev_name =", ev_name)
-        this.allEvHandlers[ev_name] = evHandler;
+        console.log("ServerInputCommands.with(): ev_name =", ev_name)
+        if(evHandler && typeof evHandler.init == 'function'){
+            this.allEvHandlers[ev_name] = evHandler.init(ev_name);
+        }else{
+            console.error("ServerInputCommands.with(): evhandler must have init() method which returned self object");
+        }
         return this;
     }
-    this.run=(agent_ids, launcher)=>{
+    this.run=(global_options_json, agentIdentifiers, socketio, launcher)=>{
         this.launcher = launcher;
-        this.socket = this.ioWrap.run(agent_ids).socketio();
+        this.socket = socketio;
 		Object.keys(this.allEvHandlers).forEach(ev_name=>{
 			console.log("hanging up '"+ev_name+"' event.");
-            this.allEvHandlers[ev_name].run(ev_name, this.socket, this.launcher);   
+            this.allEvHandlers[ev_name].run(global_options_json, agentIdentifiers, this.socket, this.launcher);   
         });
 	};
 	this.tech_events = ['connect', 'disconnect', 'compareManifest', 'same_md5_agents', 'updateFiles', 'startPartner', 'killPartner', 'identifiers', 'update_folder', 'partner_leaved', 'partner_appeared'];
@@ -322,45 +381,43 @@ function SocketIoHandlers(ioWrap){
 //@-------------------------------
 //@ run method of this Object listening to 'compareManifest' event, which receives 'remote_mans' structure. After getting this structure, the method 'run' accesses the object 'dirStructure' to receive to get the structure of the local manifest. Then, we using the object 'dirsComparing' to compare the manifests. The ultimate goal is to inform the Master.js about the presence or absence of changes.
 function ComparedManifest(dirStructure, dirsComparing, settings_){
+    this.ev_name;//init
     this.dirStructure = dirStructure;
     this.dirsComparing = dirsComparing;
     this.curMans = [];
     this.is_keep_old_files = true;
-    this.settings = glob[settings_].read() || {}
-    console.log("ComparedManifest this.settings=",this.settings);
-    let loc_contr = this.settings.local_dir_controller
-    loc_contr = (loc_contr.startsWith("/")) ? loc_contr : "/"+loc_contr;
-    //let loc_other = this.settings.local_dir_other
-    //loc_other = (loc_other.startsWith("/")) ? loc_other : "/"+loc_other;
-    this.CONTROLLER_DIR =  __dirname + loc_contr;
-    //this.OTHER_DIR =  __dirname + loc_other;
-    const PATHS_DATA = [
-        {name: "controller", path: this.CONTROLLER_DIR}//,
-        //{name: "other", path: this.OTHER_DIR}
-    ];
+    this.settings;//run
+    this.CONTROLLER_DIR;//run
+    this.PATHS_DATA = [];//run
     this.is_timeout = true;
     //console.log("ComparedManifest.constr(): PATHS_DATA=",PATHS_DATA);
     this.as=(name)=>{
         glob[name] = this;
         return this;
     }
-    this.run=(ev_name, socket)=>{
-        console.log("ComparedManifest.run()...");
-        socket.on(ev_name, (remote_mans)=>{
-            console.log("ComparedManifest.run(): ev_name=",ev_name)
-            this.dirStructure.allMansAsync(PATHS_DATA).then(local_mans=>{
+    this.init=(ev_name)=>{
+        this.ev_name = ev_name;
+        return this;
+    }
+    this.run=(global_options_json, agentIdentifiers, socket, launcher)=>{
+        this.CONTROLLER_DIR = path.join(__dirname, global_options_json.local_dir_controller);
+        this.PATHS_DATA.push( {name: "controller", path: this.CONTROLLER_DIR} )
+        console.log("ComparedManifest.run(): this.CONTROLLER_DIR=", this.CONTROLLER_DIR);
+        socket.on(this.ev_name, (remote_mans)=>{
+            console.log("ComparedManifest.run(): ev_name=", this.ev_name)
+            this.dirStructure.allMansAsync(this.PATHS_DATA).then(local_mans=>{
                 console.log("after allMansAsync() local_mans=",local_mans);
                 const mans_diff = this.dirsComparing.compare(local_mans, remote_mans, this.is_keep_old_files);
                 console.log("after allMansAsync() mans_diff=",mans_diff);
                 const is_changes_exist = Object.keys(mans_diff).length>0;
-                socket.emit(ev_name, {is_changes: is_changes_exist});
+                socket.emit(this.ev_name, {is_changes: is_changes_exist});
             }).catch(err=>{
-                console.log("WTF!!!",err);
+                console.log("Error: Something Wrong after comparing all manifests:",err);
                 //reject("ComparedManifest.manifestos() Error: "+JSON.stringify(err));
-                socket.emit(ev_name, {is_error: true, error: err});
+                socket.emit(this.ev_name, {is_error: true, error: err});
             }).finally(()=>{this.is_timeout = false;});
             setTimeout(()=>{ if(this.is_timeout){
-                socket.emit(ev_name, {is_error: true, error: "ComparedManifest TIMEOUT"});
+                socket.emit(this.ev_name, {is_error: true, error: "ComparedManifest TIMEOUT"});
             } }, 5000);
         });
         return this;
@@ -369,7 +426,7 @@ function ComparedManifest(dirStructure, dirsComparing, settings_){
     //@ local function called by UpdatedFiles object.
     this.mansDiff=(remote_mans)=>{
         return new Promise((resolve, reject)=>{
-            this.dirStructure.allMansAsync(PATHS_DATA).then(local_mans=>{
+            this.dirStructure.allMansAsync(this.PATHS_DATA).then(local_mans=>{
                 const mans_diff = this.dirsComparing.compare(local_mans, remote_mans, this.is_keep_old_files);
                 console.log("ComparedManifest.mansDiff(): mans_diff=",JSON.stringify(mans_diff));
                 resolve(mans_diff);
@@ -424,8 +481,9 @@ function DirStructure(){
         //console.log("DirStructure.allMansAsync: paths_data=", paths_data);
         return new Promise((resolve,reject)=>{
             const result = {};
+            console.log("DirStructure.allMansAsync: paths_data=", paths_data);
             let pending = paths_data.length;
-            if(pending.length == 0){return resolve(result)}
+            if(pending == 0){return resolve(result)}
             paths_data.forEach(path_data=>{
                 if(!path_data){
                     if(!--pending){resolve(result);}
@@ -533,24 +591,29 @@ function DirsComparing(){
 }
 //@-------------------------------
 function KilledPartner(){
+    this.ev_name;//init
     this.launcher;//run
     //@ this is the order to kill the partner
-    this.run=(ev_name, socket, launcher)=>{
+    this.init=(ev_name)=>{
+        this.ev_name = ev_name;
+        return this;
+    }
+    this.run=(global_options_json, agentIdentifiers, socket, launcher)=>{
         this.launcher = launcher;
         console.log("KilledPartner.run()...");
-        socket.on(ev_name, (msg)=>{
-            console.log("KilledPartner.run() msg =", msg);
+        socket.on(this.ev_name, (msg)=>{
+            console.log("KilledPartner.run() server msg =", msg);
             //TODO: 1. cmd_exec(kill) 2. socket.emit(ok)
             this.launcher.messag("partner_state", "before_partner_killed")
             this.kill_by_pid(msg.pid, msg.ppid, err=>{
                 if(err){
-                    console.log("KilledPartner: fail to kill by Pid!");
-                    socket.emit(ev_name, {is_error: true, error: err});
+                    console.log("KilledPartner: fail to kill by pid, ppid:", msg.pid, msg.ppid);
+                    socket.emit(this.ev_name, {is_error: true, error: err});
                 }else{
                     this.launcher.messag("partner_state", "partner_killed")
-                    console.log("KilledPartner: emitting successafter 500 ms!");
+                    console.log("KilledPartner: emitting success after 500 ms!");
                     setTimeout(()=>{
-                        socket.emit(ev_name, {is_killed: true});
+                        socket.emit(this.ev_name, {is_killed: true});
                     },500)
                 }
             });
@@ -568,40 +631,41 @@ function KilledPartner(){
     }
 }
 function UpdatedFiles(settings_, comparedManifest_){
+    this.ev_name//init
     this.comparedManifest = glob[comparedManifest_] || {}
-    this.settings = glob[settings_].read() || {}
-    let loc_contr = this.settings.local_dir_controller;
-    loc_contr = loc_contr.startsWith('/') ? loc_contr : '/'+loc_contr;
-    //let loc_other = this.settings.local_dir_other;
-    //loc_other = loc_other.startsWith('/') ? loc_other : '/'+loc_other;
-    const CONTROLLER_DIR = __dirname + loc_contr;
-    //const OTHER_DIR = __dirname + loc_other;
-    const REMOTE_DIR = this.settings.remote_dir;
+    var CONTROLLER_DIR;//run
+    var REMOTE_DIR;//run
     this.is_keep_old_files = true;
     this.is_timeout = true;
-    this.run=(ev_name, socket)=>{
+    this.init=(ev_name)=>{
+        this.ev_name = ev_name;
+        return this;
+    }
+    this.run=(global_options_json, agentIdentifiers, socket, launcher)=>{
         //console.log("UpdatedFiles.run()...");
-        socket.on(ev_name, (remote_mans)=>{
-            console.log("UpdatedFiles.run() event: ", ev_name);
+        CONTROLLER_DIR = path.join(__dirname, global_options_json.local_dir_controller)
+        REMOTE_DIR = global_options_json.remote_dir;
+        socket.on(this.ev_name, (remote_mans)=>{
+            console.log("UpdatedFiles.run() event: ", this.ev_name);
             this.comparedManifest.mansDiff(remote_mans).then(diff=>{
                 console.log("UpdatedFiles.run(): diff=",diff);
                 this.sync_dirs(diff, this.is_keep_old_files).then(err_names=>{
                     console.log("UpdatedFiles: emitting success 'updateFiles' procedure");
                     if(err_names && err_names.length){
-                        socket.emit(ev_name, {is_updated: false, err_names: err_names});
+                        socket.emit(this.ev_name, {is_updated: false, err_names: err_names});
                     }else{
-                        socket.emit(ev_name, {is_updated: true});
+                        socket.emit(this.ev_name, {is_updated: true});
                     }
                 }).catch(err=>{
                     console.log("UpdatedFiles: sync_dirs() Error: ",err);
-                    socket.emit(ev_name, {is_error: true, error:err});
+                    socket.emit(this.ev_name, {is_error: true, error:err});
                 }).finally(()=>{ this.is_timeout = false; });
             }).catch(err=>{
                 console.log("UpdatedFiles: comparedManifest_.mansDiff() Error: ",err);
-                socket.emit(ev_name, {is_error: true, error:err});
+                socket.emit(this.ev_name, {is_error: true, error:err});
             }).finally(()=>{ this.is_timeout = false; });
             setTimeout(()=>{
-                if(this.is_timeout){ socket.emit(ev_name, {is_updated: false, is_error: true, error:"UpdatedFiles TIMEOUT"}); }
+                if(this.is_timeout){ socket.emit(this.ev_name, {is_updated: false, is_error: true, error:"UpdatedFiles TIMEOUT"}); }
             }, 5000);
         });
     }
@@ -683,7 +747,7 @@ function UpdatedFiles(settings_, comparedManifest_){
                     console.log("copy_files() rem_file=",rem_file);
                     fs.copyFile(rem_file, loc_file, (err)=>{
                         if (err) {
-                            console.log("copy_files() Error=",err);
+                            console.log("copy_files() Error= ",err);
                             err_names.push(file_info);
                             if (!--pending) { resolve(err_names); }
                         }   
@@ -734,33 +798,33 @@ function UpdatedFiles(settings_, comparedManifest_){
     }
 }
 function UpdatedDiffFiles(settings_){
-    this.settings = glob[settings_].read() || {}
-    let loc_contr = this.settings.local_dir_controller;
-    loc_contr = loc_contr.startsWith('/') ? loc_contr : '/'+loc_contr;
-    //let loc_other = this.settings.local_dir_other;
-    //loc_other = loc_other.startsWith('/') ? loc_other : '/'+loc_other;
-    const CONTROLLER_DIR = __dirname + loc_contr;
-    //const OTHER_DIR = __dirname + loc_other;
-    const REMOTE_DIR = this.settings.remote_dir;
+    this.ev_name;//init
+    var CONTROLLER_DIR;//run
+    var REMOTE_DIR;//run
     this.is_keep_old_files = true;
     this.is_timeout = true;
-    this.run=(ev_name, socket)=>{
-        console.log("UpdatedDiffFiles.run(): ev_name=",ev_name);
-        socket.on(ev_name, (remote_mans_diff)=>{
+    this.init=(ev_name)=>{
+        this.ev_name = ev_name;
+        return this;
+    }
+    this.run=(global_options_json, agentIdentifiers, socket, launcher)=>{
+        CONTROLLER_DIR = path.join(__dirname, global_options_json.local_dir_controller)
+        REMOTE_DIR = global_options_json.remote_dir;
+        socket.on(this.ev_name, (remote_mans_diff)=>{
             console.log("UpdatedDiffFiles.run() remote_mans_diff: ", remote_mans_diff);
             sync_dirs(remote_mans_diff, this.is_keep_old_files).then(err_names=>{
                 console.log("UpdatedDiffFiles: emitting success 'updateFiles' procedure");
                 if(err_names && err_names.length){
-                    socket.emit(ev_name, {is_updated: false, err_names: err_names});
+                    socket.emit(this.ev_name, {is_updated: false, err_names: err_names});
                 }else{
-                    socket.emit(ev_name, {is_updated: true});
+                    socket.emit(this.ev_name, {is_updated: true});
                 }
             }).catch(err=>{
                 console.log("UpdatedDiffFiles: sync_dirs() Error: ",err);
-                socket.emit(ev_name, {is_error: true, error:err});
+                socket.emit(this.ev_name, {is_error: true, error:err});
             }).finally(()=>{ this.is_timeout = false; });
             setTimeout(()=>{
-                if(this.is_timeout){ socket.emit(ev_name, {is_updated: false, is_error: true, error:"UpdatedDiffFiles TIMEOUT"}); }
+                if(this.is_timeout){ socket.emit(this.ev_name, {is_updated: false, is_error: true, error:"UpdatedDiffFiles TIMEOUT"}); }
             }, 5000);
         });
     }
@@ -893,13 +957,19 @@ function UpdatedDiffFiles(settings_){
     }
 }
 function StartedPartner(settings_){
+    this.ev_name;//init
     this.launcher;
-    this.settings = glob[settings_].read() || {}
-    this.run=(ev_name, socket, launcher)=>{
+    this.settings;//run
+    this.init=(ev_name)=>{
+        this.ev_name = ev_name;
+        return this;
+    }
+    this.run=(global_options_json, agentIdentifiers, socket, launcher)=>{
+        this.settings = global_options_json;
         this.launcher = launcher;
         console.log("StartedPartner.run()...");
-        socket.on(ev_name, ()=>{
-            console.log("StartedPartner.run() event: ", ev_name);
+        socket.on(this.ev_name, ()=>{
+            console.log("StartedPartner.run()");
             //TODO: 1. cmd_exec(kill) 2. socket.emit(ok)
             this.launcher.messag("partner_state", "before_partner_started")
             this.start((err, res)=>{
@@ -912,7 +982,7 @@ function StartedPartner(settings_){
                     start_msg.is_started = true;
                     this.launcher.messag("partner_state", "partner_started")
                 }
-                socket.emit(ev_name, start_msg);
+                socket.emit(this.ev_name, start_msg);
             });
         });
     }
@@ -948,6 +1018,8 @@ function StartedPartner(settings_){
         });
     }
 }
+
+
 //@-------------------------------
 
 

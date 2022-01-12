@@ -10,7 +10,8 @@
         retranslate_logger();
         const SETTINGS	= read_json_sync("./m_settings.json");
         const JOBS_CONFIG = read_json_sync("jobs_config.json");
-        if (SETTINGS.error || JOBS_CONFIG.error) {return console.log("Application not started")}
+        if (SETTINGS.error) {return console.error("Application not started: SETTINGS error", SETTINGS.error)}
+        else if (JOBS_CONFIG.error) {return console.error("Application not started: JOBS_CONFIG error", JOBS_CONFIG.error)}
 		else { new App().run(SETTINGS, JOBS_CONFIG); }
         //rewrite_config_test();
 	}
@@ -77,7 +78,10 @@
                     new Manifest(new DirStructure(), new DirsComparing()),
                     new HostCluster(
                         new HostAsPair(
-                            new Launcher({}),
+                            new Launcher(
+                                {},
+                                new SocketKeepAliveConfirmation({msg_to_receive:"i_am_alive",time_to_panic:60000})
+                            ),
                             new Controller(
                                 new Jobs(
                                     JOBS_CONFIG,
@@ -329,7 +333,7 @@
         }
         this.nextManifest = function(){
             this.dirStructure.allMansAsync(this.main_update_paths).then(next_mans=>{
-                console.log("Manifest.nextManifest(): next_mans=",next_mans);
+                //console.log("Manifest.nextManifest(): next_mans=",next_mans);
                 const dirs_compare_diff = this.dirsComparing.compare(next_mans, this.prev_mans);
                 console.log("Manifest.nextManifest(): dirs_compare_diff=",dirs_compare_diff);
                 //@ e.g.: dirs_compare_diff = { launcher: { new_files: [], files_to_change: [ [Array] ], old_files: [] } }
@@ -912,7 +916,6 @@
             this.connectedAgentsThrottle.run(this.launcher, this.controller, this.hostCluster);
             return this;
         }
-        this.listen_for_socketio_questions=()=>{}
         this.agent_by_type=(ag_type)=>{
             if(ag_type=="launcher"){return this.launcher}
             else if(ag_type=="controller"){return this.controller}
@@ -1007,6 +1010,12 @@
                 this.controller.partner_offline(reason);
             }
         }
+        this.agent_msg=(message, agent)=>{
+            if(message=="keep_alive_timeout"){
+                
+            }
+            else{console.error("HostAsPair.agent_msg(): unknown msg:", message)}
+        }
 	}
     function ConnectedAgentsThrottle(){
         this.redundantAgentsArray=[];
@@ -1053,8 +1062,9 @@
         }
     }
     //@------------------Launcher-----------------------
-    function Launcher(agent_ids){
+    function Launcher(agent_ids, socketKeepAliveConfirmation){
         this.agent_ids = agent_ids;
+        this.socketKeepAliveConfirmation = socketKeepAliveConfirmation;
         this.partner = undefined;//welcomeAgent
         this.agentUpdateChain = undefined;//run
         this.agent_socket = undefined;
@@ -1095,7 +1105,7 @@
         this.isUpdateMode=()=>{return this.is_update_mode_flag}
         this.switchUpdateMode=(is_update_mode)=>{this.is_update_mode_flag = is_update_mode}
         //@----------------------------
-		this.instance=function(agent_ids){ return new Launcher(agent_ids); }
+		this.instance=function(agent_ids){ return new Launcher(agent_ids, this.socketKeepAliveConfirmation.instance()); }
 		//@ this in fact not some kind of initialization, but simply pass the object
         this.welcomeAgent=(agent_socket, agent_ids, manifest_snapshot, partner)=>{
             this.agent_socket = agent_socket;
@@ -1107,6 +1117,8 @@
             this.switchOnline(true);
             this.gui_news({msg:"agent_online"});
 			this.listenForDisconnect();
+            console.log("Launcher.welcomeAgent(): this.host=", this.host)
+            this.socketKeepAliveConfirmation.run(this.agent_socket, this.host)
             this.listen_for_socketio_questions();
 		}
         this.listen_for_socketio_questions=()=>{
@@ -1198,6 +1210,33 @@
                 //@partner was restarted after update or startd the first time
                 this._update_state = ""
             }
+        }
+    }
+
+    function SocketKeepAliveConfirmation(options){
+        this.host;
+        this.options = options;
+        this.time_to_panic = options.time_to_panic;
+        this._countdown;
+        this.instance=()=>{return new SocketKeepAliveConfirmation(this.options)}
+        this.run=(agent_socket, host)=>{
+            this.host = host;
+            this.start_the_countdown(this.time_to_panic);
+            agent_socket.on(this.options.msg_to_receive, (identifiers)=>{
+                this.drop_the_countdown();
+                this.start_the_countdown(this.time_to_panic);
+                console.log("SocketKeepAliveConfirmation: msg=", JSON.stringify(identifiers));
+            });
+            return this;
+        }
+        this.drop_the_countdown=()=>{
+            clearTimeout(this._countdown)
+        }
+        this.start_the_countdown=(time_to_panic)=>{
+            //console.error("SocketKeepAliveConfirmation.start_the_countdown(): time_to_panic=", time_to_panic)
+            this._countdown = setTimeout(()=>{
+                this.host.agent_msg("keep_alive_timeout")
+            }, time_to_panic);
         }
     }
     //@------------------Controller-----------------------
@@ -1617,6 +1656,7 @@
             console.log("UpdatingFiles.run() creator is ", creator.agentType());
             return new Promise((resolve,reject)=>{
                 this.killingPartner.run(socket, creator, partner, manifest).then(chain_msg=>{
+                    console.log("UpdatingFiles: after killingPartner.run(): chain_msg=", JSON.stringify(chain_msg))
                     if(chain_msg.is_changes){
                         creator.gui_news({msg:"agent_work", value:"Starting update the files"});
                         console.log("UpdatingFiles.run() before update_files() calling");

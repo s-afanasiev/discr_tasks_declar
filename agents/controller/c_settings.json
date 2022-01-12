@@ -2,7 +2,7 @@
 	"client_socket": "http://tfcomp:55999",
 	"local_dir_controller": "../controller",
 	"local_dir_launcher": "../launcher",
-	"remote_dir": "\\\\tfcomp/CODES/JAM/discrete_tasks/discrete_tasks_current/update",
+	"remote_dir": "\\\\tfcomp/Discrete_tasks/discrete_tasks_current/update",
 	"time_after_partner_restart": 10000,
 	"if_disconnect_wait_before_spec_fu": 30000,
 	"if_disconnect_spec_fu": "fuita",

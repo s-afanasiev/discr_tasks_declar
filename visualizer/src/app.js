@@ -4,22 +4,26 @@ function app_run(args){
     //@ param {Object} args = app_run({window:this, socket_io_address: endvr_server_address, parent_id: "main_div"}); //app.js
     return new App(
         new NavMenu(
-            new NavSelectedHost(
-                new NavFutureJobsPanel(),
-                new NavJobChainTreeBtn(
-                    new JobChainTreeWindow(),
-                    {btn_name: "agent jobs", concrete_agent:true}
-                ),
-                new AddedJob(),
-                new StoppedJob(
-                    new ResumedJob(),
-                    new DeletedJob()
+            new NavContainerSmall(
+                new NavGlobalBtns(
+                    new NavJobChainTreeBtn(
+                        new JobChainTreeWindow(),
+                        {btn_name: "jobs general config"}
+                    )
                 )
             ),
-            new NavGlobalBtns(
-                new NavJobChainTreeBtn(
-                    new JobChainTreeWindow(),
-                    {btn_name: "jobs general config"}
+            new NavContainerBig(
+                new NavSelectedHost(
+                    new NavFutureJobsPanel(),
+                    new NavJobChainTreeBtn(
+                        new JobChainTreeWindow(),
+                        {btn_name: "agent jobs", concrete_agent:true}
+                    ),
+                    new AddedJob(),
+                    new StoppedJob(
+                        new ResumedJob(),
+                        new DeletedJob()
+                    )
                 )
             )
         ),
@@ -59,6 +63,7 @@ function App(navMenu, hostTable){
     this.html=()=>{}
     //@ param {Object} args = app_run({window:this, socket_io_address: endvr_server_address, parent_id: "main_div"}); //app.js
     this.run=(args)=>{
+        console.log("App.run()")
         const server_socket = io(args.socket_io_address, {query:{browser_or_agent:"browser"}})
         hostTable.run(
             server_socket, 
@@ -79,16 +84,17 @@ function AnyClickProcess(){
     }
 }
 //@---------------------------------
-function NavMenu(navSelectedHost, navGlobalBtns){
+function NavMenu(navContainerSmall, navContainerBig){
     let _$a = undefined;//run
     let _navApi = undefined;//run
     this.run=(server_socket, parent_div_id, _window)=>{
+        console.log("NavMenu.run()")
         _navApi = new NavApi().init();
         _$a = $("<div style='height:100%; width:100%; border:1px solid blue; display:table;'>");
         $("#"+parent_div_id).append(_$a);
-        _$a.append("<div style='display:table-cell; width:10%;'>nav menu!</div>")
-        _$a.append(navGlobalBtns.run(server_socket, parent_div_id, _window).dom())
-        _$a.append(navSelectedHost.init(server_socket, _navApi).run(parent_div_id).dom());
+        _$a.append("<div style='display:table-cell; width:10%; background:#bed;'>nav menu!</div>")
+        _$a.append(navContainerSmall.run(server_socket, parent_div_id, _window).dom())
+        _$a.append(navContainerBig.run(server_socket, _navApi, parent_div_id).dom());
         return this;
     }
     this.api=()=>{return _navApi}
@@ -102,18 +108,20 @@ function NavMenu(navSelectedHost, navGlobalBtns){
         this.notify=(event_type, data_dto)=>{
             //console.log("NavApi.notify() event_type= ", event_type)
             if(event_types.includes(event_type)){
-                console.log("NavApi.notify(): event_type= ", event_type);
                 _target_list[event_type].forEach(targ=>{
-                    targ.nav_api_notify(event_type, data_dto);
+                    if(typeof targ.nav_api_notify == "function"){
+                        targ.nav_api_notify(event_type, data_dto);
+                    }else{console.error("NavApi.notify(): subscribed object has no 'nav_api_notify' method!")}
                 })
             }else{
                 console.log("NavApi.notify(): no such event: ", event_type);
             }
         }
         this.subscribe=(event_type, target)=>{
+            console.log("NavMenu.subscribe() event_type=", event_type, ", target=", target.__proto__);
             if(event_types.includes(event_type)){
                 _target_list[event_type].push(target);
-                console.log("NavMenu.subscribe() target_list length =", _target_list.length);
+                console.log("NavMenu.subscribe() ",event_type," subscribers count =", _target_list[event_type].length);
             }else{
                 console.log("NavApi.subscribe(): no such event: ", event_type);
             }
@@ -130,12 +138,32 @@ function NavMenu(navSelectedHost, navGlobalBtns){
         }
     }
 }
+
+function NavContainerSmall(navGlobalBtns){
+    this.dom=()=>{return navGlobalBtns.dom()}
+    this.run=(server_socket, parent_div_id, _window)=>{
+        console.log("NavContainerSmall.run()")
+        navGlobalBtns.run(server_socket, parent_div_id, _window);
+        return this;
+    }
+}
+function NavContainerBig(navSelectedHost){
+    this.dom=()=>{return navSelectedHost.dom()}
+    this.run=(server_socket, _navApi, parent_div_id)=>{
+        console.log("NavContainerBig.run()")
+        navSelectedHost.init(server_socket, _navApi).run(parent_div_id);
+        return this;
+    }
+}
+
 function NavSelectedHost(navFutureJobsPanel, navJobChainTreeBtn, addedJob, stoppedJob){
     let _$a = undefined//run
     let _server_socket = undefined//init
     let _navApi = undefined;//init
     this.parent_div_id = undefined;//init
+    this.cur_navApi_dto;
     this.id=()=>{return "navSelectedHost"}
+    this.navSelHostName;
     this.as=(name)=>{
         _global_stor[name] = this;
         return this;
@@ -148,9 +176,12 @@ function NavSelectedHost(navFutureJobsPanel, navJobChainTreeBtn, addedJob, stopp
         return this;
     }
     this.run=(parent_div_id)=>{
+        console.log("NavSelectedHost.run() parent_div_id=", parent_div_id)
+        this.navSelHostName = new NavSelHostName();
         this.parent_div_id = parent_div_id;
         _$a = $("<div style='height:100%; width:50%; border:1px dashed orange; display:table-cell;'>")
-        _$a.append("<div id='selected_host_md5_place'>selected host</div>");
+        _$a.append("<div id='nav_sel_host_name'>" + this.navSelHostName.run(this.cur_navApi_dto).dom() + "</div>");
+        console.log("NavSelectedHost.run() a=", _$a.html())
         //@ server_socket, parent_div_id, _window
         _$a.append(navJobChainTreeBtn.init(_navApi).run(_server_socket, this.parent_div_id).dom())
         _$a.append(navFutureJobsPanel.run().dom())
@@ -158,13 +189,35 @@ function NavSelectedHost(navFutureJobsPanel, navJobChainTreeBtn, addedJob, stopp
         return this;
     }
     this.nav_api_notify=(eventType, data_dto)=>{
-        console.log("NavSelectedHost.nav_api_notify(): selected_host_md5_place =", selected_host_md5_place)
+        this.cur_navApi_dto = data_dto;
         if(eventType == "host_click"){
-            if(data_dto.md5){
-                $("#selected_host_md5_place", _$a).html("<span>md5: "+data_dto.md5+"</span>");
-            }else{
-                console.log("NavSelectedHost.nav_api_notify(): no md5 data on 'host_click' event")
+            const target_div = $("#nav_sel_host_name", _$a)
+            const html = this.navSelHostName.run(data_dto).dom();
+            target_div.empty().append(html)
+        }
+    }
+    function NavSelHostName(){
+        this._a = "";
+        this.hostname="";
+        this.md5="";
+        this.dom=()=>{return this._a;}
+        this.run=(dto)=>{
+            if(dto){
+                this.hostname = dto.hostname || "";
+                this.md5 = dto.md5 || "";
             }
+            this._a = "<div>"
+            this._a += "<div>host:"+this.hostname+"</div>"
+            this._a += "<div>md5:"+this.md5+"</div>"
+            this._a += "</div>"
+            return this;
+        }
+        this.change=(name, value)=>{
+            console.log("NavSelHostName.change()...")
+            if(typeof this[name] != "undefined"){
+                this[name] = value;
+                this.run();
+            }else{console.error("NavSelHostName: unknown name:", name)}
         }
     }
 }
@@ -684,6 +737,8 @@ function HostTd(hostHeader, hostLauncher, hostController, md5_or_id, is_thumb_td
     this.dom=()=>{return _$a}
     this.html=()=>{return _$a.html()}
     this.md5=()=>{return md5_or_id;}
+    this._hostname = "";
+    this.hostname=()=>{return this._hostname};
     let _parent_width;
     let _$a = undefined;
     let $agents_wrapper;
@@ -705,12 +760,13 @@ function HostTd(hostHeader, hostLauncher, hostController, md5_or_id, is_thumb_td
             console.log("clicked!");
             _$a.css('border', '2px solid #f2f');
             if(this.navApi){
-                this.navApi.notify("host_click", {md5:this.md5(), hostTd: this});
+                this.navApi.notify("host_click", {md5:this.md5(), hostTd: this, hostname: this.hostname()});
             }
         })
         return this;
     }
     this.run=(data)=>{
+        this._hostname = data.hostname || "";
         console.log("HostTd.run()");
         _$a.attr("id", "host_td__"+data.md5)
         this.curHeader = hostHeader.instance(data).init(this.navApi, _server_socket);

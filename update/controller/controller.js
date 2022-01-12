@@ -1,4 +1,4 @@
-//controller.js66
+//controller.js67
 'use sctrict';
 const fs = require('fs');
 const path = require('path');
@@ -977,6 +977,7 @@ function UpdateMappedPaths(){
     }
 }
 function UpdatedDiffFiles(settings_){
+    //@changes 4!!!
     this.settings = glob[settings_].read() || {}
     let loc_launcher = this.settings.local_dir_launcher;
     loc_launcher = loc_launcher.startsWith('/') ? loc_launcher : '/'+loc_launcher;

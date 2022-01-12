@@ -1,4 +1,4 @@
-//controller.js66
+//controller.js67
 'use sctrict';
 const fs = require('fs');
 const path = require('path');
@@ -129,7 +129,7 @@ function Identifiers(){
                     if (ids.apid == 0) ids.apid = -1;
                     ids.sid = "";
                     ids.ip = this.get_ip();
-                    ids.hostname = os.hostname; 
+                    ids.hostname = os.hostname(); 
                     resolve(ids);
                 }
             }) 
@@ -977,6 +977,7 @@ function UpdateMappedPaths(){
     }
 }
 function UpdatedDiffFiles(settings_){
+    //@changes 4!!!
     this.settings = glob[settings_].read() || {}
     let loc_launcher = this.settings.local_dir_launcher;
     loc_launcher = loc_launcher.startsWith('/') ? loc_launcher : '/'+loc_launcher;
@@ -1845,7 +1846,7 @@ const GS = {
             _identifiers.md5 = "";
             _identifiers.sid = "";
             _identifiers.ip = "";
-            _identifiers.hostname = os.hostname;
+            _identifiers.hostname = os.hostname();
             _identifiers.pid = String(process.pid);
             _identifiers.ppid =String(process.ppid);
             console.log("GS.prepare_identifiers(): process.argv=", process.argv);
