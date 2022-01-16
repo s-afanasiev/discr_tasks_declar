@@ -24,7 +24,7 @@
     "jobs_dictionary":[
         "this is description block",
         {"disk_space":"return disk space on disk by disk letter. Answer = {free: 7123123, size: 100000000}"},
-        {"proc_count":"count of some processess by name, e.g. 'notepad'"},
+        {"proc_count":"count of some processes by name, e.g. 'notepad'"},
         {"exec_cmd":"execute arbitrary command"},
         {"nvidia_smi":"info about nvidia cards. ANswer is: info={gpu_id, gpu_name, bus_id, fan, temp, mem_use}"},
         {"stop":"stop interval or delayed job by id"}

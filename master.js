@@ -4,7 +4,7 @@
     const util = require('util');
     const url = require('url');
     const fs = require('fs');
-    let global_id = 1;
+    let global_id = 0;
 	main();
 	function main(){
         retranslate_logger();
@@ -79,7 +79,7 @@
                     new HostCluster(
                         new HostAsPair(
                             new Launcher(
-                                {},
+                                {stub:true},
                                 new SocketKeepAliveConfirmation({msg_to_receive:"i_am_alive",time_to_panic:60000})
                             ),
                             new Controller(
@@ -273,7 +273,7 @@
         //@param {Object dto} msg - e.g. {type: 'list_future_jobs',host_id: '6e8bc6f1e3ef10adf9dd98617c133110'}
         //@param {Boolean} is_ext_kick - menas its not from browser, but from another one external source
         this.gui_ctrl=(msg, is_ext_kick)=>{
-            console.error("UpdatableHostCluster.gui_ctrl(): msg=", msg);  
+            console.log("UpdatableHostCluster.gui_ctrl(): msg=", msg);  
             if(msg.type == "switch_manifest_off"){
                 this.manifest.switch_off();
             }else if(msg.type == "jobs_config"){
@@ -922,15 +922,16 @@
         }
         this.is_init_timeout=()=>{ return this.is_init_timeout_flag; }
         //@ Сравнить Манифест включает в себя цепочку действий, в том числе перезапуск партнёра, если это будет необходимо
-        this.compareCurManifest=(ag_type)=>{
-            this[ag_type].compareCurManifest(this.last_manifest_snapshot()).then(res=>{
+        this.start_initial_manifest_update=(ag_type)=>{
+            this[ag_type].start_initial_manifest_update(this.last_manifest_snapshot()).then(res=>{
                 this.is_updating_now = false;
                 //@res = {compare:false, kill:false, update:false, start:true}
                 if(ag_type == "controller"){
+                    console.log("calling controller's normal work mode...")
                     this[ag_type].do_work();
                 }
             }).catch(err=>{
-                console.error("HostAsPair: this.launcher.compareCurManifest() Error 1: ",err);
+                console.error("HostAsPair: this.launcher.start_initial_manifest_update() Error 1: ",err);
             })
         }
         //@ param {} mapped_mans_snapshot - нужен только для контроллера, потому что он обновляет произвольные каталоги, заданные администратором
@@ -943,11 +944,11 @@
                 this[agent_ids.ag_type].welcomeAgent(agent_socket, agent_ids, manifest_snapshot, this[partner_type], this.mapped_mans_snapshot);
                 //@ Смысл таймаута: Если Мастер был перезапущен администратором, а агенты были онлайн, то маленькое ожидание даст понять это, потому что они могут подключиться быстро друг за другом по сокету.
                 if(this[partner_type].isOnline()){
-                    this.compareCurManifest(agent_ids.ag_type)
+                    this.start_initial_manifest_update(agent_ids.ag_type)
                 }else{
                     setTimeout(()=>{
                         //@ Этот метод на самом деле цепочка заданий, сначала заставляет проверить, есть ли файлы для обноления а затем, если надо, запустить партнера.
-                        this.compareCurManifest(agent_ids.ag_type)
+                        this.start_initial_manifest_update(agent_ids.ag_type)
                     }, 1000);
                 }
             }                
@@ -961,14 +962,18 @@
                 console.log("HostAsPair.propagateManifestDiff() new files in LAUNCHER and CONTROLLER folders");
                 this.launcher.propagateManifestDiff(mans_diff).then(res=>{
                     //@res = {is_cnahges:false, is_killed:false, is_updated:false, is_started:true}
-                    if(!res.error){
+                    if(res.error){
+                        console.error("HostAsPair.propagateManifestDiff() after launcher propagating error:",res.error);
+                    }
+                    else if(res.isOk){
+                        //@ launcher has already update controller twice (initial and then regular)
+                    }
+                    else{
                         this.controller.propagateManifestDiff(mans_diff).then(res=>{
                             console.log("after propagateManifest both agents has updates each other");
                         }).catch(err=>{
                             console.error("HostAsPair: run_agents_after_first_host_init_timeout(): this.controller.propagateManifestDiff() Error 1: ",err);
                         })
-                    }else{
-                        console.error("HostAsPair.propagateManifestDiff() after launcher propagating error:",res.error);
                     }
                 }).catch(err=>{
                     console.error("HostAsPair: run_agents_after_first_host_init_timeout(): this.launcher.propagateManifestDiff() Error 1: ",err);
@@ -1102,8 +1107,9 @@
 		this.switchOnline=function(is_online){this.is_online_flag=is_online}
         //@----------------------------
         this.is_update_mode_flag=false;
-        this.isUpdateMode=()=>{return this.is_update_mode_flag}
-        this.switchUpdateMode=(is_update_mode)=>{this.is_update_mode_flag = is_update_mode}
+        this.isInitialUpdateMode=()=>{return this.is_update_mode_flag}
+        this.switchInitialUpdateMode=(is_update_mode)=>{this.is_update_mode_flag = is_update_mode}
+        this.is_regular_while_initial_manifest = false;
         //@----------------------------
 		this.instance=function(agent_ids){ return new Launcher(agent_ids, this.socketKeepAliveConfirmation.instance()); }
 		//@ this in fact not some kind of initialization, but simply pass the object
@@ -1141,50 +1147,64 @@
                 this.agent_socket = undefined;
             });
         }
-        this.compareCurManifest=(man)=>{
-            console.log("Launcher.compareCurManifest(): ...");
+        this.start_initial_manifest_update=(man)=>{
+            console.log("Launcher.start_initial_manifest_update(): ...");
             return new Promise((resolve,reject)=>{
-                this.switchUpdateMode(true);
+                this.switchInitialUpdateMode(true);
                 this.gui_news({msg:"update_mode", value:"on"});
                 const man_for_launcher = {};
                 man_for_launcher.controller = man.controller;
                 man_for_launcher.other = man.other;
-                //console.log("Launcher.compareCurManifest(): man_for_launcher=", man_for_launcher);
+                //console.log("Launcher.start_initial_manifest_update(): man_for_launcher=", man_for_launcher);
                 this.agentUpdateChain.instance(this, man_for_launcher).run(this.socketio(), this.partner).then(res=>{
-                    resolve(res);
+                    this.switchInitialUpdateMode(false);
+                    if(this.is_regular_while_initial_manifest){
+                        this.propagateManifestDiff(this.is_regular_while_initial_manifest).then(res=>{
+                            res.isOk = true;
+                            resolve(res);
+                        }).catch(err=>{ reject(err); })
+                    }else{
+                        resolve(res);
+                    }
                 }).catch(err=>{
                     reject(err);
                 }).finally(()=>{
-                    this.switchUpdateMode(false);
                     this.gui_news({msg:"update_mode", value:"off"});
                 })
             });
         }
         //@ launher must check controller's work Mode (normal or special ?)
         this.propagateManifestDiff=(mans_diff)=>{
-            //@ Special Mode - E.g. COntroller Doing a Render
-            return new Promise((resolve,reject)=>{
-                if(this.partner && !this.partner.isSpecialMode()){
-                    this.switchUpdateMode(true);
-                    this.gui_news({msg:"update_mode", value:"on"});
-                    const mans_diff_for_launcher = {};
-                    mans_diff_for_launcher.controller = mans_diff.controller;
-                    mans_diff_for_launcher.other = mans_diff.other;
-                    console.log("-----Launcher.propagateManifestDiff() mans_diff_for_launcher=",mans_diff_for_launcher);
-                    new AgentUpdateWithoutCompare(this, mans_diff_for_launcher).run(this.socketio(), this.partner).then(res=>{
-                        resolve({is_patched: true});
-                    }).catch(err=>{
-                        reject({is_patched: false, error: err});
-                    }).finally(()=>{
-                        this.switchUpdateMode(false);
-                        this.gui_news({msg:"update_mode", value:"off"});
-                    })
-                }else{
-                    console.log("Launcher.propagateManifestDiff(): can not update the Controller in Special mode");
-                    this.gui_news({msg:"agent_work", value:"can not update the Controller in Special mode"});
-                    resolve({is_patched: false, details: "special mode"});
-                }
-            });
+                return new Promise((resolve,reject)=>{
+                    //@ If initial update has processing right now, when switch special flag
+                    if(this.isInitialUpdateMode()){
+                        this.is_regular_while_initial_manifest = mans_diff;
+                        console.log("regular manifest has happened while initial update has processing at:", this.agent_ids);
+                    }
+                    else{
+                        //@ Special Mode - E.g. COntroller Doing a Render
+                        if(this.partner && !this.partner.isSpecialMode()){
+                            //this.switchInitialUpdateMode(true);
+                            this.gui_news({msg:"update_mode", value:"on"});
+                            const mans_diff_for_launcher = {};
+                            mans_diff_for_launcher.controller = mans_diff.controller;
+                            mans_diff_for_launcher.other = mans_diff.other;
+                            console.log("-----Launcher.propagateManifestDiff() mans_diff_for_launcher=",mans_diff_for_launcher);
+                            new AgentUpdateWithoutCompare(this, mans_diff_for_launcher).run(this.socketio(), this.partner).then(res=>{
+                                resolve({is_patched: true});
+                            }).catch(err=>{
+                                reject({is_patched: false, error: err});
+                            }).finally(()=>{
+                                //this.switchInitialUpdateMode(false);
+                                this.gui_news({msg:"update_mode", value:"off"});
+                            })
+                        }else{
+                            console.log("Launcher.propagateManifestDiff(): can not update the Controller in Special mode");
+                            this.gui_news({msg:"agent_work", value:"can not update the Controller in Special mode"});
+                            resolve({is_patched: false, details: "special mode"});
+                        }
+                    }
+                });
         }
         //@ then partner disconnected - he says it to host - and then host say to partner that partner is offline
         this.partner_offline=(reason)=>{
@@ -1239,11 +1259,12 @@
             }, time_to_panic);
         }
     }
+
     //@------------------Controller-----------------------
-	function Controller(jobs, agent_ids, agent){
+	function Controller(jobs, agent_ids, universalAgent){
         this.jobs = jobs;
         this.agent_ids = agent_ids;
-        this.agent = agent;
+        this.universalAgent = universalAgent;
         this.partner = undefined;//welcome_agent()
         this.agentUpdateChain = undefined;//init()
         this.agent_socket = undefined;
@@ -1256,7 +1277,7 @@
             return new Controller(
                 this.jobs, 
                 agent_ids,
-                new Agent(agent_ids)
+                new UniversalAgent(agent_ids)
             );
         }
         //@----------------------------
@@ -1272,8 +1293,9 @@
 		this.switchOnline=function(is_online){this.is_online_flag=is_online;}
         //@----------------------------
         this.is_update_mode_flag=false;
-        this.isUpdateMode=()=>{return this.is_update_mode_flag}
-        this.switchUpdateMode=(is_update_mode)=>{this.is_update_mode_flag = is_update_mode}
+        this.isInitialUpdateMode=()=>{return this.is_update_mode_flag}
+        this.switchInitialUpdateMode=(is_update_mode)=>{this.is_update_mode_flag = is_update_mode}
+        this.is_regular_while_initial_manifest = false;
         //@----------------------------
         this.work_mode = "normal";
         this.is_special_mode_flag=false;
@@ -1357,19 +1379,26 @@
             }
         }
         //@ this comparing promote, when master first time welcome the Agent
-        this.compareCurManifest=(man)=>{
-            console.log("Controller.compareCurManifest(): man=", man);
+        this.start_initial_manifest_update=(man)=>{
+            console.log("Controller.start_initial_manifest_update(): man=", man);
             return new Promise((resolve,reject)=>{
-                this.switchUpdateMode(true);
+                this.switchInitialUpdateMode(true);
                 this.gui_news({msg:"update_mode", value:"on"});
                 const man_for_controller = {};
                 man_for_controller.launcher = man.launcher;
                 this.agentUpdateChain.instance(this, man_for_controller).run(this.socketio(), this.partner).then(res=>{
-                    resolve(res);
+                    this.switchInitialUpdateMode(false);
+                    if(this.is_regular_while_initial_manifest){
+                        this.propagateManifestDiff(this.is_regular_while_initial_manifest).then(res=>{
+                            res.isOk = true;
+                            resolve(res);
+                        }).catch(err=>{ reject(err); })
+                    }else{
+                        resolve(res);
+                    }
                 }).catch(err=>{
                     reject(err);
                 }).finally(()=>{
-                    this.switchUpdateMode(false);
                     this.gui_news({msg:"update_mode", value:"off"});
                     //this.doNormalWork();
                 })
@@ -1377,19 +1406,25 @@
         }
         this.propagateManifestDiff=(mans_diff)=>{
             return new Promise((resolve,reject)=>{
-                this.switchUpdateMode(true);
-                this.gui_news({msg:"update_mode", value:"on"});
-                const mans_diff_for_controller = {};
-                mans_diff_for_controller.launcher = mans_diff.launcher;
-                new AgentUpdateWithoutCompare(this, mans_diff_for_controller).run(this.socketio(), this.partner).then(res=>{
-                    resolve({is_patched: true});
-                }).catch(err=>{
-                    reject({is_patched: false, error: err});
-                }).finally(()=>{
-                    this.switchUpdateMode(false);
-                    this.gui_news({msg:"update_mode", value:"off"});
+                if(this.isInitialUpdateMode()){
+                    this.is_regular_while_initial_manifest = mans_diff;
+                    console.log("regular manifest has happened while initial update has processing at:", this.agent_ids);
+                }
+                else{
+                    this.switchInitialUpdateMode(true);
+                    this.gui_news({msg:"update_mode", value:"on"});
+                    const mans_diff_for_controller = {};
+                    mans_diff_for_controller.launcher = mans_diff.launcher;
+                    new AgentUpdateWithoutCompare(this, mans_diff_for_controller).run(this.socketio(), this.partner).then(res=>{
+                        resolve({is_patched: true});
+                    }).catch(err=>{
+                        reject({is_patched: false, error: err});
+                    }).finally(()=>{
+                        this.switchInitialUpdateMode(false);
+                        this.gui_news({msg:"update_mode", value:"off"});
                     //this.doNormalWork();
-                })
+                    })
+                }
             });
         }
         this.firstComparingMappedMans=(agent_socket, mapped_mans_snapshot)=>{
@@ -1448,8 +1483,10 @@
             }
         }
     }
+
     function CurrentControllermode(){}
-    function Agent(agent_ids){
+
+    function UniversalAgent(agent_ids){
         this.agent_ids = agent_ids;
         this.partner = undefined;//welcome_agent()
         this.agentUpdateChain = undefined;//init()
@@ -1467,8 +1504,8 @@
         this.switchOnline=function(is_online){this.is_online_flag=is_online;}
         //@----------------------------
         this.is_update_mode_flag=false;
-        this.isUpdateMode=()=>{return this.is_update_mode_flag}
-        this.switchUpdateMode=(is_update_mode)=>{this.is_update_mode_flag = is_update_mode}
+        this.isInitialUpdateMode=()=>{return this.is_update_mode_flag}
+        this.switchInitialUpdateMode=(is_update_mode)=>{this.is_update_mode_flag = is_update_mode}
         //this.is_special_mode_flag=false; //@controller
         this.run=function(browserIoClients, host, agentUpdateChain){
             this.browserIoClients = browserIoClients;
@@ -1507,13 +1544,18 @@
             }
         }
     }
+
     //@----------------AgentUpdateChain------------------------
     function AgentUpdateChain(creator, manifest){
         this.manifest=manifest;
         this.instance=(creator, manifest)=>{return new AgentUpdateChain(creator, manifest)}
         this.short_names = ["start", "update", "kill", "compare"];
+        this.status=(stat)=>{
+            if(stat){ this.current_status = stat; }
+            else{ return stat; }
+        };
+        this.current_status;
         this.run=(socket, partner)=>{
-            const updateReport = new UpdateReport();
             return new Promise((resolve,reject)=>{
                 new StartingPartner(
                     new UpdatingFiles(
@@ -1521,7 +1563,7 @@
                             new CompareManifest()
                         )
                     )
-                ).run(socket, creator, partner, this.manifest, updateReport).then(res=>{
+                ).run(socket, creator, partner, this.manifest, this).then(res=>{
                     resolve(res);
                 }).catch(err=>{
                     reject(err);
@@ -1529,7 +1571,9 @@
             });
         }
     }
+
     function UpdateReport(){}
+
     function AgentUpdateWithoutCompare(creator, mans_diff){
         this.mans_diff=mans_diff;
         this.instance=(mans_diff)=>{return new AgentUpdateWithoutCompare(creator, mans_diff)}
@@ -1547,13 +1591,16 @@
             });
         }
     }
+
     function StartingPartner(updatingFiles){
         this.updatingFiles=updatingFiles;
+        this.creator;//run
         //this.instance=()=>{return new StartingPartner(this.updatingFiles.instance())}
-        this.run=(socket, creator, partner, man_or_mans_diff, updateReport)=>{
+        this.run=(socket, creator, partner, man_or_mans_diff, agentUpdateChain)=>{
+            this.creator = creator;
             console.log("StartingPartner.run() creator is ", creator.agentType());
             return new Promise((resolve,reject)=>{
-                this.updatingFiles.run(socket, creator, partner, man_or_mans_diff).then(chain_msg=>{
+                this.updatingFiles.run(socket, creator, partner, man_or_mans_diff, agentUpdateChain).then(chain_msg=>{
                     console.log("StartingPartner.run(): after updatingFiles chain_msg= ",JSON.stringify(chain_msg));
                     if(chain_msg.is_updated){
                         if(partner && partner.isOnline()){
@@ -1562,10 +1609,12 @@
                             creator.gui_news({msg:"agent_work", value:"partner is already started"});
                             resolve(extended_msg);
                         }else{
-                            creator.gui_news({msg:"agent_work", value:"starting the partner..."});
+                            this.creator.gui_news({msg:"agent_work", value:"starting the partner..."});
                             this.start_partner(socket).then(start_msg=>{
+                                console.error("!!!!!!!")
                                 this.say_to_browser("the partner is started");
-                                this.say_to_agent(creator);
+                                //@ TODO: здесь ссылка на this уже потеряна и следующая строка выбросит ошибку creator is not defined
+                                //this.say_to_agent(this.creator);
                                 const extended_msg = Object.assign(chain_msg, start_msg);
                                 resolve(extended_msg);
                             }).catch(err=>{
@@ -1597,7 +1646,7 @@
                 catch(err){console.error(">>>>>>>>>>>>>>>>>>>> WTF 1")}
             }else{console.error("StartingPartner: after updatingFiles: partner is undefined!")}
         }
-        this.say_to_browser=()=>{
+        this.say_to_browser=(start_msg)=>{
             console.log("StartingPartner.run(): start_partner().then: res= ",start_msg);
             creator.gui_news({msg:"agent_work", value:"the partner is started"});
         }
@@ -1612,6 +1661,8 @@
             })
         }
     }
+
+    //@ sends to socket "updateDiffFiles" event
     function UpdatingDiffFiles(killingPartner){
         this.killingPartner=killingPartner;
         //this.instance=()=>{return new UpdatedDiffFiles(this.killingPartner.instance())}
@@ -1649,13 +1700,15 @@
             })
         }
     }
+
+    //@ sends to socket "updateFiles" event
     function UpdatingFiles(killingPartner){
         this.killingPartner=killingPartner;
         //this.instance=()=>{return new UpdatingFiles(this.killingPartner.instance())}
-        this.run=(socket, creator, partner, manifest)=>{
+        this.run=(socket, creator, partner, manifest, agentUpdateChain)=>{
             console.log("UpdatingFiles.run() creator is ", creator.agentType());
             return new Promise((resolve,reject)=>{
-                this.killingPartner.run(socket, creator, partner, manifest).then(chain_msg=>{
+                this.killingPartner.run(socket, creator, partner, manifest, agentUpdateChain).then(chain_msg=>{
                     console.log("UpdatingFiles: after killingPartner.run(): chain_msg=", JSON.stringify(chain_msg))
                     if(chain_msg.is_changes){
                         creator.gui_news({msg:"agent_work", value:"Starting update the files"});
@@ -1691,6 +1744,7 @@
             })
         }
     }
+
     function OperationWithAttempts(operation, attempts){
         this.operation=operation;
         this.attempts=attempts;
@@ -1715,6 +1769,8 @@
             })
         }
     }
+
+    //@ sends to socket "killPartner" event
     function KillingPartnerWithoutComparing(){
         this.run=(socket, creator, partner, manifest)=>{
             console.log("KillingPartnerWithoutComparing.run() creator is ", creator.agentType());
@@ -1752,13 +1808,15 @@
             })
         }
     }
+
+    //@ sends to socket "killPartner" event
     function KillingPartner(compareManifest){
         //@ must deside 3 things: 1) is partner exist 2) is need to update him 3) if partner is controller and is it in special mode
         this.compareManifest=compareManifest;
         //this.instance=()=>{return new KillingPartner(this.compareManifest.instance())}
-        this.run=(socket, creator, partner, manifest)=>{
+        this.run=(socket, creator, partner, manifest, agentUpdateChain)=>{
             return new Promise((resolve,reject)=>{
-                this.compareManifest.run(socket, creator, partner, manifest).then(compare_msg=>{
+                this.compareManifest.run(socket, creator, partner, manifest, agentUpdateChain).then(compare_msg=>{
                     if(compare_msg.is_error){
                         return reject(compare_msg.error); // agent cant compare normally
                     }
@@ -1810,9 +1868,10 @@
             })
         }
     }
+
     function CompareManifest(){
         //this.instance=()=>{ return new CompareManifest() }
-        this.run=(socket, creator, partner, manifest)=>{
+        this.run=(socket, creator, partner, manifest, agentUpdateChain)=>{
             console.log("CompareManifest.run()...");
             return new Promise((resolve,reject)=>{
                 let is_ok = false;
@@ -2053,16 +2112,15 @@
             this.agent_socket = agent_socket;
             send_next_job(this.job_id);
         }
+        //@param {String} next_job_id = 'stop_lte_25' || 'disk_clean_1' || 'do_render'
         const send_next_job=(next_job_id)=>{
-            //@ e.g. next_job_id = 'stop_lte_25'
             //@ e.g. job_tuple = "stop_lte_25": {"type":"stop", "target_job_id":"disk_space_lte_25"}
-            //const job_tuple = this.schedule.jobs[next_job_id];
             const job_tuple = this.jobsSchedule.tuple_by_job_id(next_job_id);
             //this.jobsScheduleInitBranch = this.jobsSchedule.tuple_by_job_id(next_job_id);
             if(!job_tuple) return console.error("JobsChaining.send_next_job(): No such job",next_job_id );
             if(job_tuple.type == "stop"){
                 //@ delete this.schedule.jobs[job_tuple.target_job_id].interval;
-                console.log("JobsChaining.send_next_job() stop-type job:",job_tuple);
+                //console.log("JobsChaining.send_next_job() stop-type job:",job_tuple);
                 const job_id_to_stop = job_tuple.target_job_id;
                 const job_to_stop = this.jobsSchedule.tuple_by_job_id(job_id_to_stop);
                 if(typeof job_to_stop == 'object'){
@@ -2071,9 +2129,9 @@
                 }else console.error("JobsChaining.send_next_job() no such job in jobs_config:", job_to_stop);
             }
             else if(job_tuple.type != "stop"){
-                console.log("JobsChaining.send_next_job(): job id:",next_job_id);
+                //console.log("JobsChaining.send_next_job(): job id:",next_job_id);
                 if(job_tuple.interval && intervalJobs.exist(next_job_id)){
-                    console.error("JobsChaining.send_next_job() Error: such interval jobs already exist:", next_job_id);
+                    console.error("JobsChaining.send_next_job() Error: such interval jobs already exist:", next_job_id, "in controller:", this.controller.agent_ids);
                 }else{
                     if(this.jobsSchedule.is_uninterrupted(job_tuple.type)){
                         this.controller.switchSpecialMode(true);
@@ -2094,7 +2152,7 @@
                                 }
                             }else{
                                 //@ most likely - socket response timeout
-                                console.error("JobsChaining.send_next_job() error:", ans, ", on job_id:",next_job_id);
+                                console.error("JobsChaining.send_next_job() error:", ans, ", job_id:",next_job_id);
                             }
                         }).run();
                     }else{

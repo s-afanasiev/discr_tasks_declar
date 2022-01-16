@@ -30,7 +30,7 @@ const my_jobs = {
         console.log(">>> testing 'my_job1' event !!!! data =", data)
         socket.emit("my_job1", 5)
     },
-    "my_event2": function(data, socket){}
+    "my_event2": function(data, socket){} 
 }
 main();
 function main(){
@@ -1196,8 +1196,9 @@ function ExecuteCommand(){
     ]
     this.run=(ev_name, socket)=>{
         socket.on(ev_name, function(data){
-            console.log("ExecuteCommand.run(): socket data=",data);
             //@ data = {name:"exec_cmd", cmd:"notepad.exe", condition: "exec_done", action:"write data: hi"}
+            console.log("ExecuteCommand.run(): socket data=",data);
+            //@ 
             let _cmd = "wmic process call create" + data.app_name;
             if(data.app_name.endsWith(".bat") || data.app_name.endsWith(".exe")){
                 test_exec(`${__dirname}/${data.app_name}`);
@@ -1207,6 +1208,8 @@ function ExecuteCommand(){
                 socket.emit(ev_name, true)
                 // test_spawn(`${__dirname}/${data.app_name}`);
                 // test_exec(`${__dirname}/${data.app_name}`);
+            }else{
+                socket.emit(ev_name, false, "expected formats: ['.js', '.bat', '.exe' ")
             }
         });
     }
@@ -1290,7 +1293,7 @@ function DoRender(){
             console.log("do_render event!");
             setTimeout(()=>{
                 socket.emit(ev_name, {is_started_render: true});
-            }, 5000)
+            }, 3000)
         });
     }
 }

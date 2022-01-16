@@ -27,16 +27,14 @@ function App(){
                     new ComparedManifest(
                         new DirStructure(), 
                         new DirsComparing()
-                    ).as("comparedManifest_")
+                    )
                 )
                 .with('killPartner', new KilledPartner())
-                .with('updateFiles', new UpdatedFiles(
-                    "settings_", 
-                    "comparedManifest_"
-                ))
+                .with('updateFiles', new UpdatedFiles())
                 .with('updateDiffFiles', new UpdatedDiffFiles())
                 .with('startPartner', new StartedPartner())
-                .with('kill_similar_outcasts', new KillSimilarOutcasts()),
+                .with('kill_similar_outcasts', new KillSimilarOutcasts())
+                .links_from_to('compareManifest', 'updateFiles'),
             new OutgoingMessages(
                     new WorkMonitoring(  
                         new PartnerWatch(),
@@ -358,7 +356,21 @@ function ServerInputCommands(ioWrap){
     this.ioWrap= ioWrap;
     this.socket = undefined;
     this.allEvHandlers = {};
+    this.links_from_to_list = {};
     this.io_wrap=()=>{return this.ioWrap}
+    this.links_from_to=(from, to)=>{
+        const from_obj = this.allEvHandlers[from];
+        const to_obj = this.allEvHandlers[to];
+        if(!to_obj){console.error("ERROR: ServerInputCommands.links_from_to: NO to_obj, string name=", to)}
+        else if(!from_obj){console.error("ERROR: ServerInputCommands.links_from_to: NO from_obj, string name=", from)}
+        else{
+            this.links_from_to_list[from] = {};
+            this.links_from_to_list[from].to = to;
+            this.links_from_to_list[from].from_obj = from_obj;
+            this.links_from_to_list[from].to_obj = to_obj;
+        }
+        return this;
+    }
     this.with=(ev_name, evHandler)=>{
         console.log("ServerInputCommands.with(): ev_name =", ev_name)
         if(evHandler && typeof evHandler.init == 'function'){
@@ -371,6 +383,16 @@ function ServerInputCommands(ioWrap){
     this.run=(global_options_json, agentIdentifiers, socketio, launcher)=>{
         this.launcher = launcher;
         this.socket = socketio;
+		Object.keys(this.links_from_to_list).forEach(from=>{
+            const to = this.links_from_to_list[from].to;
+            const to_obj = this.links_from_to_list[from].to_obj;
+            const from_obj = this.links_from_to_list[from].from_obj;
+            if(typeof to_obj.sibling_link == 'function'){
+                to_obj.sibling_link(from, from_obj);    
+            }else{
+                console.error("ServerInputCommands.run(): object '", to, "' has no 'sibling_link()' method");
+            }
+        });
 		Object.keys(this.allEvHandlers).forEach(ev_name=>{
 			console.log("hanging up '"+ev_name+"' event.");
             this.allEvHandlers[ev_name].run(global_options_json, agentIdentifiers, this.socket, this.launcher);   
@@ -378,9 +400,10 @@ function ServerInputCommands(ioWrap){
 	};
 	this.tech_events = ['connect', 'disconnect', 'compareManifest', 'same_md5_agents', 'updateFiles', 'startPartner', 'killPartner', 'identifiers', 'update_folder', 'partner_leaved', 'partner_appeared'];
 }
+
 //@-------------------------------
 //@ run method of this Object listening to 'compareManifest' event, which receives 'remote_mans' structure. After getting this structure, the method 'run' accesses the object 'dirStructure' to receive to get the structure of the local manifest. Then, we using the object 'dirsComparing' to compare the manifests. The ultimate goal is to inform the Master.js about the presence or absence of changes.
-function ComparedManifest(dirStructure, dirsComparing, settings_){
+function ComparedManifest(dirStructure, dirsComparing){
     this.ev_name;//init
     this.dirStructure = dirStructure;
     this.dirsComparing = dirsComparing;
@@ -389,8 +412,6 @@ function ComparedManifest(dirStructure, dirsComparing, settings_){
     this.settings;//run
     this.CONTROLLER_DIR;//run
     this.PATHS_DATA = [];//run
-    this.is_timeout = true;
-    //console.log("ComparedManifest.constr(): PATHS_DATA=",PATHS_DATA);
     this.as=(name)=>{
         glob[name] = this;
         return this;
@@ -400,10 +421,12 @@ function ComparedManifest(dirStructure, dirsComparing, settings_){
         return this;
     }
     this.run=(global_options_json, agentIdentifiers, socket, launcher)=>{
+        //@TODO:
         this.CONTROLLER_DIR = path.join(__dirname, global_options_json.local_dir_controller);
         this.PATHS_DATA.push( {name: "controller", path: this.CONTROLLER_DIR} )
         console.log("ComparedManifest.run(): this.CONTROLLER_DIR=", this.CONTROLLER_DIR);
         socket.on(this.ev_name, (remote_mans)=>{
+            let is_timeout = true;
             console.log("ComparedManifest.run(): ev_name=", this.ev_name)
             this.dirStructure.allMansAsync(this.PATHS_DATA).then(local_mans=>{
                 console.log("after allMansAsync() local_mans=",local_mans);
@@ -413,10 +436,9 @@ function ComparedManifest(dirStructure, dirsComparing, settings_){
                 socket.emit(this.ev_name, {is_changes: is_changes_exist});
             }).catch(err=>{
                 console.log("Error: Something Wrong after comparing all manifests:",err);
-                //reject("ComparedManifest.manifestos() Error: "+JSON.stringify(err));
                 socket.emit(this.ev_name, {is_error: true, error: err});
-            }).finally(()=>{this.is_timeout = false;});
-            setTimeout(()=>{ if(this.is_timeout){
+            }).finally(()=>{is_timeout = false;});
+            setTimeout(()=>{ if(is_timeout){
                 socket.emit(this.ev_name, {is_error: true, error: "ComparedManifest TIMEOUT"});
             } }, 5000);
         });
@@ -630,9 +652,10 @@ function KilledPartner(){
         }
     }
 }
-function UpdatedFiles(settings_, comparedManifest_){
+function UpdatedFiles(){
     this.ev_name//init
-    this.comparedManifest = glob[comparedManifest_] || {}
+    //this.comparedManifest = glob[comparedManifest_] || {}
+    this.comparedManifest;
     var CONTROLLER_DIR;//run
     var REMOTE_DIR;//run
     this.is_keep_old_files = true;
@@ -641,11 +664,18 @@ function UpdatedFiles(settings_, comparedManifest_){
         this.ev_name = ev_name;
         return this;
     }
+    this.sibling_link=(from_str, from_obj)=>{
+        console.log("UpdatedFiles.sibling_link(): ", from_str)
+        if(from_str == "compareManifest"){
+            this.comparedManifest = from_obj;
+        }
+    }
     this.run=(global_options_json, agentIdentifiers, socket, launcher)=>{
         //console.log("UpdatedFiles.run()...");
         CONTROLLER_DIR = path.join(__dirname, global_options_json.local_dir_controller)
         REMOTE_DIR = global_options_json.remote_dir;
-        socket.on(this.ev_name, (remote_mans)=>{
+        socket.on(this.ev_name, (remote_mans, for_what_reason)=>{
+            //@ param {String} for_what_reason = "latest_manifest_while_connection" || "realtime_changes_in_the_manifest"
             console.log("UpdatedFiles.run() event: ", this.ev_name);
             this.comparedManifest.mansDiff(remote_mans).then(diff=>{
                 console.log("UpdatedFiles.run(): diff=",diff);
@@ -664,7 +694,7 @@ function UpdatedFiles(settings_, comparedManifest_){
                 console.log("UpdatedFiles: comparedManifest_.mansDiff() Error: ",err);
                 socket.emit(this.ev_name, {is_error: true, error:err});
             }).finally(()=>{ this.is_timeout = false; });
-            setTimeout(()=>{
+            setTimeout(()=>{    
                 if(this.is_timeout){ socket.emit(this.ev_name, {is_updated: false, is_error: true, error:"UpdatedFiles TIMEOUT"}); }
             }, 5000);
         });
