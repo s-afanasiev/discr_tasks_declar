@@ -78,7 +78,6 @@ function KillSimilarOutcasts(settings_){
         return this;
     }
     this.run=(global_options_json, agentIdentifiers, socket, launcher)=>{
-        console.log("Exit.run()...");
         socket.on(this.ev_name, (agent_ids)=>{
             console.log("KillSimilarOutcasts: socket.on '",this.ev_name,"': msg = ", agent_ids);
             //process.exit(0);

@@ -1301,7 +1301,7 @@ function KillSimilarOutcasts(settings_){
     this.run=(ev_name, socket)=>{
         console.log("Exit.run()...");
         socket.on(ev_name, (agent_ids)=>{
-            console.log("Exit.run(): socket.on '",ev_name,"': msg = ", agent_ids);
+            console.log("KillSimilarOutcasts: socket.on '",ev_name,"': msg = ", agent_ids);
             //process.exit(0);
             //TODO: 1. cmd_exec(kill) 2. socket.emit(ok)
             setTimeout(()=>{

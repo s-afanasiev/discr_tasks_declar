@@ -92,7 +92,7 @@
                                     new NormalControllerMode()
                                 ),
                                 {stub:true},
-                                {stub:true}
+                                CurrentController()
                             ),
                             new ConnectedAgentsThrottle(
                                 new RedundantAgentsReservation()
@@ -961,9 +961,17 @@
                 //@ 2.2)  launcher must update controller
                 this.launcher.propagateManifestDiff(mans_diff).then(res=>{
                         this.controller.do_deffered_updates();
+                        if(this.controller.is_doing_work_now() === false){
+                            console.trace("1) Controller now is not working!");
+                            this.controller.do_work();
+                        }
                 }).catch(err=>{
                     console.error("HostAsPair: run_agents_after_first_host_init_timeout(): this.launcher.propagateManifestDiff() Error 2: ",err);
                     this.controller.do_deffered_updates();
+                    if(this.controller.is_doing_work_now() === false){
+                        console.trace("2) Controller now is not working!");
+                        this.controller.do_work();
+                    }
                 });
             }
             if(mans_diff.launcher){
@@ -1004,6 +1012,8 @@
         this.redundantAgentsArray=[];
         this.launcher=undefined;
         this.controller=undefined;
+        let redundant_launchers=[];
+        this.redundant_controllers=[];
         this.current_ids = undefined;
         //@--------------------
         this.is_current_agent_allowed = true;
@@ -1148,10 +1158,10 @@
             //console.trace("Launcher do_deffered_updates()...");
             let regular_manifest;
             let initial_manifest;
-            if(defferedRegularUpdate || defferedInitialUpdate){
+            if(defferedRegularUpdate){
                 regular_manifest = defferedRegularUpdate.pop();
             }
-            if(defferedRegularUpdate || defferedInitialUpdate){
+            if(defferedInitialUpdate){
                 initial_manifest = defferedInitialUpdate.pop();
             }
             console.trace("Launcher do_deffered_updates():", Boolean(regular_manifest), Boolean(initial_manifest));
@@ -1306,10 +1316,10 @@
     }
 
     //@------------------Controller-----------------------
-	function Controller(jobs, agent_ids, universalAgent){
+	function Controller(jobs, agent_ids, currentController){
         this.jobs = jobs;
         this.agent_ids = agent_ids;
-        this.universalAgent = universalAgent;
+        this.currentController = currentController;
         this.partner = undefined;//welcome_agent()
         this.agentUpdateChain = undefined;//init()
         this.agent_socket = undefined;
@@ -1318,6 +1328,14 @@
         this.host = undefined; //run
         let defferedInitialUpdate = undefined;// clearing in welcomeAgent()
         let defferedRegularUpdate = undefined;// clearing in welcomeAgent()
+        let flag_is_doing_work_now = false;
+        this.is_doing_work_now=(switch_on)=>{
+            if(typeof switch_on == "undefined"){
+                return flag_is_doing_work_now;
+            }else{
+                flag_is_doing_work_now = switch_on;
+            }
+        };
         let flag_updating_partner_now="";//msg
         this.updating_partner_now=(switch_on)=>{
             if(typeof switch_on == "undefined"){
@@ -1330,7 +1348,7 @@
             return new Controller(
                 this.jobs, 
                 agent_ids,
-                new UniversalAgent(agent_ids)
+                currentController.instance()
             );
         }
         //@----------------------------
@@ -1394,6 +1412,7 @@
                 defferedInitialUpdate = undefined;
                 defferedRegularUpdate = undefined;
                 this.updating_partner_now(false);
+                this.is_doing_work_now(false);
                 this.switchOnline(false);
                 console.log("Controller.listenForDisconnect(): disconnect: reason =", reason);
                 //@ Todo: higher at the host level - notify externalSource object
@@ -1433,8 +1452,11 @@
                 this.gui_news({"jobs_config": config, "caller_id": msg.caller_id});
             }
         }
-        this.do_deffered_updates=()=>{
+        this.do_deffered_updates=(callback)=>{
             //console.trace("Controller do_deffered_updates()...");
+            typeof callback === 'function'
+            ? undefined
+            : callback=()=>{console.trace("Controller: do_deffered_updates")}
             let regular_manifest;
             let initial_manifest;
             if(defferedRegularUpdate){
@@ -1445,12 +1467,18 @@
             }
             console.trace("Controller do_deffered_updates():", Boolean(regular_manifest), Boolean(initial_manifest));
             if(regular_manifest && initial_manifest){
-                this.start_initial_manifest_update(initial_manifest);
+                this.start_initial_manifest_update(initial_manifest).then(resolving, rejecting);
             }else if(initial_manifest){
-                this.start_initial_manifest_update(initial_manifest);
+                this.start_initial_manifest_update(initial_manifest).then(resolving, rejecting);
             }else if(regular_manifest){
-                this.propagateManifestDiff(regular_manifest)
+                this.propagateManifestDiff(regular_manifest).then(resolving, rejecting);
             }else{}
+            function resolving(res){
+                callback(undefined, res);
+            }
+            function rejecting(rej){
+                callback(rej);
+            }
         };
         //@ this comparing promote, when master first time welcome the Agent
         this.start_initial_manifest_update=(man)=>{
@@ -1551,6 +1579,7 @@
         this.do_work=()=>{
             const str = "On '" + this.machine_hostname() + "' now in " + this.current_work_mode() + " mode";
             this.gui_news({msg:"agent_work", value: str});
+            this.is_doing_work_now(true);
             this.jobs = this.jobs.instance().run(this, this.agent_socket);
         }
         //@ then partner disconnected - he says it to host - and then host say to partner that partner is offline
@@ -1578,6 +1607,15 @@
                 this._update_state = ""
             }
         }
+    }
+
+    function CurrentController(){
+        let state = 0;
+        function run(){}
+        function instance(){
+            return CurrentController();
+        }
+        return Object.freeze({instance})
     }
 
     function CurrentControllermode(){}
