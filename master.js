@@ -13,6 +13,9 @@
         if (SETTINGS.error) {return console.error("Application not started: SETTINGS error", SETTINGS.error)}
         else if (JOBS_CONFIG.error) {return console.error("Application not started: JOBS_CONFIG error", JOBS_CONFIG.error)}
 		else { new App().run(SETTINGS, JOBS_CONFIG); }
+        console.trace=function(){
+            console.error("trace>>>", ...arguments)
+        }.bind(console)
         //rewrite_config_test();
 	}
     function retranslate_logger(){
@@ -112,9 +115,7 @@
         this.externalSource=externalSource;
         this.updatableHostCluster=updatableHostCluster;
         this.run=()=>{
-            const stringEndSlash = new StringEndSlash();
-            const update_path_with_slash = stringEndSlash.add(SETTINGS.update_folder);
-            SETTINGS.update_folder = update_path_with_slash;
+            SETTINGS.update_folder = StringEndSlash().add(SETTINGS.update_folder);
             this.browserIoClients.run(this.updatableHostCluster);
             this.externalSource.run(this.updatableHostCluster);
             this.updatableHostCluster.run(this.browserIoClients, externalSource, SETTINGS);
@@ -122,22 +123,20 @@
         }
     }
     function StringEndSlash(){
-        this.check=(str)=>{
-            if(!str || typeof str != "string"){throw new Error("StringEndSlash.check() arg must be a String type!");}
-            else{
-                const is_end1 = str.endsWith("\\");
-                const is_end2 = str.endsWith("/");
-                console.log("StringEndSlash.check() is_end1=",is_end1,",is_end2=",is_end2);
-                if(is_end1 || is_end2){return true}
-                else return false;
-            }
+        const check=(str)=>{
+            const is_end1 = str.endsWith("\\");
+            const is_end2 = str.endsWith("/");
+            if(is_end1 || is_end2){return true}
+            else return false;
         }
-        this.add=(str)=>{
+        const add=(str)=>{
             if(!str || typeof str != "string"){return str}
-            else if(this.check(str)) return str;
+            else if(check(str)) return str;
             else return str + '/';
         }
+        return {add}
     }
+
     function ExternalSource(){
         this.run=(updatableHostCluster)=>{
             this.updatableHostCluster=updatableHostCluster;
@@ -145,7 +144,6 @@
         //@ some external source connected by socket io
         this.welcomeAgent=(io_srv_msg)=>{
             //@ io_srv_msg = {agent_socket, browser_or_agent}
-            console.log("ExternalSource.welcomeAgent(): socket id =", io_srv_msg.agent_socket.id);
             this.socket = io_srv_msg.agent_socket;
             this.socket.on('connect', ()=>{
                 console.log("ExternalSource connection: "+this.socket.id);
@@ -155,7 +153,6 @@
             })
             //@ msg from external source to host cluster
             this.socket.on('kick', (msg)=>{
-                //console.log("ExternalSource control_msg: ",msg);
                 this.updatableHostCluster.gui_ctrl(msg, true);
             })
         }
@@ -173,6 +170,7 @@
             }
         }
     }
+
     function BrowserIoClients(){
         this.updatableHostCluster=undefined;//run
         this.socket = undefined;
@@ -182,13 +180,12 @@
         //@ browser connected by socket io
         this.welcomeAgent=(io_srv_msg)=>{
             //@ io_srv_msg = {agent_socket, browser_or_agent}
-            console.log("BrowserIoClients.welcomeAgent(): socket id =", io_srv_msg.agent_socket.id);
             this.socket = io_srv_msg.agent_socket;
             this.socket.on('connect', ()=>{
                 console.log("BrowserIoClients connection: "+this.socket.id);
             })
             this.socket.on('disconnect', ()=>{
-                console.log("BrowserIoClients disconnection: ",this.socket.id, "eventNames=", this.socket.eventNames());
+                console.log("BrowserIoClients disconnection: ",this.socket.id);
                 //@ socket.eventNames()
                 //@ socket.listeners(event)
                 //@ socket.removeAllListeners([event]) 
@@ -202,9 +199,7 @@
         //@ msg from inside host cluster to outside Browser
         this.gui_news=(data)=>{
             //@ from HostCluster: data={ msg:'host_table', table: [{md5:""},{md5:""}] };
-            console.log("BrowserIoClients.gui_news(): data =", JSON.stringify(data))
             if(this.socket){
-                //console.error("AAAAAAAAAAAAA", data)
                 this.socket.emit('gui_news', data);
             }
         }
@@ -212,6 +207,7 @@
             this.msg = msg;
         }
     }
+
     function IoServer(httpServer){
         this.httpServer = httpServer;
         this.updatableHostCluster=undefined;
@@ -223,7 +219,7 @@
             this.externalSource = externalSource;
             require('socket.io')(this.httpServer.run().http).on('connection', (socket) => {
                 //@ exist and looks like {:3,polling,NbISECy,1}
-                console.log("IoServer2.run() query=", Object.values(socket.handshake.query).join("|"));
+                //console.log("IoServer.run() query=", Object.values(socket.handshake.query).join("|"));
                 const io_srv_msg = { 
                     agent_socket: socket,
                     browser_or_agent: socket.handshake.query.browser_or_agent,
@@ -232,7 +228,6 @@
                 if(io_srv_msg.browser_or_agent == "agent"){
                     this.updatableHostCluster.welcomeAgent(io_srv_msg);
                 }else if(io_srv_msg.browser_or_agent == "browser"){
-                    console.log("UpdatableHostCluster.socketConnected() Browser connected!");
                     this.browserIoClients.welcomeAgent(io_srv_msg);
                 }else{
                     console.log("UpdatableHostCluster.socketConnected(): nor browser or agent:", JSON.stringify(socket.handshake.query));
@@ -241,10 +236,12 @@
             });
         }
     }	
+
     function ParsedJSON(stringifiedJson){
         this.stringifiedJson = stringifiedJson;
         this.run=()=>{return (this.stringifiedJson) ? JSON.parse(this.stringifiedJson) : {}}
     }
+
     function UpdatableHostCluster(manifest, hostCluster, JOBS_CONFIG){
         this.manifest = manifest;
         this.hostCluster = hostCluster;
@@ -272,8 +269,7 @@
         //@ command from outside browser or another external source
         //@param {Object dto} msg - e.g. {type: 'list_future_jobs',host_id: '6e8bc6f1e3ef10adf9dd98617c133110'}
         //@param {Boolean} is_ext_kick - menas its not from browser, but from another one external source
-        this.gui_ctrl=(msg, is_ext_kick)=>{
-            console.log("UpdatableHostCluster.gui_ctrl(): msg=", msg);  
+        this.gui_ctrl=(msg, is_ext_kick)=>{ 
             if(msg.type == "switch_manifest_off"){
                 this.manifest.switch_off();
             }else if(msg.type == "jobs_config"){
@@ -287,38 +283,38 @@
             }
         }
     }
+
     //@ ready=1
 	function Manifest(dirStructure, dirsComparing){
+        this.timer = 60000;
         this.main_update_paths = []; //run
         this.mapped_paths = {};//run
         this.dirStructure=dirStructure;
         this.dirsComparing=dirsComparing;
         this.hostCluster=undefined;//run
-        this.timer = 60000;
         this.switch_on_flag = true;
         this.prev_mans = {};//run
         this.mapped_mans = {};//run
         this.mapped=()=>{return this.mapped_mans;};
 		this.current = ()=>{ return this.prev_mans };
         this.run = function(hostCluster, SETTINGS){
+            this.timer = SETTINGS.update_folder_watch_timer || 60000;
             init_by_settings(SETTINGS);
             console.log("Manifest.run(): main_update_paths=",this.main_update_paths);
             this.mapped_paths = SETTINGS.mapped_paths;
             this.hostCluster=hostCluster;
             this.prev_mans = this.dirStructure.allMansSync(this.main_update_paths); //sync
-            console.log("Manifest.run(): this.prev_mans=",this.prev_mans);
             //@ mapped_mans = {"x":{dst_path:"C:/Temp", man:[[...],[...]]}, "y":{...}}
             this.mapped_mans = this.dirStructure.allMappedMansSync(filterExistingMappedPaths(SETTINGS));
             console.log("Manifest.run(): this.mapped_mans=",this.mapped_mans);
             setTimeout(()=>{
                 this.nextManifest();
                 this.nextMappedMans(SETTINGS);
-            }, this.timer);
+            }, SETTINGS.update_folder_watch_timer || 60000);
             return this;
         }
         const init_by_settings=(SETTINGS)=>{
-            console.log("Manifest.init_by_settings() SETTINGS=", SETTINGS);
-            this.timer = SETTINGS.update_folder_watch_timer || 60000;
+            console.log("Manifest: SETTINGS=", SETTINGS);
             const glob_update_path = SETTINGS.update_folder || "update/";
             const launcher_update_path = glob_update_path + "launcher";
             const controller_update_path = glob_update_path + "controller";
@@ -333,63 +329,53 @@
         }
         this.nextManifest = function(){
             this.dirStructure.allMansAsync(this.main_update_paths).then(next_mans=>{
-                //console.log("Manifest.nextManifest(): next_mans=",next_mans);
                 const dirs_compare_diff = this.dirsComparing.compare(next_mans, this.prev_mans);
-                console.log("Manifest.nextManifest(): dirs_compare_diff=",dirs_compare_diff);
                 //@ e.g.: dirs_compare_diff = { launcher: { new_files: [], files_to_change: [ [Array] ], old_files: [] } }
                 if(dirs_compare_diff) {
                     console.log("Manifest.nextManifest():CHANGES EXIST!");
                     this.prev_mans = next_mans;
-                    this.hostCluster.propagateManifestDiff(dirs_compare_diff);
-                }else{
-                    console.log("Manifest.nextManifest(): No changes!");
+                    this.hostCluster.propagateManifestDiff(dirs_compare_diff, next_mans);
                 }
+                setTimeout(()=>{this.nextManifest()}, this.timer);
             }).catch(err=>{
                 console.error("Manifest: nextManifest() Error:"+err);
-            }).finally(()=>{
-                console.log("Manifes.tnextManifest(): finally: new manifest check will after "+this.timer+ " ms...");
                 setTimeout(()=>{this.nextManifest()}, this.timer);
             })
         }
         this.nextMappedMans = function(SETTINGS){
             //@ mapped_paths looks like: {"dst_path":[["filename.txt",<date>,<size>], [...]], "x":[[],[]]}
             this.dirStructure.allMappedMansAsync(SETTINGS).then(next_mapped_mans=>{
-                console.log("Manifest.nextMappedMans() after allMappedMansAsync()...");
                 const dirs_compare_diff = this.dirsComparing.compare_mapped(next_mapped_mans, this.mapped_mans);
                 if(dirs_compare_diff) {
-                    console.log("Manifest.nextManifest(): dirs_compare_diff=",dirs_compare_diff);
                     this.mapped_mans = next_mapped_mans;
                     this.hostCluster.propagateMappedMansDiff(dirs_compare_diff);
-                }else{
-                    console.log("Manifest.nextMappedMans(): No changes!");
                 }
             }).catch(err=>{
                 console.error("Manifest.nextMappedMans() after allMappedMansAsync Error:", err);
             }).finally(()=>{
-                console.log("Manifes.tnextManifest(): finally: new manifest check will after "+this.timer+ " ms...");
                 setTimeout(()=>{this.nextMappedMans(SETTINGS)}, this.timer);
             })
         }
         const filterExistingMappedPaths=(SETTINGS)=>{
             Object.keys(SETTINGS.mapped_paths).forEach(key=>{
                 const local_path  = SETTINGS.update_folder + key;
-                console.log("filterExistingMappedPaths local_path = ",local_path);
                 try{
                     const stat = fs.statSync(local_path);
                     if (stat && stat.isDirectory()){
-                        console.log("mapped path '"+key+"' exists...");
+                        //console.log("mapped path '"+key+"' exists...");
                     }else{
                         console.log("Warning: mapped path '"+local_path+"' is not a directory!");
                         delete SETTINGS.mapped_paths[key];
                     }
                 }catch(err){
-                    console.log("Warning: mapped path '"+local_path+"' does not exist!");
+                    console.error("Warning: mapped path '"+local_path+"' does not exist!");
                     delete SETTINGS.mapped_paths[key];
                 }
             });
             return SETTINGS;
         }
     }
+
     function DirStructure(){
         //@ returns manifests of a several dirs. Type object {'launcher':[], 'controller':[]}
         this.allMansSync=(paths_data)=>{
@@ -397,7 +383,6 @@
             paths_data.forEach(path_data=>{
                 try{
                     result[path_data.name] = this.manOfDirSync(path_data.path);
-                    console.log("DirStructure.allMansSync(): result=", result[path_data.name]);
                 }catch(err){
                     console.error("DirStructure.allMansSync() ERROR: ", err);
                 }
@@ -412,7 +397,6 @@
                 if(pending == 0){return resolve(result)};
                 paths_data.forEach(path_data=>{
                     this.manOfDirAsync(path_data.path).then(res=>{
-                        console.log()
                         result[path_data.name] = res;
                         if(!--pending){resolve(result)}
                     }).catch(err=>{
@@ -426,7 +410,7 @@
         //@ return  {"x":{dst_path:"C:/Temp", man:[[...],[...]]}, "y":{...}}
         this.allMappedMansSync=(SETTINGS)=>{
             //@ mapped_paths = { 'update/x': 'C:/Pics', "y": "..."}
-            console.log("Manifest.allMappedMansSync() mapped_paths=",SETTINGS.mapped_paths);
+            console.log("Manifest: mapped_paths=",SETTINGS.mapped_paths);
             const result = {};
             const mapped_paths_keys = Object.keys(SETTINGS.mapped_paths);
             mapped_paths_keys.forEach(src_path=>{
@@ -534,13 +518,13 @@
             });
         }
     }
+
     function DirsComparing(){
         this.compareResult=undefined;
         this.compare_mapped=(next_mapped, prev_mapped)=>{
             //@ next_mapped = {"x":{dst_path:"C:/Temp", man:[[...],[...]]}, "y":{...}}
             const result = {};
             for(let src_path in next_mapped){
-                console.log("DirsComparing.compare_mapped(): next_mapped[src_path]=",next_mapped[src_path]);
                 const comparedDirs = this.compare2Dirs(next_mapped[src_path].man, prev_mapped[src_path].man);
                 let is_really_some_changes = false;
                 for(const part in comparedDirs){
@@ -570,7 +554,6 @@
         }
         this.compare2Dirs=(next_man, prev_man)=>{
             //@ next_man = {controller:[], launcher:[], other:[]}
-            console.log("DirsComparing.comparing(): next_man=",next_man);
             const new_files = find_new_files(next_man, prev_man);
             const files_to_change = find_files_to_change(next_man, prev_man);
             const old_files = find_old_files(next_man, prev_man);
@@ -635,6 +618,7 @@
             }
         }
     }
+
 	function HostCluster(hostAsPair, agentRecognizing){
         this.hostAsPair = hostAsPair;
         this.browserIoClients=undefined;//run
@@ -658,10 +642,11 @@
             })
             return this;
 		}
-		this.propagateManifestDiff = (mans_diff)=>{
+		this.propagateManifestDiff = (mans_diff, full_manifest)=>{
+            //console.trace("hostCluster.propagateManifestDiff()");
             if(this.SETTINGS.apply_updates){
                 _hosts_list.forEach(host=>{
-                    host.propagateManifestDiff(mans_diff);
+                    host.propagateManifestDiff(mans_diff, full_manifest);
                 });
             }
 		}
@@ -674,7 +659,6 @@
         }
 		this.host_by_md5_only_read = (agent_ids)=>{
             let host_index = -1;
-			console.log("_hosts_list length="+_hosts_list.length);
 			for(let i=0; i<_hosts_list.length; i++){
 				if(_hosts_list[i].commonMd5() == agent_ids.md5){
 					host_index = i;
@@ -686,7 +670,6 @@
         }
 		this.hostByMd5 = (agent_ids)=>{
 			let host_index = -1;
-			console.log("_hosts_list length="+_hosts_list.length);
 			for(let i=0; i<_hosts_list.length; i++){
 				if(_hosts_list[i].commonMd5() == agent_ids.md5){
 					host_index = i;
@@ -700,6 +683,7 @@
 		}
 		this.addHost = (agentObj)=>{
             _hosts_list.push(agentObj);
+            //console.trace("HostCluster.addHost() new host: _hosts_list length =", _hosts_list.length);
             return agentObj;
         }
         //@ command from outside browser or another external source
@@ -715,7 +699,6 @@
                     let res = {};
                     res.md5 = host.commonMd5();
                     res.hostname = host.hostname();
-                    console.log("HostCluster.gui_ctrl(): hostname=", res.hostname)
                     const add_info = host.gui_ctrl(msg);
                     res = Object.assign(res, add_info);
                     return res;
@@ -728,8 +711,6 @@
                 });
                 if(host_matched.length ==1){
                     host_matched[0].gui_ctrl(msg, is_ext_kick);
-                }else{
-                    console.error("HostCluster.gui_ctrl(): msg type 'jobs_config': _hosts_list=", _hosts_list.map(h=>h.commonMd5()));
                 }
             }else if(msg.type=="apply_updates"){
                 if(msg.value == "check"){
@@ -741,12 +722,11 @@
                     }else if(msg.value == "on"){
                         is_apply = true;
                     }
-                    console.log("HostCluster.gui_ctrl() is_apply=", is_apply, "SETTINGS.apply_updates=", this.SETTINGS.apply_updates);
                     if(is_apply != this.SETTINGS.apply_updates){
                         this.SETTINGS.apply_updates = is_apply;
                         fs.writeFile('m_settings.json', JSON.stringify(this.SETTINGS, null, '    '), (err)=>{
                             if (err){
-                                console.log("HostCluster.gui_ctrl(): fail to rewrite settings file:",err);
+                                console.error("HostCluster.gui_ctrl(): fail to rewrite settings file:",err);
                             }
                             recipient.gui_news({msg:'apply_updates', value: this.SETTINGS.apply_updates});
                         });
@@ -760,7 +740,6 @@
                     const existing_hosts = _hosts_list.map(host=>host.commonMd5());
                     console.error("HostCluster.gui_ctrl(): no matches hosts by md5, existing_hosts =", existing_hosts);}
                 if(host_matched.length > 1){console.error("HostCluster.gui_ctrl(): on external cmd about future jobs there are more than one match with md5=", msg.host_id);}
-                console.log("HostCluster.gui_ctrl(): host_matched=",host_matched);
                 host_matched.forEach(host=>{
                     host.gui_ctrl(msg, is_ext_kick);
                 });
@@ -774,11 +753,29 @@
                     host_index = i;
                 }
             }
-            console.log("HostCluster.host_destroyed() _hosts_list length before=", _hosts_list.length);
+            //console.trace("HostCluster.host_destroyed() _hosts_list length before=", _hosts_list.length);
             if(host_index > -1) _hosts_list.splice(host_index, 1);
-            console.log("HostCluster.host_destroyed() _hosts_list length after=", _hosts_list.length);
         }
 	}
+
+    function OneElemStack(manifest){
+        let inner = manifest;
+        let rezerv = manifest;
+        const push=(elem)=>{
+            inner = elem;
+            rezerv = elem;
+        }
+        const pop=()=>{
+            if(typeof inner == 'undefined'){
+                return undefined;
+            }else{
+                inner = undefined;
+                return rezerv;
+            }
+        }
+        return Object.freeze({push, pop})
+    }
+
     function AgentRecognizing(agent_identifiers){
         this.agent_identifiers = agent_identifiers;
 		this.instance=(agent_identifiers)=>{
@@ -789,10 +786,8 @@
                 if(this.agent_identifiers) {
                     resolve(this.agent_identifiers);
                 }else{
-                    console.log("AgentRecognizing.identifiers(): emit 'identifiers' event");
                     const socket_handler=function(identifiers){
                         //@ identifiers = {agent_type, sid, md5, ip, pid, ppid, apid}
-                        console.log("AgentRecognizing.identifiers() as is",identifiers);
                         resolve(identifiers?identifiers:{});
                     }
                     socket.emit('identifiers').once('identifiers',socket_handler);
@@ -804,6 +799,7 @@
 			});
 		}
 	}
+
     function RedundantAgentsReservation(workWithAgents){
         this.workWithAgents = workWithAgents;
         this.is_timeout = false;
@@ -822,6 +818,7 @@
             else{workWithAgents.firstWorkSinceRestart(a,b,c);}
         }
     }
+    
 	function HostAsPair(launcher, controller, connectedAgentsThrottle, agentUpdateChain, creator_ids, hostCluster){
         //@ HostAsPair object instantiates by one of Launcher or Controller, so on creation stage we allready know about one of agents and his states
         this.launcher = launcher;
@@ -837,7 +834,6 @@
         this.manifest_snapshot = undefined;//welcomeAgent
         this.mapped_mans_snapshot = undefined;//welcomeAgent
         this.is_init_timeout_flag = false;
-        this.is_updating_now = false;
         this.last_manifest_snapshot=()=>{return this.manifest_snapshot}
         this.commonMd5=()=>{return this.creator_ids.md5}
         this.creatorType=()=>{return this.creator_ids.ag_type}
@@ -845,13 +841,13 @@
         this.creatorPpid=()=>{return this.creator_ids.ppid}
         this.creatorApid=()=>{return this.creator_ids.apid}
         this.hostname=()=>{return this.creator_ids.hostname}
-        //@ creator_ids = {ag_type: "launcher", ag_pid:3245, ...} - это идентификаторы того агента, который подключился первым отностилеьно конкретного хоста-машины
+        //@ creator_ids = {ag_type: "launcher", ag_pid:3245, ...}
 		this.instance = function(creator_ids, hostCluster){
-            console.log("HostAsPair.instance(): creator=",creator_ids.ag_type);
-            const ag_type = creator_ids.ag_type;
+            console.log("new Host:", creator_ids.hostname, ", md5:", creator_ids.md5, ", creator:",creator_ids.ag_type);
+            const creator_type = creator_ids.ag_type;
 			return new HostAsPair(
-				this.launcher.instance((ag_type==="launcher"?creator_ids:undefined), this),
-				this.controller.instance((ag_type==="controller"?creator_ids:undefined), this),
+				this.launcher.instance((creator_type==="launcher"?creator_ids:undefined), this),
+				this.controller.instance((creator_type==="controller"?creator_ids:undefined), this),
 				this.connectedAgentsThrottle.instance(),
                 this.agentUpdateChain.instance(),
                 creator_ids,
@@ -880,10 +876,8 @@
                 return result;
             }else if(msg.type=="jobs_config"){
                 //@msg = {type: event_type, caller_id: <some id from external Object>, concrete_agent: <agent md5>}
-                console.log("HostAspair.gui_ctrl(): '"+msg.type+"'-type msg")
                 this.controller.gui_ctrl(msg)
             }else if(msg.type=="list_future_jobs"||msg.type=="drop_future_jobs"){
-                console.error("HostAsPair.gui_ctrl(): msg=",util.inspect(msg));
                 if(this.controller){
                     this.controller.gui_ctrl(msg, is_ext_kick);
                 }
@@ -923,15 +917,23 @@
         this.is_init_timeout=()=>{ return this.is_init_timeout_flag; }
         //@ Сравнить Манифест включает в себя цепочку действий, в том числе перезапуск партнёра, если это будет необходимо
         this.start_initial_manifest_update=(ag_type)=>{
+            //console.trace("start_initial_manifest_update: ag_type=" + ag_type);
             this[ag_type].start_initial_manifest_update(this.last_manifest_snapshot()).then(res=>{
-                this.is_updating_now = false;
-                //@res = {compare:false, kill:false, update:false, start:true}
+                //@ 1) обновил - молодец, если ты контроллер то делай дальше свою работу
+                //@ 2) не обновил, потому что тот уже обновляет меня, а я отложил обновление
+                //@ e.g. res = {compare:false, kill:false, update:false, start:true}
+                //console.trace("start_initial_manifest_update: ag_type=" + ag_type);
+                //@ один из агентов сделал обновление, но другой мог отложить своё
+                const partner = this[ag_type].partner;
+                if(partner){
+                    partner.do_deffered_updates();
+                }
                 if(ag_type == "controller"){
-                    console.log("calling controller's normal work mode...")
                     this[ag_type].do_work();
                 }
             }).catch(err=>{
-                console.error("HostAsPair: this.launcher.start_initial_manifest_update() Error 1: ",err);
+                if(err.reason == "deffered"){}
+                console.error("HostAsPair: this.[",ag_type,"].start_initial_manifest_update() Error 1: ",err);
             })
         }
         //@ param {} mapped_mans_snapshot - нужен только для контроллера, потому что он обновляет произвольные каталоги, заданные администратором
@@ -943,65 +945,40 @@
                 const partner_type = agent_ids.ag_type == "launcher" ? "controller" : "launcher";
                 this[agent_ids.ag_type].welcomeAgent(agent_socket, agent_ids, manifest_snapshot, this[partner_type], this.mapped_mans_snapshot);
                 //@ Смысл таймаута: Если Мастер был перезапущен администратором, а агенты были онлайн, то маленькое ожидание даст понять это, потому что они могут подключиться быстро друг за другом по сокету.
-                if(this[partner_type].isOnline()){
+                setTimeout(()=>{
+                    //@ Этот метод на самом деле цепочка заданий, сначала заставляет проверить, есть ли файлы для обноления а затем, если надо, запустить партнера.
                     this.start_initial_manifest_update(agent_ids.ag_type)
-                }else{
-                    setTimeout(()=>{
-                        //@ Этот метод на самом деле цепочка заданий, сначала заставляет проверить, есть ли файлы для обноления а затем, если надо, запустить партнера.
-                        this.start_initial_manifest_update(agent_ids.ag_type)
-                    }, 1000);
-                }
+                }, 1000);
             }                
 		}
-        this.propagateManifestDiff = (mans_diff)=>{
+        this.propagateManifestDiff = (mans_diff, full_manifest)=>{
             this.manifest_regular = mans_diff;
             //@ 1) Look For WHom updates intended: manifest looks for 3 dirs: [controller, launcher, other]
             //@ 2.1)  Either for both agents updates
             //@ 2.2)  Or a somebody one
-            if(mans_diff.controller && mans_diff.launcher){
-                console.log("HostAsPair.propagateManifestDiff() new files in LAUNCHER and CONTROLLER folders");
-                this.launcher.propagateManifestDiff(mans_diff).then(res=>{
-                    //@res = {is_cnahges:false, is_killed:false, is_updated:false, is_started:true}
-                    if(res.error){
-                        console.error("HostAsPair.propagateManifestDiff() after launcher propagating error:",res.error);
-                    }
-                    else if(res.isOk){
-                        //@ launcher has already update controller twice (initial and then regular)
-                    }
-                    else{
-                        this.controller.propagateManifestDiff(mans_diff).then(res=>{
-                            console.log("after propagateManifest both agents has updates each other");
-                        }).catch(err=>{
-                            console.error("HostAsPair: run_agents_after_first_host_init_timeout(): this.controller.propagateManifestDiff() Error 1: ",err);
-                        })
-                    }
-                }).catch(err=>{
-                    console.error("HostAsPair: run_agents_after_first_host_init_timeout(): this.launcher.propagateManifestDiff() Error 1: ",err);
-                })
-            }else if(mans_diff.controller || mans_diff.other){
+            if(mans_diff.controller || mans_diff.other){
                 console.log("HostAsPair.propagateManifestDiff() new files in CONTROLLER or OTHER folders");
                 //@ 2.2)  launcher must update controller
                 this.launcher.propagateManifestDiff(mans_diff).then(res=>{
-                    console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.launcher.propagateManifestDiff() OK: ",res);
+                        this.controller.do_deffered_updates();
                 }).catch(err=>{
                     console.error("HostAsPair: run_agents_after_first_host_init_timeout(): this.launcher.propagateManifestDiff() Error 2: ",err);
+                    this.controller.do_deffered_updates();
                 });
-            }else if(mans_diff.launcher){
+            }
+            if(mans_diff.launcher){
                 console.log("HostAsPair.propagateManifestDiff() new files in LAUNCHER folder");
                 //@ 2.3)  controller must update launcher
                 this.controller.propagateManifestDiff(mans_diff).then(res=>{
-                    console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.controller.propagateManifestDiff() OK: ",res);
+                    this.launcher.do_deffered_updates();
                 }).catch(err=>{
                     console.error("HostAsPair: run_agents_after_first_host_init_timeout(): this.controller.propagateManifestDiff() Error 2: ",err);
+                    this.launcher.do_deffered_updates();
                 });
-            }else{
-                console.error("HostAsPair: run_agents_after_first_host_init_timeout(): this.propagateManifestDiff() Unknown Error!");
-            }
-            
+            }    
         }
         this.propagateMappedMansDiff=(mans_diff)=>{
             this.controller.propagateMappedMansDiff(mans_diff).then(res=>{
-                console.log("HostAsPair: run_agents_after_first_host_init_timeout(): this.controller.propagateMappedMansDiff() OK: ",res);
             }).catch(err=>{
                 console.error("HostAsPair: run_agents_after_first_host_init_timeout(): this.controller.propagateMappedMansDiff() Error 2: ",err);
             });
@@ -1022,6 +999,7 @@
             else{console.error("HostAsPair.agent_msg(): unknown msg:", message)}
         }
 	}
+
     function ConnectedAgentsThrottle(){
         this.redundantAgentsArray=[];
         this.launcher=undefined;
@@ -1030,12 +1008,14 @@
         //@--------------------
         this.is_current_agent_allowed = true;
         this.isAllowed=()=>{
-            console.log("ConnectedAgentsThrottle.isAllowed(): is_current_agent_allowed = ", this.is_current_agent_allowed)
             if(this.is_current_agent_allowed == false){
                 const host = this.hostCluster.host_by_md5_only_read(this.current_ids);
                 const agent = host.agent_by_type(this.current_ids.ag_type)
-                if(agent){ console.log("ConnectedAgentsThrottle.isAllowed(): finded agent:", agent.agentPid(), agent.agentPpid(), agent.agentApid()) }
-                agent.kill_similar_outcasts();
+                if(agent){
+                    agent.kill_similar_outcasts();
+                }else{
+                    console.error("ConnectedAgentsThrottle.isAllowed(): no agent finded.")
+                }
             }
             return this.is_current_agent_allowed;
         }
@@ -1066,6 +1046,7 @@
             return this;
         }
     }
+
     //@------------------Launcher-----------------------
     function Launcher(agent_ids, socketKeepAliveConfirmation){
         this.agent_ids = agent_ids;
@@ -1076,8 +1057,18 @@
         this.manifest_snapshot = undefined;
         this.browserIoClients =undefined; //run
         this.host =undefined; //run
-        this._update_state="";//msg
-        this.update_state=()=>{return this._update_state};
+        let defferedInitialUpdate = undefined;// clearing in welcomeAgent()
+        let defferedRegularUpdate = undefined;// clearing in welcomeAgent()
+        let defferedUpdateForSpecialMode = undefined; 
+        //@-----flag about is this agent has now updating the partner-----
+        let flag_updating_partner_now=false;//msg
+        this.updating_partner_now=(switch_on)=>{
+            if(typeof switch_on == "undefined"){
+                return flag_updating_partner_now;
+            }else{
+                flag_updating_partner_now = switch_on;
+            }
+        }
         //@ input param 'msg' must be String type
         this.gui_news=(data)=>{
             if(this.host){
@@ -1114,16 +1105,19 @@
 		this.instance=function(agent_ids){ return new Launcher(agent_ids, this.socketKeepAliveConfirmation.instance()); }
 		//@ this in fact not some kind of initialization, but simply pass the object
         this.welcomeAgent=(agent_socket, agent_ids, manifest_snapshot, partner)=>{
+            //@ welcomeAgent means that new agent first coming through socket.io transport
             this.agent_socket = agent_socket;
             this.agent_ids = agent_ids;//{ag_type, md5, ip, pid, ppid, apid} 
             this.manifest_snapshot = manifest_snapshot;
             this.partner = partner;
-            console.log("Launcher.welcomeAgent(): partner online:",partner.isOnline());
+            //@ first of all drop some states from agent's previous activity
+            defferedInitialUpdate = undefined;
+            defferedRegularUpdate = undefined;
+            this.updating_partner_now(false);
             //@------------------------------------
             this.switchOnline(true);
             this.gui_news({msg:"agent_online"});
 			this.listenForDisconnect();
-            console.log("Launcher.welcomeAgent(): this.host=", this.host)
             this.socketKeepAliveConfirmation.run(this.agent_socket, this.host)
             this.listen_for_socketio_questions();
 		}
@@ -1141,68 +1135,120 @@
             this.agent_socket.once('disconnect', (reason)=>{
                 //@ the reason will equals "transport close"
                 console.log("Launcher.listenForDisconnect(): disconnect: reason =", reason);
+                defferedInitialUpdate = undefined;
+                defferedRegularUpdate = undefined;
+                this.updating_partner_now(false);
                 this.switchOnline(false);
                 this.gui_news({msg:"agent_offline"});
-                this.host.agent_disconnected(this.agent_ids.ag_type, this.update_state());
+                this.host.agent_disconnected(this.agent_ids.ag_type, reason);
                 this.agent_socket = undefined;
             });
         }
+        this.do_deffered_updates=()=>{
+            //console.trace("Launcher do_deffered_updates()...");
+            let regular_manifest;
+            let initial_manifest;
+            if(defferedRegularUpdate || defferedInitialUpdate){
+                regular_manifest = defferedRegularUpdate.pop();
+            }
+            if(defferedRegularUpdate || defferedInitialUpdate){
+                initial_manifest = defferedInitialUpdate.pop();
+            }
+            console.trace("Launcher do_deffered_updates():", Boolean(regular_manifest), Boolean(initial_manifest));
+            if(regular_manifest && initial_manifest){
+                this.start_initial_manifest_update(initial_manifest);
+            }else if(initial_manifest){
+                this.start_initial_manifest_update(initial_manifest);
+            }else if(regular_manifest){
+                this.propagateManifestDiff(regular_manifest)
+            }else{}
+        };
         this.start_initial_manifest_update=(man)=>{
-            console.log("Launcher.start_initial_manifest_update(): ...");
             return new Promise((resolve,reject)=>{
-                this.switchInitialUpdateMode(true);
-                this.gui_news({msg:"update_mode", value:"on"});
-                const man_for_launcher = {};
-                man_for_launcher.controller = man.controller;
-                man_for_launcher.other = man.other;
-                //console.log("Launcher.start_initial_manifest_update(): man_for_launcher=", man_for_launcher);
-                this.agentUpdateChain.instance(this, man_for_launcher).run(this.socketio(), this.partner).then(res=>{
-                    this.switchInitialUpdateMode(false);
-                    if(this.is_regular_while_initial_manifest){
-                        this.propagateManifestDiff(this.is_regular_while_initial_manifest).then(res=>{
-                            res.isOk = true;
-                            resolve(res);
-                        }).catch(err=>{ reject(err); })
+                //@ 1) first of all ask if the Controller now in Special mode which means uninterrupted mode - updating is forbidden
+                if(this.partner.isSpecialMode()){
+                    defferedUpdateForSpecialMode = OneElemStack(man);
+                    reject({reason: "deffered", detailed:"special_mode"}); //1.2
+                }else{
+                    //@ 2) if partner already updates me, then i will postpone my update 
+                    if(this.partner && this.partner.updating_partner_now()){
+                        defferedInitialUpdate = OneElemStack(man);
+                        reject({reason: "deffered", detailed:"updating_partner_now"}); //2.2
                     }else{
-                        resolve(res);
+                        this.updating_partner_now(true);
+                        this.gui_news({msg:"update_mode", value:"on"});
+                        const man_for_launcher = {};
+                        man_for_launcher.controller = man.controller;
+                        man_for_launcher.other = man.other;
+                        this.agentUpdateChain.instance(this, man_for_launcher).run(this.socketio(), this.partner).then(res=>{
+                            //@ initial update was finished, now checking if new regular update exists
+                            if(defferedRegularUpdate){
+                                const manifest = defferedRegularUpdate.pop();
+                                if(manifest){
+                                    this.updating_partner_now(true);
+                                    this.propagateManifestDiff(manifest).then(res=>{
+                                        this.updating_partner_now(false);
+                                        res.isOk = true;
+                                        resolve(res);
+                                    }).catch(err=>{ reject(err); })
+                                }else{
+                                    this.updating_partner_now(false);
+                                    this.gui_news({msg:"update_mode", value:"off"});
+                                    resolve();
+                                }
+                            }else{
+                                this.updating_partner_now(false);
+                                this.gui_news({msg:"update_mode", value:"off"});
+                                resolve();
+                            }
+                        }).catch(err=>{
+                            console.error("Launcher.start_initial_manifest_update(): catch err:", err);
+                            this.gui_news({msg:"update_mode", value:"off"});
+                            reject(err);
+                        })
                     }
-                }).catch(err=>{
-                    reject(err);
-                }).finally(()=>{
-                    this.gui_news({msg:"update_mode", value:"off"});
-                })
+                }
             });
         }
         //@ launher must check controller's work Mode (normal or special ?)
-        this.propagateManifestDiff=(mans_diff)=>{
+        this.propagateManifestDiff=(mans_diff, full_manifest)=>{
                 return new Promise((resolve,reject)=>{
-                    //@ If initial update has processing right now, when switch special flag
-                    if(this.isInitialUpdateMode()){
-                        this.is_regular_while_initial_manifest = mans_diff;
-                        console.log("regular manifest has happened while initial update has processing at:", this.agent_ids);
-                    }
-                    else{
-                        //@ Special Mode - E.g. COntroller Doing a Render
-                        if(this.partner && !this.partner.isSpecialMode()){
-                            //this.switchInitialUpdateMode(true);
+                    if(this.partner.isOnline()){
+                        if(this.partner.updating_partner_now()){
+                            defferedRegularUpdate = OneElemStack(mans_diff);
+                            if(full_manifest){
+                                defferedInitialUpdate = OneElemStack(full_manifest);
+                            }
+                            resolve({is_patched: false, details: "deffered"});
+                        }else if(this.partner.isSpecialMode()){
+                            //@ Special Mode - E.g. COntroller Doing a Render
+                            console.log("Launcher.propagateManifestDiff(): can not update the Controller in Special mode");
+                            if(full_manifest){
+                                defferedUpdateForSpecialMode = OneElemStack(full_manifest);
+                            }
+                            this.gui_news({msg:"agent_work", value:"can not update the Controller in Special mode"});
+                            resolve({is_patched: false, details: "special mode"});
+                        }else{
+                            this.updating_partner_now(true);
                             this.gui_news({msg:"update_mode", value:"on"});
                             const mans_diff_for_launcher = {};
                             mans_diff_for_launcher.controller = mans_diff.controller;
                             mans_diff_for_launcher.other = mans_diff.other;
-                            console.log("-----Launcher.propagateManifestDiff() mans_diff_for_launcher=",mans_diff_for_launcher);
                             new AgentUpdateWithoutCompare(this, mans_diff_for_launcher).run(this.socketio(), this.partner).then(res=>{
+                                this.updating_partner_now(false);
+                                this.gui_news({msg:"update_mode", value:"off"});
                                 resolve({is_patched: true});
                             }).catch(err=>{
-                                reject({is_patched: false, error: err});
-                            }).finally(()=>{
-                                //this.switchInitialUpdateMode(false);
+                                this.updating_partner_now(false);
                                 this.gui_news({msg:"update_mode", value:"off"});
+                                reject({is_patched: false, error: err});
                             })
-                        }else{
-                            console.log("Launcher.propagateManifestDiff(): can not update the Controller in Special mode");
-                            this.gui_news({msg:"agent_work", value:"can not update the Controller in Special mode"});
-                            resolve({is_patched: false, details: "special mode"});
                         }
+                    }else{
+                        defferedInitialUpdate 
+                            ? defferedInitialUpdate.push(full_manifest)
+                            : defferedInitialUpdate = OneElemStack(full_manifest);
+                        console.trace(this.agentType(), "with pid:", this.agentPid(), "has no parther")
                     }
                 });
         }
@@ -1214,7 +1260,7 @@
             this.socketio().emit("kill_similar_outcasts", this.agent_ids);
         }
         this.messaga=(msg, reason)=>{
-            this.agent.messaga(msg);
+            //this.agent.messaga(msg);
             if(msg=="before_killed"){
                 //@after this msg my partner will trying to kill me
                 this._update_state = "update_me"
@@ -1245,7 +1291,6 @@
             agent_socket.on(this.options.msg_to_receive, (identifiers)=>{
                 this.drop_the_countdown();
                 this.start_the_countdown(this.time_to_panic);
-                console.log("SocketKeepAliveConfirmation: msg=", JSON.stringify(identifiers));
             });
             return this;
         }
@@ -1271,8 +1316,16 @@
         this.manifest_snapshot = undefined;
         this.browserIoClients = undefined; //run
         this.host = undefined; //run
-        this._update_state="";//msg
-        this.update_state=()=>{return this._update_state};
+        let defferedInitialUpdate = undefined;// clearing in welcomeAgent()
+        let defferedRegularUpdate = undefined;// clearing in welcomeAgent()
+        let flag_updating_partner_now="";//msg
+        this.updating_partner_now=(switch_on)=>{
+            if(typeof switch_on == "undefined"){
+                return flag_updating_partner_now;
+            }else{
+                flag_updating_partner_now = switch_on;
+            }
+        };
         this.instance=function(agent_ids){
             return new Controller(
                 this.jobs, 
@@ -1302,7 +1355,7 @@
         this.isSpecialMode=()=>{return this.is_special_mode_flag;}
         this.switchSpecialMode=(is_special_mode)=>{
             this.is_special_mode_flag = is_special_mode;
-            this.work_mode = "special";
+            this.work_mode = is_special_mode ? "special" : "normal"
         }
         this.current_work_mode=()=>{return this.work_mode}
         this.switch_work_mode=(mode)=>{
@@ -1317,31 +1370,37 @@
             //this.normalControllerMode = this.normalControllerMode.instance()
         }
 		this.welcomeAgent = (agent_socket, agent_ids, manifest_snapshot, partner, mapped_mans_snapshot)=>{
-            console.log("Controller.welcomeAgent(): partner online:",partner.isOnline());
 			this.agent_socket = agent_socket;
 			this.agent_ids = agent_ids;//{ag_type, md5, ip, pid, ppid, apid} 
 			this.manifest_snapshot = manifest_snapshot;
             this.mapped_mans_snapshot = mapped_mans_snapshot;
             this.partner = partner;
+            //@ first of all drop some states from agent's previous activity
+            defferedInitialUpdate = undefined;
+            defferedRegularUpdate = undefined;
+            this.updating_partner_now(false);
+            this.switchSpecialMode(false);
+            //@
             this.switchOnline(true);
             this.gui_news({msg:"agent_online"});
             this.listenForDisconnect();
             this.firstComparingMappedMans(agent_socket, mapped_mans_snapshot).then(res=>{
-                console.log("Controller.firstComparingMappedMans() res =", res);
             }).catch(err=>{
                 console.error("Controller.firstComparingMappedMans() Error:", err);
             });
 		}
         this.listenForDisconnect=()=>{
             this.agent_socket.once('disconnect', (reason)=>{
+                defferedInitialUpdate = undefined;
+                defferedRegularUpdate = undefined;
+                this.updating_partner_now(false);
                 this.switchOnline(false);
                 console.log("Controller.listenForDisconnect(): disconnect: reason =", reason);
                 //@ Todo: higher at the host level - notify externalSource object
                 this.gui_news({msg:"agent_offline"});
-                this.host.agent_disconnected(this.agent_ids.ag_type, this.update_state());
+                this.host.agent_disconnected(this.agent_ids.ag_type, reason);
                 this.jobs.drop_future_jobs();
                 //this.specialControllerMode.drop_future_jobs();
-                console.log("Controller.listenForDisconnect(): eventNames=", this.agent_socket.eventNames());
                 //@ socket.eventNames()
                 //@ socket.listeners(event)
                 //@ socket.removeAllListeners([event])
@@ -1362,68 +1421,105 @@
             }
         }
         this.gui_ctrl=(msg, is_ext_kick)=>{
-            //console.log("Controller.gui_ctrl(): msg=", msg);
             if(msg.type=="list_future_jobs"){
                 this.jobs.list_future_jobs(list=>{
-                    console.log("Controller.gui_ctrl(): list_future_jobs=",list);
                     this.gui_news({msg:"list_future_jobs", value:list});
                 });
             }else if(msg.type=="drop_future_jobs"){
                 this.jobs.drop_future_jobs(msg);
             }else if(msg.type=="jobs_config"){
                 //@msg = {type: event_type, caller_id: <some id from external Object>, concrete_agent: <agent md5>}
-                console.log("Controller.gui_ctrl(): '"+msg.type+"'-type msg")
                 const config = this.jobs.jobs_config();
-                console.log("Controller.gui_ctrl(): returning jobs config from jobs object")
                 this.gui_news({"jobs_config": config, "caller_id": msg.caller_id});
             }
         }
+        this.do_deffered_updates=()=>{
+            //console.trace("Controller do_deffered_updates()...");
+            let regular_manifest;
+            let initial_manifest;
+            if(defferedRegularUpdate){
+                regular_manifest = defferedRegularUpdate.pop();
+            }
+            if(defferedInitialUpdate){
+                initial_manifest = defferedInitialUpdate.pop();
+            }
+            console.trace("Controller do_deffered_updates():", Boolean(regular_manifest), Boolean(initial_manifest));
+            if(regular_manifest && initial_manifest){
+                this.start_initial_manifest_update(initial_manifest);
+            }else if(initial_manifest){
+                this.start_initial_manifest_update(initial_manifest);
+            }else if(regular_manifest){
+                this.propagateManifestDiff(regular_manifest)
+            }else{}
+        };
         //@ this comparing promote, when master first time welcome the Agent
         this.start_initial_manifest_update=(man)=>{
-            console.log("Controller.start_initial_manifest_update(): man=", man);
             return new Promise((resolve,reject)=>{
-                this.switchInitialUpdateMode(true);
-                this.gui_news({msg:"update_mode", value:"on"});
-                const man_for_controller = {};
-                man_for_controller.launcher = man.launcher;
-                this.agentUpdateChain.instance(this, man_for_controller).run(this.socketio(), this.partner).then(res=>{
-                    this.switchInitialUpdateMode(false);
-                    if(this.is_regular_while_initial_manifest){
-                        this.propagateManifestDiff(this.is_regular_while_initial_manifest).then(res=>{
-                            res.isOk = true;
-                            resolve(res);
-                        }).catch(err=>{ reject(err); })
-                    }else{
-                        resolve(res);
-                    }
-                }).catch(err=>{
-                    reject(err);
-                }).finally(()=>{
-                    this.gui_news({msg:"update_mode", value:"off"});
-                    //this.doNormalWork();
-                })
+                if(this.partner && this.partner.updating_partner_now()){
+                    defferedInitialUpdate = OneElemStack(man);
+                    reject({reason: "deffered", detailed:"updating_partner_now"}); //2.2
+                }else{
+                    this.switchInitialUpdateMode(true);
+                    this.updating_partner_now(true);
+                    this.gui_news({msg:"update_mode", value:"on"});
+                    const man_for_controller = {};
+                    man_for_controller.launcher = man.launcher;
+                    this.agentUpdateChain.instance(this, man_for_controller).run(this.socketio(), this.partner).then(res=>{
+                        if(defferedRegularUpdate){
+                            console.log("before pop")
+                            const manifest = defferedRegularUpdate.pop();
+                            console.log("after pop")
+                            if(manifest){
+                                this.updating_partner_now(true);
+                                this.propagateManifestDiff(manifest).then(res=>{
+                                    this.updating_partner_now(false);
+                                    res.isOk = true;
+                                    resolve(res);
+                                }).catch(err=>{ reject(err); })
+                            }else{
+                                this.updating_partner_now(false);
+                                this.gui_news({msg:"update_mode", value:"off"});
+                                resolve();
+                            }
+                        }else{
+                            this.updating_partner_now(false);
+                            this.gui_news({msg:"update_mode", value:"off"});
+                            resolve();
+                        }
+                    }).catch(err=>{
+                        this.gui_news({msg:"update_mode", value:"off"});
+                        reject(err);
+                    })
+                }
             });
         }
-        this.propagateManifestDiff=(mans_diff)=>{
+        this.propagateManifestDiff=(mans_diff, full_manifest)=>{
             return new Promise((resolve,reject)=>{
-                if(this.isInitialUpdateMode()){
-                    this.is_regular_while_initial_manifest = mans_diff;
-                    console.log("regular manifest has happened while initial update has processing at:", this.agent_ids);
-                }
-                else{
-                    this.switchInitialUpdateMode(true);
-                    this.gui_news({msg:"update_mode", value:"on"});
-                    const mans_diff_for_controller = {};
-                    mans_diff_for_controller.launcher = mans_diff.launcher;
-                    new AgentUpdateWithoutCompare(this, mans_diff_for_controller).run(this.socketio(), this.partner).then(res=>{
-                        resolve({is_patched: true});
-                    }).catch(err=>{
-                        reject({is_patched: false, error: err});
-                    }).finally(()=>{
-                        this.switchInitialUpdateMode(false);
-                        this.gui_news({msg:"update_mode", value:"off"});
-                    //this.doNormalWork();
-                    })
+                if(this.partner.isOnline()){
+                    if(this.partner.updating_partner_now()){
+                        defferedRegularUpdate = OneElemStack(mans_diff);
+                        if(full_manifest){
+                            defferedInitialUpdate = OneElemStack(full_manifest);
+                        }
+                        resolve({is_patched: false, details: "deffered"});
+                    }else{
+                        this.updating_partner_now(true);
+                        this.switchInitialUpdateMode(true);
+                        this.gui_news({msg:"update_mode", value:"on"});
+                        const mans_diff_for_controller = {};
+                        mans_diff_for_controller.launcher = mans_diff.launcher;
+                        new AgentUpdateWithoutCompare(this, mans_diff_for_controller).run(this.socketio(), this.partner).then(res=>{
+                            this.updating_partner_now(false);
+                            this.gui_news({msg:"update_mode", value:"off"});
+                            resolve({is_patched: true});
+                        }).catch(err=>{
+                            this.updating_partner_now(false);
+                            this.gui_news({msg:"update_mode", value:"off"});
+                            reject({is_patched: false, error: err});
+                        })
+                    }
+                }else{
+                    console.trace(this.agentType(), "with pid:", this.agentPid(), "has no parther")
                 }
             });
         }
@@ -1465,7 +1561,7 @@
             this.socketio().emit("kill_similar_outcasts", this.agent_ids);
         }
         this.messaga=(msg, reason)=>{
-            this.agent.messaga(msg);
+            //this.agent.messaga(msg);
             if(msg=="before_killed"){
                 //@after this msg my partner will trying to kill me
                 this._update_state = "update_me"
@@ -1564,8 +1660,10 @@
                         )
                     )
                 ).run(socket, creator, partner, this.manifest, this).then(res=>{
+                    //console.trace("AgentUpdateChain.run(): resolve...");
                     resolve(res);
                 }).catch(err=>{
+                    console.trace("AgentUpdateChain.run(): reject...");
                     reject(err);
                 })
             });
@@ -1598,26 +1696,28 @@
         //this.instance=()=>{return new StartingPartner(this.updatingFiles.instance())}
         this.run=(socket, creator, partner, man_or_mans_diff, agentUpdateChain)=>{
             this.creator = creator;
-            console.log("StartingPartner.run() creator is ", creator.agentType());
             return new Promise((resolve,reject)=>{
                 this.updatingFiles.run(socket, creator, partner, man_or_mans_diff, agentUpdateChain).then(chain_msg=>{
-                    console.log("StartingPartner.run(): after updatingFiles chain_msg= ",JSON.stringify(chain_msg));
                     if(chain_msg.is_updated){
                         if(partner && partner.isOnline()){
                             //@ TODO: May be TIMEOUT HERE on 100 ms ???
                             const extended_msg = Object.assign(chain_msg, {updated_msg:"partner is already started"});
                             creator.gui_news({msg:"agent_work", value:"partner is already started"});
+                            //console.trace("StartingPartner.run(): resolve 1...");
                             resolve(extended_msg);
                         }else{
                             this.creator.gui_news({msg:"agent_work", value:"starting the partner..."});
+                            const creator_link2 = this.creator;
                             this.start_partner(socket).then(start_msg=>{
-                                console.error("!!!!!!!")
+                                //console.trace("StartingPartner.run(): after start_partner()...");
                                 this.say_to_browser("the partner is started");
                                 //@ TODO: здесь ссылка на this уже потеряна и следующая строка выбросит ошибку creator is not defined
-                                //this.say_to_agent(this.creator);
+                                this.say_to_agent(creator_link2);
                                 const extended_msg = Object.assign(chain_msg, start_msg);
+                                //console.trace("StartingPartner.run(): resolve 2...");
                                 resolve(extended_msg);
                             }).catch(err=>{
+                                console.trace("StartingPartner.run(): reject...");
                                 creator.gui_news({msg:"agent_work", value:"fail to start the partner: "+err});
                                 reject("StartingPartner: cant start partner. "+err);
                             });
@@ -1637,18 +1737,16 @@
             }else if(chain_msg.err_names && chain_msg.err_names.length){
                 console.error("StartingPartner.run(): after updatingFiles AGENT CANT COPY FILES: ", chain_msg.err_names);
             }else{
-                console.log("StartingPartner.run(): after updatingFiles chain_msg(2)=", JSON.stringify(chain_msg));
             }
         }
         this.say_to_agent=(creator)=>{
             if(creator){
                 try{creator.messaga("partner_started", "update");}
-                catch(err){console.error(">>>>>>>>>>>>>>>>>>>> WTF 1")}
+                catch(err){console.error("StartingPartner.say_to_agent() err:", err)}
             }else{console.error("StartingPartner: after updatingFiles: partner is undefined!")}
         }
         this.say_to_browser=(start_msg)=>{
-            console.log("StartingPartner.run(): start_partner().then: res= ",start_msg);
-            creator.gui_news({msg:"agent_work", value:"the partner is started"});
+            this.creator.gui_news({msg:"agent_work", value:"the partner is started"});
         }
         this.start_partner=(socket)=>{
             return new Promise((resolve,reject)=>{
@@ -1667,17 +1765,13 @@
         this.killingPartner=killingPartner;
         //this.instance=()=>{return new UpdatedDiffFiles(this.killingPartner.instance())}
         this.run=(socket, creator, partner, mans_diff)=>{
-            console.log("UpdatedDiffFiles.run() creator is ", creator.agentType());
             return new Promise((resolve,reject)=>{
                 this.killingPartner.run(socket, creator, partner, mans_diff).then(chain_msg=>{
                     creator.gui_news({msg:"agent_work", value:"Starting update the files"});
-                    console.log("UpdatedDiffFiles.run() before update_files() calling");
                     this.update_diff_files(socket, mans_diff).then(update_msg=>{
-                        console.log("UpdatedDiffFiles.run() after update_files update_msg=",update_msg);
                         creator.gui_news({msg:"agent_work", value:"the updating files was replaced"});
                         //@ expect that update_msg will be equals {is_updated:true}
                         const extended_msg = Object.assign(chain_msg, update_msg);
-                        console.log("UpdatedDiffFiles.run() extended_msg=",extended_msg);
                         resolve(extended_msg);
                     }).catch(err=>{
                         creator.gui_news({msg:"agent_work", value:"fail to update the files: "+err});
@@ -1692,6 +1786,7 @@
             return new Promise((resolve,reject)=>{
                 const EV_NAME = "updateDiffFiles";
                 const resolve_handler = function(res){resolve(res);}
+                //console.trace("update_diff_files: before emit")
                 socket.emit(EV_NAME, mans_diff).once(EV_NAME, resolve_handler);
                 setTimeout(()=>{
                     socket.removeListener(EV_NAME, resolve_handler);
@@ -1706,25 +1801,24 @@
         this.killingPartner=killingPartner;
         //this.instance=()=>{return new UpdatingFiles(this.killingPartner.instance())}
         this.run=(socket, creator, partner, manifest, agentUpdateChain)=>{
-            console.log("UpdatingFiles.run() creator is ", creator.agentType());
             return new Promise((resolve,reject)=>{
                 this.killingPartner.run(socket, creator, partner, manifest, agentUpdateChain).then(chain_msg=>{
-                    console.log("UpdatingFiles: after killingPartner.run(): chain_msg=", JSON.stringify(chain_msg))
                     if(chain_msg.is_changes){
                         creator.gui_news({msg:"agent_work", value:"Starting update the files"});
-                        console.log("UpdatingFiles.run() before update_files() calling");
                         this.update_files(socket, manifest).then(update_msg=>{
-                            console.log("UpdatingFiles.run() after update_files update_msg=",update_msg);
                             creator.gui_news({msg:"agent_work", value:"the updating files was replaced"});
                             const extended_msg = Object.assign(chain_msg, update_msg);
-                            console.log("UpdatingFiles.run() extended_msg=",extended_msg);
+                            //console.trace("UpdatingFiles.run(): resolve 1...");
                             resolve(extended_msg);
                         }).catch(err=>{
                             creator.gui_news({msg:"agent_work", value:"fail to update the files: "+err});
+                            console.trace("UpdatingFiles.run(): reject...");
                             reject("UpdatingFiles: "+err);
                         });
                     } else{
                         const extended_msg = Object.assign(chain_msg, {is_updated:true});
+                        //console.trace("UpdatingFiles.run(): resolve 2... extended_msg=", extended_msg);
+
                         resolve(extended_msg);
                     }
                 }).catch(err=>{
@@ -1773,14 +1867,11 @@
     //@ sends to socket "killPartner" event
     function KillingPartnerWithoutComparing(){
         this.run=(socket, creator, partner, manifest)=>{
-            console.log("KillingPartnerWithoutComparing.run() creator is ", creator.agentType());
             return new Promise((resolve,reject)=>{
-                console.log("KillingPartnerWithoutComparing.run(): creator=", creator);
                 const cond2 = (partner) ? partner.isOnline() : false; //partner must be online, otherwise nothing to kill
                 const cond3 = (creator.agentType()=="launcher") ? partner.isSpecialMode() : false; // if special mode kinda 'render' when we can't kill
                 if(cond2 & !cond3){
                     creator.gui_news({msg:"agent_work", value:"sending kill signal with pid "+partner.agentPid()});
-                    console.log("KillingPartner: sending kill signal, pid=",partner.agentPid());
                     this.kill_partner(socket, partner.agentPid(), partner.agentPpid()).then(kill_msg=>{
                         creator.gui_news({msg:"agent_work", value:"the partner was killed"});
                         resolve(kill_msg);
@@ -1797,7 +1888,6 @@
         this.kill_partner=(socket, pid, ppid)=>{
             return new Promise((resolve,reject)=>{
                 const resolve_handler = function(res){
-                    console.log("KillingPartnerWithoutComparing.kill_partner() answer=", res);
                     resolve(res||{is_killed:true});
                 }
                 socket.emit("killPartner", {pid, ppid}).once("killPartner", resolve_handler);
@@ -1818,6 +1908,7 @@
             return new Promise((resolve,reject)=>{
                 this.compareManifest.run(socket, creator, partner, manifest, agentUpdateChain).then(compare_msg=>{
                     if(compare_msg.is_error){
+                        console.trace("KillingPartner.run(): reject 1...");
                         return reject(compare_msg.error); // agent cant compare normally
                     }
                     else{
@@ -1826,10 +1917,8 @@
                         //@ 2: partner must be online, otherwise nothing to kill
                         const cond2 = (partner) ? partner.isOnline() : false; 
                         const cond3 = (creator.agentType()=="launcher") ? partner.isSpecialMode() : false; // if special mode kinda 'render' when we can't kill
-                        console.log("KillingPartner: conditions:",cond1,cond2,!cond3);
                         if(cond1 && cond2 && !cond3){
                             creator.gui_news({msg:"agent_work", value:"sending kill signal with pid "+partner.agentPid()});
-                            console.log("KillingPartner: sending kill signal, pid=",partner.agentPid());
                             if(creator){creator.messaga("before_partner_killed", "update");}
                                 else{console.error("KillingPartner: after compareManifest: creator is undefined?")}
                             if(partner){partner.messaga("before_killed", "update");}
@@ -1840,26 +1929,27 @@
                                 if(creator){creator.messaga("partner_killed", "update");}
                                     else{console.error("KillingPartner: after kill_partner(): creator is undefined?")}
                                 const extended_msg = Object.assign(compare_msg, kill_msg);
+                                //console.trace("KillingPartner.run(): resolve 1...");
                                 resolve(extended_msg);
                             }).catch(err=>{
                                 creator.gui_news({msg:"agent_work", value:"fail to kill the partner: "+err});
+                                console.trace("KillingPartner.run(): reject 2...");
                                 reject(err);
                             })
                         }else{
-                            //console.log("KillingPartner: No nedd to Kill");
+                            //console.trace("KillingPartner.run(): resolve 2... compare_msg=", compare_msg);
                             resolve(compare_msg);
                         }
                     }
                 }).catch(err=>{
                     reject("KillingPartner: error on prev step 'comparing': "+err);
-                }).finally(()=>{
-                    
                 })
             });
         }
         this.kill_partner=(socket, pid, ppid)=>{
             return new Promise((resolve,reject)=>{
                 const resolve_handler = function(res){resolve(res||{is_killed:true});}
+                //console.trace("111")
                 socket.emit("killPartner", {pid, ppid}).once("killPartner", resolve_handler);
                 setTimeout(()=>{
                     socket.removeListener("kill_partner",resolve_handler);
@@ -1872,13 +1962,12 @@
     function CompareManifest(){
         //this.instance=()=>{ return new CompareManifest() }
         this.run=(socket, creator, partner, manifest, agentUpdateChain)=>{
-            console.log("CompareManifest.run()...");
             return new Promise((resolve,reject)=>{
                 let is_ok = false;
                 const resolve_handler = function(compare_msg){
                     //@ compare_msg = {is_error: false, is_changes: true}
-                    console.log("CompareManifest.run(): compare_msg=",JSON.stringify(compare_msg));
                     is_ok = true;
+                    //console.trace("CompareManifest.run(): resolve...");
                     resolve(compare_msg);
                 }
                 creator.gui_news({msg:"agent_work", value:"sending Manifest to compare..."});
@@ -1887,6 +1976,7 @@
                     if(!is_ok){ 
                         creator.gui_news({msg:"agent_work", value:"CompareManifest: timeout while comparing the Manifest"}); 
                         socket.removeListener("compareManifest",resolve_handler);
+                        console.trace("CompareManifest.run(): reject...");
                         reject("CompareManifest timeout. ");
                     }
                 }, 5000);
@@ -1914,14 +2004,12 @@
             });
         }
         this.jobs_config=(cb)=>{
-            console.log("NormalControllerMode.jobs_config()...")
             if(typeof cb=='function'){
                 cb(this.jobs.jobs_config());
             }
         }
         this.run=(controller, agent_socket)=>{
             this.agent_socket =agent_socket;
-            console.log("NormalControllerMode.run()...");
             this.jobs = this.jobs.instance().run(controller, this.agent_socket);
         }
     }
@@ -1938,7 +2026,6 @@
         this.jobsChaining=undefined;//run
         this.jobChainsFromInitJobs=undefined;//go
 		this.jobs_config=()=>{
-            console.log("Jobs.jobs_config(): returning schedule...")
             return this.schedule;
         }
 		this.instance=()=>{
@@ -1949,7 +2036,6 @@
             }else{console.error("Jobs.instance(): NO SCHEDULE!!!")}
         }
 		this.run=(controller, agent_socket)=>{
-            console.error("Jobs.run(): id=", this.id);
             this.jobsSchedule = new JobsSchedule(this.schedule).run();
             this.agent_socket = agent_socket;
             this.controller = controller;
@@ -1980,6 +2066,7 @@
             }
         }
 	}
+
     function JobsSchedule(schedule){
         this.schedule = schedule;
         this.run=()=>{
@@ -2009,7 +2096,6 @@
         }
         //@ param {String} job_id = e.g. "disk_space_lte_25" || "nvidia_exist"
         this.tuple_by_job_id=(job_id)=>{
-            //return new JobsScheduleInitBranch(this.schedule, job_id);
             return this.schedule.jobs[job_id];
         }
         this.is_uninterrupted=(job_type)=>{ return this.schedule.uninterrupted_jobs.includes(job_type); }
@@ -2092,7 +2178,6 @@
             const interval_list = intervalJobs.list_future_jobs();
             const delayed_list = delayedJobs.list_delayed_jobs();
             const list = interval_list.concat(delayed_list);
-            console.log("JobsChaining.list_future_jobs(): interval and delay list lengths=",list.length);
             //@ answer to 'Jobs' object
             if(typeof cb == 'function'){cb(list)}
             else{console.error("JobsChaining.list_future_jobs(): cb is not a function!")}
@@ -2115,12 +2200,14 @@
         //@param {String} next_job_id = 'stop_lte_25' || 'disk_clean_1' || 'do_render'
         const send_next_job=(next_job_id)=>{
             //@ e.g. job_tuple = "stop_lte_25": {"type":"stop", "target_job_id":"disk_space_lte_25"}
+            //console.trace("Controller.send_next_job: next_job_id=", next_job_id)
             const job_tuple = this.jobsSchedule.tuple_by_job_id(next_job_id);
             //this.jobsScheduleInitBranch = this.jobsSchedule.tuple_by_job_id(next_job_id);
-            if(!job_tuple) return console.error("JobsChaining.send_next_job(): No such job",next_job_id );
-            if(job_tuple.type == "stop"){
+            if(!job_tuple){
+                return console.trace("JobsChaining.send_next_job(): No such job",next_job_id );
+            }
+            else if(job_tuple.type == "stop"){
                 //@ delete this.schedule.jobs[job_tuple.target_job_id].interval;
-                //console.log("JobsChaining.send_next_job() stop-type job:",job_tuple);
                 const job_id_to_stop = job_tuple.target_job_id;
                 const job_to_stop = this.jobsSchedule.tuple_by_job_id(job_id_to_stop);
                 if(typeof job_to_stop == 'object'){
@@ -2129,7 +2216,6 @@
                 }else console.error("JobsChaining.send_next_job() no such job in jobs_config:", job_to_stop);
             }
             else if(job_tuple.type != "stop"){
-                //console.log("JobsChaining.send_next_job(): job id:",next_job_id);
                 if(job_tuple.interval && intervalJobs.exist(next_job_id)){
                     console.error("JobsChaining.send_next_job() Error: such interval jobs already exist:", next_job_id, "in controller:", this.controller.agent_ids);
                 }else{
@@ -2143,7 +2229,6 @@
                         new_job.onAnswer(ans=>{
                             if(ans.is_socket_answered){
                                 if(ans.next_action){
-                                    console.log("JobsChaining.send_next_job(): next action=", ans.next_action);
                                     if(this.controller.current_work_mode() == "special"){
                                         this.controller.switchSpecialMode(false);
                                         this.controller.switch_work_mode("normal");
@@ -2162,95 +2247,7 @@
             }
         }
     }
-    function JobsChaining(jobsInit, extendedJob, intervalJobs, delayedJobs){
-        this.jobsInit = jobsInit;
-        this.extendedJob = extendedJob;
-        this.intervalJobs = intervalJobs;
-        this.delayedJobs = delayedJobs;
-        this.jobConditionChecking = new JobConditionChecking();
-        this.schedule = undefined;//run
-        this.controller = undefined;//run
-        this.agent_socket = undefined;//run
-        this.run=(schedule, controller, agent_socket)=>{
-            this.schedule = schedule;
-            this.controller = controller;
-            this.agent_socket = agent_socket;
-            this.jobsInit.run(schedule, controller, agent_socket, this.extendedJob, this.intervalJobs).onNext((next_job_id, chain_finish_job_id)=>{
-                console.log("JobsChaining.run(): onNext(): next_job_id=",next_job_id);
-                if(next_job_id){
-                    send_next_job(next_job_id);
-                }else{
-                    console.log("JobsChaining.run() onNext: chain has finished for:", chain_finish_job_id)
-                }
-            });
-            return this;
-        }
-        this.drop_future_jobs=(msg)=>{
-            console.error("NormalControllerMode.drop_future_jobs(): msg=",util.inspect(msg));
-            if(msg&&msg.job_info){
-                if(msg.job_info.interval){
-                    this.intervalJobs.drop_future_jobs(msg.job_info.job_id);
-                }else if(msg.job_info.delay){
-                    this.delayedJobs.drop_delayed_jobs(msg.job_info.job_id);
-                }else{console.error("JobsChaining.drop_future_jobs(): 'interval' or 'delay' expected")}
-            }else{
-                this.intervalJobs.drop_future_jobs();
-                this.delayedJobs.drop_delayed_jobs();
-            }
-        }
-        this.list_future_jobs=(cb)=>{
-            const interval_list = this.intervalJobs.list_future_jobs();
-            const delayed_list = this.delayedJobs.list_delayed_jobs();
-            console.log("JobsChaining.list_future_jobs(): delayed_list=",delayed_list, "typeof=", typeof delayed_list);
-            console.log("JobsChaining.list_future_jobs(): interval and delay list lengths=",interval_list.length, delayed_list.length);
-            const list = interval_list.concat(delayed_list);
-            console.log("JobsChaining.list_future_jobs(): future jobs list=",list);
-            //@ answer to 'Jobs' object
-            if(typeof cb == 'function'){cb(list)}
-            else{console.error("JobsChaining.list_future_jobs(): cb is not a function!")}
-        }
-        const send_next_job=(next_job_id)=>{
-            //@ e.g. next_job_id = 'stop_lte_25'
-            //console.log("JobsChaining.send_next_job(): next_job_id=",next_job_id);
-            //@ e.g. next_job_tuple = "stop_lte_25": {"type":"stop", "target_job_id":"disk_space_lte_25"}
-            const next_job_tuple = this.schedule.jobs[next_job_id];
-            if(!next_job_tuple) return console.error("JobsChaining.send_next_job(): No such job",next_job_id );
-            if(next_job_tuple.type == "stop"){
-                //@ delete this.schedule.jobs[next_job_tuple.target_job_id].interval;
-                console.log("JobsChaining.send_next_job() stop-type job:",next_job_tuple);
-                const job_id_to_stop = next_job_tuple.target_job_id;
-                const job_to_stop = this.schedule.jobs[job_id_to_stop];
-                if(typeof job_to_stop == 'object'){
-                    //delete job_to_stop.interval;                    
-                    this.intervalJobs.stopIntervalJob(job_id_to_stop);
-                }else console.error("JobsChaining.send_next_job() no such job in jobs_config:", job_to_stop);
-            }
-            else if(next_job_tuple.type != "stop"){
-                console.log("JobsChaining.send_next_job(): calling job:",next_job_id);
-                if(this.intervalJobs.exist(next_job_id)){
-                    console.error("JobsChaining.send_next_job() Error: such interval jobs already exist:", next_job_id);
-                }else{
-                    const new_job = this.extendedJob.instance()
-                    .init(next_job_id, next_job_tuple, this.controller, this.agent_socket, this.intervalJobs, this.delayedJobs);
-                    if(new_job){
-                        new_job.onAnswer(ans=>{
-                            if(ans.is_socket_answered){
-                                if(ans.next_action){
-                                    console.log("JobsChaining.send_next_job(): next action=", ans.next_action);
-                                    send_next_job(ans.next_action);
-                                }
-                            }else{
-                                //@ most likely - socket response timeout
-                                console.error("JobsChaining.send_next_job() error:", ans, ", on job_id:",next_job_id);
-                            }
-                        }).run();
-                    }else{
-                        console.error("JobsChaining.send_next_job(): next job was not created for: ", next_job_id);
-                    }
-                }
-            }
-        }
-    }
+    
     function JobsInit(){
         this.schedule=undefined;//run
         this.controller=undefined;//run
@@ -2275,14 +2272,12 @@
         const start_initial_jobs=(schedule, controller, agent_socket, extendedJob, intervalJobs)=>{
             if(!Array.isArray(schedule.init)) return console.error("ERROR: NO 'init' key in jobs_config! ");
             schedule.init.forEach(job_id=>{
-                console.log("JobsInit.start_initial_jobs() schedule.jobs[job_id]=", schedule.jobs[job_id]);
                 //@ Может вернуть объект работы или undefined.
                 const new_job = extendedJob.instance().init(job_id, schedule.jobs[job_id], controller, agent_socket, intervalJobs);
                 if(new_job){
                     new_job.onAnswer(ans=>{
                         if(ans.is_socket_answered){
                             if(ans.next_action){
-                                console.log("JobsInit.start_initial_jobs(): next action=", ans.next_action);
                                 this.cbNext(ans.next_action);
                             }else{
                                 this.cbNext(false, job_id);
@@ -2291,8 +2286,6 @@
                             console.error("JobsInit.start_initial_jobs(): '",job_id,"' job error:", ans.err_type);
                         }
                     }).run();
-                }else{
-                    console.log("JobsInit.start_initial_jobs()")
                 }
             });
         }
@@ -2314,8 +2307,6 @@
         }
         this.init=(job_id, job_tuple, controller, agent_socket, intervalJobs, delayedJobs)=>{
             if(!job_tuple) return console.error("ExtendedJob.run(): No such job_name",job_id);
-            console.log("ExtendedJob.run() job_id=", job_id);
-            console.log("ExtendedJob.run() job_tuple=", job_tuple);
             let delayedOrIntervalJob;
             if(job_tuple.interval){
                 //@ Todo: add a check that if such Interval Job(with same id) already spin, do not start a new one. OR! delete old and start renewed one, with new conditions !?
@@ -2330,7 +2321,6 @@
                 //@ if job in jobs_config.json has a 'delay' key
                 if(job_tuple.delay){
                     //@ Философская проблема заключается в том, что сейчас мы позволяем добавлять бесконечное число отложенных работ с одинаковым id. Тогда, если в delayedJobs будут добавляться такие дубликаты, то мы будем добавлять к их id-шнику инкрементое число через решетку типа disk_25#2
-                    console.log("ExtendedJob.init() adding '"+ job_id+"' job to delayedJobs");
                     delayedJobs.add(job_id, delayedOrIntervalJob);
                 }
             }
@@ -2345,7 +2335,6 @@
             _interval_jobs[job_key] = intervalJob;
         }
         this.stopIntervalJob=(job_id)=>{
-            console.log("IntervalJobs.stopIntervalJob() job_id:",job_id);
             if(_interval_jobs[job_id]){
                 _interval_jobs[job_id].break_interval();
                 delete _interval_jobs[job_id];
@@ -2374,10 +2363,8 @@
                 });
             }
             return this;
-            //console.log("IntervalJobs.drop_future_jobs(): _interval_jobs=",JSON.stringify(_interval_jobs));
         }
         this.list_future_jobs=()=>{
-            //console.log("IntervalJobs.list_future_jobs(): _interval_jobs=",JSON.stringify(_interval_jobs));
             const out_list = [];
             for (var prop in _interval_jobs) {
                 const interval_now = _interval_jobs[prop].interval_now();
@@ -2395,7 +2382,6 @@
         this.last_dropped_jobs=()=>{return _last_dropped_jobs}
         this.init=()=>{
             setInterval(()=>{
-                console.log("DelayedJobs.init() _delayed_jobs = ", Object.keys(_delayed_jobs))
                 for(let i in _delayed_jobs){
                     if(_delayed_jobs[i].delay_now() < 0){
                         delete _delayed_jobs[i];
@@ -2462,7 +2448,6 @@
         this.oneJob = new OneJob().instance(job_id, job_tuple, controller, agent_socket)
             //return new OneIntervalJob(job_id, job_tuple, controller, agent_socket);
         this.break_interval=()=>{
-            console.log("OneIntervalJob.break_interval() job id =", this.job_id);
             clearInterval(_job_timeout_ref);
         }
         this.interval_now=()=>{
@@ -2470,7 +2455,6 @@
             return job_tuple.interval - timelapse;
         }
         this.run=()=>{
-            console.log("OneIntervalJob.run():");
             _interval_start_date = new Date().getTime();
             this.oneJob.instance(job_id, job_tuple, controller, agent_socket).onAnswer(_cbAnswer).run();
             _job_timeout_ref = setInterval(()=>{
@@ -2494,22 +2478,17 @@
         this.delay_timeout=undefined;
         this.socket_silence_timeout = 5000;
         let _timeout_start_date = undefined;
-        console.log("OneJob: job_tuple=", job_tuple);
         this.answer_handler = (res)=>{
             const job_type = this.job_tuple.type;
-            console.log("OneJob.run(): controller answer =", res, ", job_tuple =",job_tuple);
             //@ this.job_id - this is unique job id like 'disk_space_lte_25'
             if(typeof this.controller.gui_news != 'function'){
                 console.error("OneJob.answer_handler(): this.controller.gui_news =", this.controller.gui_news);
             }
             const msg_for_controller = "'"+this.job_id+"' job done";
             this.controller.gui_news({msg:"agent_work", value:msg_for_controller});
-            console.log("OneJob.run(): this.is_job_minimal_done =", this.is_job_minimal_done);
             this.is_job_minimal_done = true;
-            console.log("OneJob.run(): this.is_job_minimal_done(2) =", this.is_job_minimal_done);
             const jobConditionChecking = new JobConditionChecking();
             if(jobConditionChecking.check(this.job_tuple, res)){
-                console.log("OneJob.run(): job with type:", job_type, "PASS condition:", this.job_tuple.condition);
                 //@ Если в action одно строковое значение - значит одна следющая задача
                 if(typeof this.job_tuple.action == "string"){
                     this.cbAnswer({is_socket_answered: true, next_action: this.job_tuple.action});
@@ -2524,7 +2503,6 @@
                     this.cbAnswer({is_socket_answered: true, next_action: nact});
                 }
             }else{
-                console.log("OneJob.run(): job with type:", job_type, "MISMATCH condition:", this.job_tuple.condition);
                 this.cbAnswer({is_socket_answered: true});
             }
         }
@@ -2542,7 +2520,6 @@
         this.delay_now=()=>{
             if(this.job_tuple.delay){
                 const timelapse = new Date().getTime() - _timeout_start_date;
-                console.log("OneJob: delay_now(): _timeout_start_date=",_timeout_start_date,"timelapse=",timelapse,"this.job_tuple.delay=",this.job_tuple.delay);
                 return this.job_tuple.delay - timelapse;
             }else{
                 return 0;
@@ -2551,7 +2528,6 @@
         this.run=()=>{
             const job_type = this.job_tuple.type;
             const job_tuple = this.job_tuple;
-            console.log("OneJob.run(): emitting event=", JSON.stringify(job_tuple));
             if(Object.keys(job_tuple).length == 0){
                 console.error("OneJob.run() Error: Empty job");
                 return this.cbAnswer("OneJob.run() Error: Empty job");
@@ -2565,7 +2541,6 @@
             this.socket_silence_timeout = (this.job_tuple.delay || 0) + 5000;
             setTimeout(()=>{
                 if(this.is_job_minimal_done == false){
-                    console.log("OneJob.run(): timeout of job:", this.job_tuple.type);
                     //@ socket.eventNames()
                     //@ socket.listeners(event)
                     //@ socket.removeListener(event, listener)
@@ -2580,7 +2555,6 @@
     function JobConditionChecking(){
         this.check=(job, res)=>{
             const job_type = job.type;
-            console.log("JobConditionChecking.check() job=", JSON.stringify(job));
             if(!job.action){
                 return false;
             }
@@ -2601,11 +2575,7 @@
                 if(typeof VALUE != 'number'){
                     return console.error("JobConditionChecking.check(): something wrong when getting value:",VALUE);
                 }
-                console.log("JobConditionChecking.check() VALUE=",VALUE);
                 if(condition_arr[0] == 'lte'){
-                    console.log("res.free < VALUE:",res.free < VALUE);
-                    console.log("typeof res.free:",typeof res.free);
-                    console.log("typeof VALUE:",typeof VALUE);
                     if(res.free < VALUE) return true;
                     else return false;
                 }else if(condition_arr[0] == 'gte'){
@@ -2626,7 +2596,6 @@
                 }
             }
             else if(job_type == 'proc_count'){
-                console.log("JobConditionChecking.check(): job:",job_type, "res:", res)
                 if(job.condition == 'is_1'){
                     if(res.count == 1){return true;}
                     else{return false;}
@@ -2716,7 +2685,6 @@
         }
     }
     function Page(page_type, data){   
-        console.log("new Page '"+page_type+"'");
         const file_html = new FileFromFs();
         this.asText=async function(response){
             response.statusCode = 200;
@@ -2747,7 +2715,6 @@
         this.file=(filepath)=>{
             return new Promise((resolve,reject)=>{
                 // if(this.cache){
-                //     console.log("return cached file "+filepath);
                 //     resolve(this.cache)}
                 // else{
                     fs.readFile(path.normalize(filepath), (err, res)=>{

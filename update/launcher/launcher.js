@@ -1,4 +1,4 @@
-//launcher.js v56
+//launcher.js v184
 'use sctrict';
 const fs = require('fs');
 const path = require('path');
@@ -225,13 +225,13 @@ function SelfIdentifiers(){
         if(name){return this._identifiers[name]}
         else{return this._identifiers}
     }
-    this.run=()=>{
+    this.run=()=>{ 
         console.log("preparing identifiers for master...");
         return new Promise((resolve,reject)=>{
             let ids = {};
             ids.ag_type = "launcher";
-            this.get_mac((err, mac) => {
-                if (err) { return reject(err);}
+            this.get_mac((err, mac) => { 
+                if (err) { return reject(err);} 
                 else{
                     ids.md5 = mac;
                     ids.pid = process.pid;
@@ -240,13 +240,13 @@ function SelfIdentifiers(){
                     if (ids.apid == 0) ids.apid = -1;
                     ids.sid = "";
                     ids.ip = "";
-                    ids.hostname = os.hostname();
+                    ids.hostname = os.hostname(); 
                     this._identifiers = ids;
                     resolve(ids);
                 }
             }) 
         }); 
-    }  
+    }   
     this.get_mac=(callback)=>{
         //console.log("now in get_mac()")
         this.exec_cmd_getmac("getmac").then(res=>{
@@ -694,7 +694,7 @@ function UpdatedFiles(){
                 console.log("UpdatedFiles: comparedManifest_.mansDiff() Error: ",err);
                 socket.emit(this.ev_name, {is_error: true, error:err});
             }).finally(()=>{ this.is_timeout = false; });
-            setTimeout(()=>{    
+            setTimeout(()=>{     
                 if(this.is_timeout){ socket.emit(this.ev_name, {is_updated: false, is_error: true, error:"UpdatedFiles TIMEOUT"}); }
             }, 5000);
         });

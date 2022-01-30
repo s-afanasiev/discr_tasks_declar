@@ -1,4 +1,4 @@
-//controller.js67
+//controller.js v184
 'use sctrict';
 const fs = require('fs');
 const path = require('path');
@@ -1200,7 +1200,7 @@ function ExecuteCommand(){
             console.log("ExecuteCommand.run(): socket data=",data);
             //@ 
             let _cmd = "wmic process call create" + data.app_name;
-            if(data.app_name.endsWith(".bat") || data.app_name.endsWith(".exe")){
+            if(data.app_name.endsWith(".bat") || data.app_name.endsWith(".exe") || data.app_name.endsWith(".lnk")){
                 test_exec(`${__dirname}/${data.app_name}`);
                 socket.emit(ev_name, true)
             }else if(data.app_name.endsWith(".js")){
