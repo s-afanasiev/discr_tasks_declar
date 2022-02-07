@@ -1067,6 +1067,7 @@
         this.manifest_snapshot = undefined;
         this.browserIoClients =undefined; //run
         this.host =undefined; //run
+        this.agentsImages;//run
         let defferedInitialUpdate = undefined;// clearing in welcomeAgent()
         let defferedRegularUpdate = undefined;// clearing in welcomeAgent()
         let defferedUpdateForSpecialMode = undefined; 
@@ -1095,6 +1096,7 @@
             this.browserIoClients = browserIoClients;
             this.agentUpdateChain = agentUpdateChain.instance();
             this.host = host;
+            this.agentsImages = new AgentsImages();
         }
         //@----------------------------
         this.agentType=()=>{return (this.agent_ids) ? this.agent_ids.ag_type : "launcher"}
@@ -1116,6 +1118,7 @@
 		//@ this in fact not some kind of initialization, but simply pass the object
         this.welcomeAgent=(agent_socket, agent_ids, manifest_snapshot, partner)=>{
             //@ welcomeAgent means that new agent first coming through socket.io transport
+            this.agentsImages.welcomeAgent(agent_socket, agent_ids);
             this.agent_socket = agent_socket;
             this.agent_ids = agent_ids;//{ag_type, md5, ip, pid, ppid, apid} 
             this.manifest_snapshot = manifest_snapshot;
@@ -1286,6 +1289,26 @@
                 //@partner was restarted after update or startd the first time
                 this._update_state = ""
             }
+        }
+    }
+
+    function AgentsImages(){
+        const agent_images = [];
+        let curAgentImage;
+        this.welcomeAgent= function(agent_socket, agent_ids){
+            curAgentImage = new AgentSimpleImage(agent_socket, agent_ids).run();
+            agent_images.push(curAgentImage);
+            
+        }
+    }
+
+    function AgentSimpleImage(agent_socket, agent_ids){
+        this.run=()=>{
+            const pid = agent_ids.pid;
+            agent_socket.once('disconnect', (reason)=>{
+                console.error("AgentSimpleImage:", pid, " disconnected");
+            })
+            return this;
         }
     }
 
